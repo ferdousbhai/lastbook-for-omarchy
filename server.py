@@ -654,10 +654,7 @@ def render_page(r, n, width):
                 pdf.close()
         tmp = CACHE / f".{r['id']}-{n}-{width}-{threading.get_ident()}.tmp"
         tmp.write_bytes(data)
-        try:
-            os.replace(tmp, out)
-        except PermissionError:  # Windows: another thread is reading the same page right now
-            tmp.unlink(missing_ok=True)
+        os.replace(tmp, out)
         return data
     return out.read_bytes()
 
@@ -1726,8 +1723,6 @@ class Handler(library.Handler):
             return False
         if path.startswith(('/api/', '/zim/')):  # /zim/ file names are checked in engine/library.py
             return True
-        if not library.segments_ok(path):
-            return False
         return path.startswith('/ui/') or self.file_ok(self.translate_path(self.path), folders=True)
 
     HOST_SYNTAX = re.compile(r'(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+)(:\d*)?')
@@ -1800,7 +1795,7 @@ class Handler(library.Handler):
         """A transcript a saved page names, by the same rules as asking for it directly."""
         target = urllib.parse.urljoin(urllib.parse.urlsplit(self.path).path, src)
         path = urllib.parse.unquote(urllib.parse.urlsplit(target).path)
-        if not target.startswith('/') or target.startswith('//') or '/..' in path or not path.startswith(self.LIBRARY_PREFIXES) or not library.segments_ok(path):
+        if not target.startswith('/') or target.startswith('//') or '/..' in path or not path.startswith(self.LIBRARY_PREFIXES):
             return None
         real = self.translate_path(target)
         if not (os.path.isfile(real) and self.file_ok(real, folders=True) and os.path.getsize(real) <= saved_pages.MAX_TRANSCRIPT):
@@ -1909,9 +1904,6 @@ class Handler(library.Handler):
         rpath = urllib.parse.urlsplit(self.path).path
         if rpath.startswith('/api/setup/'):  # first-run setup and Library and local AI: engine/setup/api.py, this computer only
             return setup_api.handle(self, 'POST', rpath)
-        if rpath.startswith('/api/update/'):  # Check for updates, when the person asks: engine/update.py, this computer only
-            from engine import update
-            return update.handle(self, 'POST', rpath)
         if rpath.startswith('/api/tool/'):  # the assistant's read-only tools, for other local DeepSeek clients
             name = rpath[10:]
             if name not in {t['function']['name'] for t in assistant.TOOLS}:
@@ -2000,9 +1992,6 @@ class Handler(library.Handler):
             qs = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
             if path.startswith('/api/setup/'):
                 return setup_api.handle(self, 'GET', path)
-            if path.startswith('/api/update/'):
-                from engine import update
-                return update.handle(self, 'GET', path)
             if path in ('/', '/index.html'):
                 return self.send_static(WEB / 'index.html')
             if path.startswith('/ui/'):
@@ -2137,7 +2126,6 @@ def init(no_index=False):
     """Everything the engine needs before it can answer a request. Opens no socket: the desktop app calls only this."""
     global INDEX
     catalog()
-    print(f'onnxruntime telemetry: {retrieval.TELEMETRY}', flush=True)
     INDEX = retrieval.Index(catalog, trust, library.DB)
     assistant.init(sys.modules[__name__], INDEX)
     if not no_index:
@@ -2154,11 +2142,7 @@ def serve(port, lan=False):
             kf.write_text(secrets.token_urlsafe(18))
             os.chmod(kf, 0o600)
         LAN_KEY = kf.read_text(encoding='utf-8').strip()
-    server_class = library.http.server.ThreadingHTTPServer
-    if os.name == 'nt':  # SO_REUSEADDR on Windows lets a second copy silently share the port
-        class server_class(server_class):
-            allow_reuse_address = False
-    srv = SERVER = server_class(('0.0.0.0' if lan else '127.0.0.1', port), Handler)
+    srv = SERVER = library.http.server.ThreadingHTTPServer(('0.0.0.0' if lan else '127.0.0.1', port), Handler)
     print(f'Lastbook: http://127.0.0.1:{port}/', flush=True)
     if lan:
         import socket

@@ -21,9 +21,11 @@ a = ap.parse_args()
 import server, assistant  # noqa: E402
 server.init(no_index=True)
 qs = json.loads((Path(__file__).parent / 'questions.json').read_text())
-runs, hit, rr, times = {}, 0, 0.0, []
+runs, hit, rr, times, cold = {}, 0, 0.0, [], []
 for q in qs:
-    assistant.hybrid(q['q'], a.k)  # warm: the first call loads models and caches
+    t = time.perf_counter()
+    assistant.hybrid(q['q'], a.k)  # cold: articles parsed and embedded, the question embedded
+    cold.append(time.perf_counter() - t)
     t = time.perf_counter()
     res = assistant.hybrid(q['q'], a.k)
     times.append(time.perf_counter() - t)
@@ -38,7 +40,7 @@ for q in qs:
         print(f"      {i + 1}. {r['title'][:70]} {where} {'+'.join(r['by'])}")
 n = len(qs)
 print(f"\nhits@{a.k} {hit}/{n}  MRR {rr / n:.3f}  median {sorted(times)[n // 2] * 1000:.0f} ms  max {max(times) * 1000:.0f} ms"
-      f"  meaning={'on' if server.INDEX and server.INDEX.emb else 'off'}")
+      f"  cold median {sorted(cold)[n // 2] * 1000:.0f} ms max {max(cold) * 1000:.0f} ms  meaning={'on, ' + str(server.INDEX.status.get('chunks')) + ' passages' if server.INDEX and server.INDEX.source and len(server.INDEX.mat) else 'off'}")
 if a.out:
     Path(a.out).write_text(json.dumps(runs, indent=1))
 if a.compare:

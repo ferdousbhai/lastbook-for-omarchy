@@ -14,7 +14,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
@@ -35,10 +34,9 @@ STATE_FILE = paths.DATA / 'derived' / 'llm' / 'state.json'   # where the file wa
 
 
 def runner_path():
-    exe = 'lastbook-llm.exe' if os.name == 'nt' else 'lastbook-llm'
-    here = [paths.APP / 'llm' / exe]                         # in the packaged app
+    here = [paths.APP / 'llm' / 'lastbook-llm']              # in the packaged app
     if not paths.FROZEN:
-        here.append(paths.APP / 'derived' / 'llm' / {'win32': 'bin-win', 'darwin': 'bin-mac'}.get(sys.platform, 'bin-linux') / exe)
+        here.append(paths.APP / 'derived' / 'llm' / 'bin-linux' / 'lastbook-llm')
     return next((p for p in here if p.is_file()), None)
 
 
@@ -215,7 +213,7 @@ class Local:
         with self.lock:
             self.state, self.pct, self.message = 'measuring', None, ''
         try:
-            out = subprocess.run(self._argv(['--measure']), stdin=subprocess.DEVNULL, capture_output=True, timeout=180, **_quiet())
+            out = subprocess.run(self._argv(['--measure']), stdin=subprocess.DEVNULL, capture_output=True, timeout=180)
             fit = next((json.loads(l) for l in out.stdout.decode('utf-8', 'replace').splitlines() if l.startswith('{"ev":"fit"')), None)
         except (OSError, subprocess.SubprocessError, ValueError) as e:
             fit, out = None, None
@@ -272,8 +270,7 @@ class Local:
         err = open(logs / 'local-ai.log', 'ab')
         err.write(f'\n--- {time.strftime("%Y-%m-%d %H:%M:%S")} start\n'.encode())
         err.flush()
-        self.proc = subprocess.Popen(self._argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, bufsize=0, **_quiet())
-        _tie_to_this_process(self.proc)
+        self.proc = subprocess.Popen(self._argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, bufsize=0)   # it leaves when its standard input closes, however Lastbook ends
         err.close()
         self.events = queue.Queue()
         self.t_spawn = time.time()
@@ -409,9 +406,7 @@ LOCAL = Local()
 
 
 def unified_memory():
-    """Is graphics memory the computer's own memory? On Apple Silicon it is, under macOS and under Asahi Linux alike."""
-    if sys.platform == 'darwin':
-        return True
+    """Is graphics memory the computer's own memory? On Apple Silicon under Asahi Linux it is."""
     try:
         return b'apple,' in Path('/proc/device-tree/compatible').read_bytes()
     except OSError:
@@ -421,12 +416,12 @@ def unified_memory():
 def judge(fit):
     """Does the whole of it fit this computer? llama.cpp's fit places the model on the graphics memory it finds and counts
     the rest as the computer's own memory, which it takes to be unlimited. So the computer's own memory is checked here:
-    on Apple Silicon (macOS or Asahi Linux) the two are one memory; elsewhere the part placed on the graphics card is not in it."""
+    on Apple Silicon (Asahi Linux) the two are one memory; elsewhere the part placed on the graphics card is not in it."""
     total = fit.get('ram_total') or 0
     dev, host = fit.get('device_bytes') or 0, fit.get('host_bytes') or 0
     devices = [m for m in fit.get('memory') or [] if m.get('kind') == 'device']
     unified = unified_memory()
-    # Windows: weights left in the mapped file (not on a graphics card, not repacked) are outside llama.cpp's count, yet in use
+    # Not unified: weights left in the mapped file (not on a graphics card, not repacked) are outside llama.cpp's count, yet in use
     # while answering. Measured with no GPU: the fit said 9.6 GB, the program held 16.5 to 26 GB.
     mapped = 0 if unified else max(0, SIZE - sum(m.get('model') or 0 for m in fit.get('memory') or []))
     in_ram = dev + host if unified else host + mapped
@@ -717,48 +712,3 @@ def _plain_error(ev):
             'load': 'The local AI could not load the model file.',
             'context': 'There was not enough free memory to start the local AI. Close other programs and ask again.',
             'model_file': 'The local AI could not read the model file.'}.get(code, ev.get('msg') or 'The local AI failed.')
-
-
-def _quiet():
-    """No console window for the program on Windows."""
-    return {'creationflags': 0x08000000} if os.name == 'nt' else {}     # CREATE_NO_WINDOW
-
-
-_job = None
-
-
-def _tie_to_this_process(proc):
-    """Windows: the program goes when Lastbook goes, even if Lastbook is killed (a job object that kills on close).
-    On a Mac it leaves when its standard input closes, which happens when Lastbook ends for any reason."""
-    global _job
-    if os.name != 'nt':
-        return
-    try:
-        import ctypes
-        from ctypes import wintypes
-        k32 = ctypes.windll.kernel32
-        k32.CreateJobObjectW.restype = wintypes.HANDLE
-        k32.OpenProcess.restype = wintypes.HANDLE
-        if _job is None:
-            job = k32.CreateJobObjectW(None, None)
-
-            class LIMIT(ctypes.Structure):
-                _fields_ = [('PerProcessUserTimeLimit', ctypes.c_int64), ('PerJobUserTimeLimit', ctypes.c_int64), ('LimitFlags', wintypes.DWORD),
-                            ('MinimumWorkingSetSize', ctypes.c_size_t), ('MaximumWorkingSetSize', ctypes.c_size_t), ('ActiveProcessLimit', wintypes.DWORD),
-                            ('Affinity', ctypes.c_size_t), ('PriorityClass', wintypes.DWORD), ('SchedulingClass', wintypes.DWORD)]
-
-            class IO(ctypes.Structure):
-                _fields_ = [(n, ctypes.c_uint64) for n in ('a', 'b', 'c', 'd', 'e', 'f')]
-
-            class EXT(ctypes.Structure):
-                _fields_ = [('Basic', LIMIT), ('Io', IO), ('ProcessMemoryLimit', ctypes.c_size_t), ('JobMemoryLimit', ctypes.c_size_t),
-                            ('PeakProcessMemoryUsed', ctypes.c_size_t), ('PeakJobMemoryUsed', ctypes.c_size_t)]
-            info = EXT()
-            info.Basic.LimitFlags = 0x2000      # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-            k32.SetInformationJobObject(wintypes.HANDLE(job), 9, ctypes.byref(info), ctypes.sizeof(info))
-            _job = job
-        h = k32.OpenProcess(0x0101, False, proc.pid)    # PROCESS_SET_QUOTA | PROCESS_TERMINATE
-        k32.AssignProcessToJobObject(wintypes.HANDLE(_job), wintypes.HANDLE(h))
-        k32.CloseHandle(wintypes.HANDLE(h))
-    except Exception as e:
-        print('local AI: could not tie the program to Lastbook:', e, flush=True)

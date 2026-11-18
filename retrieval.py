@@ -1,79 +1,115 @@
 """Local retrieval service shared by the web app and the assistant.
 
-Keyword search (the library's own FTS5/BM25 index, read only) + meaning-based search (bge-small-en-v1.5 run locally
-with onnxruntime) fused with reciprocal-rank fusion. Every passage carries provenance: catalog id, PDF file page or
-video timestamp, and which retriever found it.
+Keyword search (the library's own FTS5/BM25 index, read only) + meaning-based search fused with reciprocal-rank fusion.
+Meaning-based search uses the embedding model that Recall for Omarchy already runs on this computer (EmbeddingGemma, on the
+graphics card), through Recall's owner-only Unix socket: no model of our own, no network. Without Recall, or while it is
+busy or updating, meaning-based search is off and keyword search carries on.
 
-The semantic index lives in derived/index/ (SSD): semantic.sqlite (chunks, per-document signatures) and vectors.f16
-(append-only float16 rows). It grows incrementally: documents whose catalog signature changed or that are new get
-(re)embedded; nothing in library-data is written.
+Every passage carries provenance: catalog id, PDF file page or video timestamp, and which retriever found it.
+
+The semantic index lives in derived/index/: semantic.sqlite (passages, per-document signatures, which model made the
+vectors) and vectors.f16 (append-only float16 rows, row i = passage id i+1). It grows incrementally: documents whose
+catalog signature changed or that are new get (re)embedded; a different model empties it. Nothing in library-data is written.
 """
-import hashlib, html, json, math, os, re, sqlite3, sys, threading, time
+import html, json, os, re, socket, sqlite3, sys, threading, time
 from pathlib import Path
+
+import numpy as np
 
 import engine.paths as lastbook_paths
 from engine.paths import ro_uri
 HERE = lastbook_paths.DATA  # holds derived/
-if not lastbook_paths.FROZEN and os.name != 'nt' and sys.version_info[:2] == (3, 12):  # Mac binaries that belong to the program, built for 3.12, so they would shadow another Python's numpy; never import code from a data folder
-    sys.path.insert(0, str(lastbook_paths.APP / 'derived' / 'pylib'))
 LIB = lastbook_paths.LIB
 IDX = HERE / 'derived' / 'index'
-MODEL = HERE / 'derived' / 'models' / 'bge-small-en-v1.5'
-DIM = 384
 CHUNK, OVERLAP, MINLEN = 1100, 150, 80
-QUERY_PREFIX = 'Represent this sentence for searching relevant passages: '
+BLOCK = 16384     # rows widened to float32 at a time while scoring: float16 matrix products get no BLAS and are ~15x slower
+FLOOR = 0.30      # cosine below which a passage is not worth offering (EmbeddingGemma; measured with tools/eval)
+# EmbeddingGemma's task prompts, as Recall uses them (its src/model.rs).
+QUERY = 'task: search result | query: {}'
+DOCUMENT = 'title: {} | text: {}'
 
-TELEMETRY = 'onnxruntime not loaded'
-# This app stays offline. Read when onnxruntime is imported: the Mac build otherwise opens a usage store and connects to
-# Microsoft's collector, whatever disable_telemetry_events says. The Windows build has no such switch: see engine/quiet_onnx.py.
-os.environ['ORT_DISABLE_TELEMETRY'] = '1'
-try:
-    import numpy as np
-    AVAILABLE = (MODEL / 'model.onnx').exists()
-    if AVAILABLE:  # with no model there is no reason to load it at all
-        if os.name == 'nt':  # before the import, which already writes usage events to Windows. If this fails, the import is not reached.
-            from engine import quiet_onnx
-            quiet_onnx.silence()
-        import onnxruntime as ort
-        from tokenizers import Tokenizer
+
+class RecallUnavailable(Exception):
+    """Recall is not installed, not running, busy, or answered something we cannot use. Keyword search carries on."""
+
+
+def recall_socket():
+    """Recall's socket; LASTBOOK_RECALL_SOCKET names another (tests point it nowhere to run without a model)."""
+    if os.environ.get('LASTBOOK_RECALL_SOCKET'):
+        return Path(os.environ['LASTBOOK_RECALL_SOCKET'])
+    run = os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
+    return Path(run) / 'recall-for-omarchy.sock'
+
+
+class Recall:
+    """Client for Recall's shared inference API (api 1): newline-delimited JSON over its owner-only Unix socket."""
+    BATCH = 32        # Recall's limit per text request
+    RETRY_S = 30      # after a failure, do not try again for this long: every question would otherwise wait for it
+
+    def __init__(self, path=None):
+        self.path = Path(path) if path else recall_socket()
+        self.source = None   # the model Recall reports, e.g. "google/embeddinggemma-2@bfcd298 …"; vectors from two never mix
+        self.error = None
+        self.down_until = 0.0
+
+    def _request(self, value, timeout):
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        buf = bytearray()
         try:
-            if hasattr(ort, 'disable_telemetry_events'):
-                ort.disable_telemetry_events()
-                TELEMETRY = f'ORT_DISABLE_TELEMETRY set, disable_telemetry_events called (onnxruntime {ort.__version__})'
-            else:
-                TELEMETRY = f'ORT_DISABLE_TELEMETRY set; onnxruntime {ort.__version__} has no disable_telemetry_events'
-            if os.name == 'nt':
-                TELEMETRY += '; its calls that write events to Windows are replaced before it loads (engine/quiet_onnx.py)'
-        except Exception as e:
-            TELEMETRY = f'disable_telemetry_events failed: {type(e).__name__}'
-except Exception as e:  # semantic search is optional; keyword search keeps working
-    AVAILABLE = False
-    IMPORT_ERROR = str(e)
+            s.connect(str(self.path))
+            s.sendall(json.dumps(value).encode() + b'\n')
+            while not buf.endswith(b'\n'):
+                piece = s.recv(1 << 20)
+                if not piece:
+                    break
+                buf += piece
+                if len(buf) > 32 << 20:
+                    raise RecallUnavailable('reply too large')
+        except OSError as e:
+            raise RecallUnavailable('not running' if isinstance(e, (FileNotFoundError, ConnectionRefusedError)) else type(e).__name__) from None
+        finally:
+            s.close()
+        try:
+            reply = json.loads(buf)
+        except ValueError:
+            raise RecallUnavailable('invalid reply') from None
+        if not isinstance(reply, dict) or reply.get('api') != 1:
+            raise RecallUnavailable('incompatible Recall version')
+        if reply.get('error'):
+            raise RecallUnavailable(str(reply['error'])[:200])
+        return reply
 
+    def call(self, value, timeout):
+        if time.time() < self.down_until:
+            raise RecallUnavailable(self.error or 'unavailable')
+        try:
+            reply = self._request({'api': 1, **value}, timeout)
+        except RecallUnavailable as e:
+            self.error, self.down_until = str(e), time.time() + self.RETRY_S
+            raise
+        self.error = None
+        return reply
 
-class Embedder:
-    def __init__(self):
-        so = ort.SessionOptions()
-        so.intra_op_num_threads = max(2, (os.cpu_count() or 4) // 2)  # leave CPU for the web server and workers
-        self.sess = ort.InferenceSession(str(MODEL / 'model.onnx'), so, providers=['CPUExecutionProvider'])
-        self.tok = Tokenizer.from_file(str(MODEL / 'tokenizer.json'))
-        self.tok.enable_truncation(max_length=320)
-        self.tok.enable_padding()
-        self.inputs = {i.name for i in self.sess.get_inputs()}
-        self.lock = threading.Lock()
+    def capabilities(self, timeout=3):
+        reply = self.call({'op': 'capabilities'}, timeout)
+        if 'embed' not in (reply.get('operations') or []):
+            raise RecallUnavailable('this Recall has no embed operation')
+        self.source = reply.get('source')
+        return reply
 
-    def embed(self, texts):
-        enc = self.tok.encode_batch(texts)
-        ids = np.array([e.ids for e in enc], dtype=np.int64)
-        mask = np.array([e.attention_mask for e in enc], dtype=np.int64)
-        feed = {'input_ids': ids, 'attention_mask': mask}
-        if 'token_type_ids' in self.inputs:
-            feed['token_type_ids'] = np.zeros_like(ids)
-        with self.lock:
-            out = self.sess.run(None, feed)[0]
-        v = out[:, 0, :]  # bge uses the [CLS] vector
-        v = v / np.linalg.norm(v, axis=1, keepdims=True).clip(1e-9)
-        return v.astype(np.float32)
+    def embed(self, texts, timeout=120):
+        """float32 rows, unit length, one per text."""
+        out = []
+        for i in range(0, len(texts), self.BATCH):
+            batch = texts[i:i + self.BATCH]
+            reply = self.call({'op': 'embed', 'kind': 'text', 'inputs': batch}, timeout)
+            self.source = reply.get('source') or self.source
+            vecs = [e.get('vector') if isinstance(e, dict) else None for e in reply.get('embeddings') or []]
+            if len(vecs) != len(batch) or any(not v for v in vecs) or len({len(v) for v in vecs}) != 1:
+                raise RecallUnavailable('invalid embedding batch')
+            out.append(np.asarray(vecs, dtype=np.float32))
+        return np.concatenate(out) if out else np.zeros((0, 0), dtype=np.float32)
 
 
 def norm_ws(s):
@@ -142,7 +178,7 @@ def vtt_windows(path, span=45):
 
 
 class Index:
-    def __init__(self, catalog_fn, trust_fn, fts_db):
+    def __init__(self, catalog_fn, trust_fn, fts_db, recall=None):
         self.catalog_fn, self.trust_fn, self.fts_db = catalog_fn, trust_fn, fts_db
         IDX.mkdir(parents=True, exist_ok=True)
         self.db_path = IDX / 'semantic.sqlite'
@@ -154,15 +190,16 @@ class Index:
         db.executescript('''CREATE TABLE IF NOT EXISTS chunk(id INTEGER PRIMARY KEY, doc_id TEXT, page INTEGER, t REAL, text TEXT, active INTEGER DEFAULT 1);
           CREATE INDEX IF NOT EXISTS chunk_doc ON chunk(doc_id);
           CREATE TABLE IF NOT EXISTS docstate(doc_id TEXT PRIMARY KEY, sig TEXT, nchunks INTEGER, at REAL);
-          CREATE TABLE IF NOT EXISTS gaps(doc_id TEXT PRIMARY KEY, reason TEXT);''')
+          CREATE TABLE IF NOT EXISTS gaps(doc_id TEXT PRIMARY KEY, reason TEXT);
+          CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);''')
         db.close()
         self.lock = threading.RLock()
-        self.emb = Embedder() if AVAILABLE else None
-        self.mat = None
-        self.active = None
-        self.status = {'state': 'starting' if AVAILABLE else 'off', 'chunks': 0, 'docs': 0, 'pending': None, 'rate': None}
-        if not AVAILABLE:
-            self.status['note'] = 'Meaning-based search is off: no model in this library. Keyword search still works.'
+        self.recall = recall or Recall()
+        self.source, self.dim = None, None
+        self.mat = np.zeros((0, 0), dtype=np.float16)
+        self.active = np.zeros(0, dtype=bool)
+        self._qcache = {}
+        self.status = {'state': 'starting', 'chunks': 0, 'docs': 0, 'pending': None, 'rate': None}
         self._load()
 
     def _db(self):
@@ -197,30 +234,72 @@ class Index:
             size = self.vec_path.stat().st_size
         except FileNotFoundError:
             return
-        if self.mat is not None and size != len(self.mat) * DIM * 2:
+        if not self.dim or size != len(self.mat) * self.dim * 2:
             self._load(truncate=False)
 
     def _load(self, truncate=True, db=None):
-        if not self.vec_path.exists() or not AVAILABLE:
-            self.mat = np.zeros((0, DIM), dtype=np.float16) if AVAILABLE else None
-            self.active = np.zeros(0, dtype=bool) if AVAILABLE else None
-            return
-        raw = np.fromfile(self.vec_path, dtype=np.float16)
-        n = len(raw) // DIM
         db = db or self._ro()
-        rows = one(db, 'SELECT max(id) FROM chunk')[0] or 0
-        n = min(n, rows)  # vectors beyond the committed chunk rows were from an interrupted run
-        self.mat = raw[:n * DIM].reshape(n, DIM)
-        act = np.zeros(n, dtype=bool)
-        for (i,) in db.execute('SELECT id FROM chunk WHERE active=1 AND id<=?', (n,)).fetchall():
-            act[i - 1] = True
-        self.active = act
-        if truncate and n * DIM * 2 != self.vec_path.stat().st_size:
-            with open(self.vec_path, 'r+b') as f:
-                f.truncate(n * DIM * 2)
-        self.status.update(chunks=int(act.sum()), docs=one(db, 'SELECT count(*) FROM docstate WHERE nchunks>0')[0])
+        meta = dict(db.execute('SELECT key, value FROM meta').fetchall())
+        self.source, self.dim = meta.get('source'), int(meta['dim']) if meta.get('dim') else None
+        if not self.dim or not self.vec_path.exists():
+            self.mat, self.active = np.zeros((0, self.dim or 0), dtype=np.float16), np.zeros(0, dtype=bool)
+        else:
+            raw = np.fromfile(self.vec_path, dtype=np.float16)
+            n = min(len(raw) // self.dim, one(db, 'SELECT max(id) FROM chunk')[0] or 0)  # vectors past the committed rows: an interrupted run
+            self.mat = raw[:n * self.dim].reshape(n, self.dim)
+            act = np.zeros(n, dtype=bool)
+            for (i,) in db.execute('SELECT id FROM chunk WHERE active=1 AND id<=?', (n,)).fetchall():
+                act[i - 1] = True
+            self.active = act
+            if truncate and n * self.dim * 2 != self.vec_path.stat().st_size:
+                with open(self.vec_path, 'r+b') as f:
+                    f.truncate(n * self.dim * 2)
+        self.status.update(chunks=int(self.active.sum()), docs=one(db, 'SELECT count(*) FROM docstate WHERE nchunks>0')[0])
         if self.status.get('state') == 'starting':
             self.status['state'] = 'loaded'
+
+    # ------------------------------------------------------------- the model --
+    def _match_model(self, db):
+        """Ask Recall which model it runs. A different one than made the stored vectors empties the index (they cannot be compared)."""
+        src = self.recall.capabilities()['source']
+        if not src:
+            raise RecallUnavailable('Recall reported no model')
+        if src == self.source:
+            return
+        had = one(db, 'SELECT count(*) FROM chunk')[0]
+
+        def w(db):
+            db.execute('DELETE FROM chunk')
+            db.execute('DELETE FROM docstate')
+            db.execute('DELETE FROM gaps')
+            db.execute('DELETE FROM meta')
+            db.execute("INSERT INTO meta VALUES ('source', ?)", (src,))
+        with self.lock:
+            self.tx(db, w)
+            if self.vec_path.exists():
+                with open(self.vec_path, 'r+b') as f:
+                    f.truncate(0)
+            self._qcache.clear()
+            self._load(truncate=False, db=db)
+        if had:
+            self.status['reset'] = {'why': 'Recall model changed', 'passages_dropped': had, 'at': time.strftime('%Y-%m-%dT%H:%M:%S')}
+
+    def query_vector(self, q):
+        """The question as a vector, or None when meaning-based search cannot run now."""
+        if not q or not self.source or not len(self.mat):
+            return None
+        v = self._qcache.get(q)
+        if v is None:
+            try:
+                v = self.recall.embed([QUERY.format(q)], timeout=10)[0]
+            except RecallUnavailable:
+                return None
+            if self.recall.source != self.source or len(v) != self.dim:
+                return None  # Recall moved to another model; the indexer empties and rebuilds the index
+            if len(self._qcache) > 64:
+                self._qcache.clear()
+            self._qcache[q] = v
+        return v
 
     # ------------------------------------------------------------ indexing --
     def excluded(self):
@@ -255,48 +334,53 @@ class Index:
                 vtts = ([tx['vtt_path']] if tx and tx.get('vtt_path') else []) + [c for c in r.get('captions', []) if c.endswith('.vtt')]
                 vtt = next((v for v in vtts if (LIB / v).is_file()), None)
                 if vtt:
-                    out.append((r['id'], 'vtt:' + vtt, -self.trust_fn(r)[1], ('vtt', vtt)))
+                    out.append((r['id'], 'vtt:' + vtt, -self.trust_fn(r)[1], ('vtt', r, vtt)))
                 elif tx and (LIB / tx['path']).is_file():
-                    out.append((r['id'], 'tx:' + tx['sha256'], -self.trust_fn(r)[1], ('tx', tx)))
+                    out.append((r['id'], 'tx:' + tx['sha256'], -self.trust_fn(r)[1], ('tx', r, tx)))
         out.sort(key=lambda x: x[2])
         return out
 
     def _texts(self, doc_id, how):
-        kind, ref = how
+        """(page, t, text) passages of one document."""
+        kind, r = how[0], how[1]
         if kind == 'pages':
             con = sqlite3.connect(ro_uri(self.fts_db), uri=True)
             rows = con.execute('SELECT page, body FROM pages WHERE doc_id=? ORDER BY CAST(page AS INTEGER)', (doc_id,)).fetchall()
             con.close()
             if not rows:  # not in the keyword index (yet); fall back to the extracted text file
-                p = LIB / (ref.get('text_path') or f'text/{doc_id}.txt')
+                p = LIB / (r.get('text_path') or f'text/{doc_id}.txt')
                 if p.is_file():
                     t = p.read_text(encoding='utf-8', errors='replace')
                     rows = list(enumerate(t.split('\n\f\n') if '\n\f\n' in t else t.split('\f'), 1))
             return [(int(p), None, c) for p, b in rows for c in chunks_of(b)]
         if kind == 'vtt':
-            return [(None, t, txt) for t, txt in vtt_windows(LIB / ref)]
-        return [(None, None, c) for c in chunks_of((LIB / ref['path']).read_text(encoding='utf-8', errors='replace'))]
+            return [(None, t, txt) for t, txt in vtt_windows(LIB / how[2])]
+        return [(None, None, c) for c in chunks_of((LIB / how[2]['path']).read_text(encoding='utf-8', errors='replace'))]
 
-    def update(self, budget_s=None, batch=48):
-        """Embed new/changed documents. Returns number of documents processed."""
-        if not self.emb:
-            self.status['state'] = 'off'
-            return 0
+    def update(self, budget_s=None):
+        """Embed new/changed documents. Returns number of documents processed, -1 when another process is indexing."""
         lockf = open(IDX / 'indexer.lock', 'w')
         try:
             lastbook_paths.try_lock(lockf)
         except OSError:  # another process is indexing; just follow its progress
+            lockf.close()
             self.refresh()
             self.status['state'] = 'indexing (other process)'
             return -1
         try:
             db = self._db()
             try:
+                try:
+                    self._match_model(db)
+                except RecallUnavailable as e:
+                    self.status.update(state='waiting for Recall', recall=str(e))
+                    return 0
+                self.status.pop('recall', None)
                 self._reconcile(db)
                 self._load(truncate=True, db=db)
+                return self._update_with(db, budget_s)
             finally:
                 db.close()
-            return self._update(budget_s, batch)
         finally:
             lastbook_paths.unlock(lockf)
             lockf.close()
@@ -304,7 +388,7 @@ class Index:
     def _reconcile(self, db):
         """Vectors and passage rows must line up 1:1. If an earlier run left rows without vectors, drop those rows
         and mark their documents for re-embedding instead of refusing to index."""
-        vec_rows = self.vec_path.stat().st_size // (DIM * 2) if self.vec_path.exists() else 0
+        vec_rows = self.vec_path.stat().st_size // (self.dim * 2) if self.dim and self.vec_path.exists() else 0
         rows = one(db, 'SELECT max(id) FROM chunk')[0] or 0
         if rows <= vec_rows:
             return 0
@@ -319,13 +403,6 @@ class Index:
         self.status['repaired'] = {'rows_without_vectors': rows - vec_rows, 'documents_requeued': docs[:20],
                                    'at': time.strftime('%Y-%m-%dT%H:%M:%S')}
         return rows - vec_rows
-
-    def _update(self, budget_s, batch):
-        db = self._db()
-        try:
-            return self._update_with(db, budget_s, batch)
-        finally:
-            db.close()
 
     def _hide(self, db, doc_ids, forget_text=False):
         """Deactivate every passage of these documents (removed, rejected or replaced)."""
@@ -344,7 +421,7 @@ class Index:
                     self.active[i - 1] = False
         return len(ids)
 
-    def _update_with(self, db, budget_s, batch):
+    def _update_with(self, db, budget_s):
         known = dict(db.execute('SELECT doc_id, sig FROM docstate').fetchall())
         srcs = self.sources()
         excl = self.excluded()
@@ -370,9 +447,17 @@ class Index:
                 parts, gap = [], f'unreadable: {e}'[:200]
             if not parts and not gap:
                 gap = 'no extractable text'
-            vecs = [self.emb.embed([p[2] for p in parts[i:i + batch]]) for i in range(0, len(parts), batch)]
-            v = np.concatenate(vecs).astype(np.float16) if parts else None
+            title = how[1].get('title') or 'none'
+            v = self.recall.embed([DOCUMENT.format(title, p[2]) for p in parts]).astype(np.float16) if parts else None
+            if self.recall.source != self.source:
+                raise RecallUnavailable('Recall model changed while indexing')  # the next pass empties the index and starts again
             with self.lock:
+                if v is not None and self.dim is None:  # the first vectors set the width
+                    self.dim = v.shape[1]
+                    self.tx(db, lambda db: db.execute("INSERT OR REPLACE INTO meta VALUES ('dim', ?)", (str(self.dim),)))
+                    self.mat = np.zeros((0, self.dim), dtype=np.float16)
+                if v is not None and v.shape[1] != self.dim:
+                    raise RecallUnavailable('embedding width changed')
                 old = [i for (i,) in db.execute('SELECT id FROM chunk WHERE doc_id=? AND active=1', (doc_id,)).fetchall()]
                 start = (one(db, 'SELECT max(id) FROM chunk')[0] or 0) + 1
                 if start - 1 != len(self.mat):  # vectors and rows drifted (e.g. an interrupted run): realign, don't fail
@@ -410,46 +495,60 @@ class Index:
                            docs=one(db, 'SELECT count(*) FROM docstate WHERE nchunks>0')[0])
         return done
 
-    def run_forever(self, every=300):
+    def run_forever(self, every=300, retry=60):
         while True:
+            wait = every
             try:
                 n = self.update(budget_s=None)
                 if n >= 0:  # a successful pass clears any earlier error
                     self.status.pop('error', None)
                     self.status['last_ok'] = time.strftime('%Y-%m-%dT%H:%M:%S')
+                if self.status.get('state') == 'waiting for Recall':
+                    wait = retry
+            except RecallUnavailable as e:
+                self.status.update(state='waiting for Recall', recall=str(e))
+                wait = retry
             except Exception as e:
                 print(f'semantic index: {e}', file=sys.stderr, flush=True)
                 self.status.update(state='error', error=type(e).__name__, error_at=time.strftime('%Y-%m-%dT%H:%M:%S'))  # shown to clients: no paths
-            time.sleep(every)
-
+                wait = retry
+            time.sleep(wait)
 
     # ------------------------------------------------------------- search --
-    def semantic(self, q, k=60, allowed=None, floor=0.55):
-        if not self.emb or self.mat is None or not len(self.mat):
+    def semantic(self, q, k=60, allowed=None, floor=FLOOR, doc=None):
+        """Best passages for q (a question, or its query_vector). doc: only that document's passages, best first, no floor."""
+        qv = self.query_vector(q) if isinstance(q, str) else q
+        if qv is None:
             return []
-        qv = self.emb.embed([QUERY_PREFIX + q])[0].astype(np.float16)
         with self.lock:
             m, act = self.mat, self.active
-            s = (m @ qv).astype(np.float32)
-            s[~act[:len(s)]] = -1
-        top = np.argpartition(-s, min(k * 3, len(s) - 1))[:k * 3]
-        top = top[np.argsort(-s[top])]
+        if not len(m):
+            return []
         db = self._ro()
+        if doc:
+            ids = np.array([i - 1 for (i,) in db.execute('SELECT id FROM chunk WHERE doc_id=? AND active=1 AND id<=?', (doc, len(m)))], dtype=np.int64)
+            if not len(ids):
+                return []
+            s = np.full(len(m), -2.0, dtype=np.float32)
+            s[ids] = m[ids].astype(np.float32) @ qv
+            order = ids[np.argsort(-s[ids])]
+        else:
+            s = np.concatenate([m[i:i + BLOCK].astype(np.float32) @ qv for i in range(0, len(m), BLOCK)])
+            s[~act[:len(s)]] = -2
+            cand = np.flatnonzero(s >= floor)
+            order = cand[np.argsort(-s[cand])]
         excl = self.excluded()
         out = []
-        for i in top:
-            row = one(db, 'SELECT doc_id,page,t,text FROM chunk WHERE id=?', (int(i) + 1,))
-            if not row or row[0] in excl:
-                continue
-            if allowed and not allowed(row[0]):
-                continue
-            if float(s[i]) < floor:
-                break
-            if not readable(row[3]):  # indexed before the quality filter existed
-                continue
-            out.append({'doc_id': row[0], 'page': row[1], 't': row[2], 'text': row[3], 'sem': float(s[i])})
-            if len(out) >= k:
-                break
+        for b in range(0, len(order), 256):  # fetch candidates in batches, stop once k passed the filters
+            ids = [int(i) + 1 for i in order[b:b + 256]]
+            rows = {r[0]: r for r in db.execute(f"SELECT id,doc_id,page,t,text FROM chunk WHERE id IN ({','.join('?' * len(ids))})", ids)}
+            for i in ids:
+                row = rows.get(i)
+                if not row or row[1] in excl or (allowed and not allowed(row[1])):
+                    continue
+                out.append({'doc_id': row[1], 'page': row[2], 't': row[3], 'text': row[4], 'sem': float(s[i - 1])})
+                if len(out) >= k:
+                    return out
         return out
 
     def gaps_for(self, doc_ids):
@@ -479,8 +578,9 @@ if __name__ == '__main__':  # python retrieval.py  -> build/refresh the semantic
     sys.path.insert(0, str(lastbook_paths.APP))
     import server
     ix = Index(server.catalog, server.trust, server.library.DB)
-    print('pending documents:', len([1 for s in ix.sources()]), flush=True)
+    print('documents:', len(ix.sources()), flush=True)
     stop = threading.Event()
+
     def report():
         while not stop.wait(30):
             print(json.dumps(ix.status), flush=True)
