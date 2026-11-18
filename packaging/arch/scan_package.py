@@ -44,7 +44,7 @@ APP_ID = 'io.github.ferdousbhai.Lastbook'
 WINDOW = 'usr/bin/lastbook'
 # What the window links besides SYSTEM_LIBS: the GTK 4 stack, WebKitGTK 6, Poppler and GStreamer, all in depends=().
 WINDOW_LIBS = re.compile(r'^(libgtk-4|libgdk_pixbuf-2\.0|libgio-2\.0|libgmodule-2\.0|libpango(cairo)?-1\.0|libcairo(-gobject)?|libharfbuzz|libgraphene-1\.0|'
-                         r'libwebkitgtk-6\.0|libjavascriptcoregtk-6\.0|libpoppler-glib|libgst[a-z]*-1\.0|libsoup-3\.0)\.so')
+                         r'libwebkitgtk-6\.0|libjavascriptcoregtk-6\.0|libpoppler-glib|libgst[a-z]*-1\.0|libsoup-3\.0|libsqlite3)\.so')   # sqlite: the map files
 
 
 def bad_name(name):
