@@ -298,3 +298,48 @@ image.danger { color: @lb_danger; }
 .cues > row:hover { background: alpha(@lb_text, 0.05); }
 .cues > row:selected { background: alpha(@lb_accent, 0.18); }
 .cue-time { color: @lb_accent; font-size: 0.85em; min-width: 44px; }
+
+/* -------------------------------------------------------------------------------------------------------- setup -- */
+checkbutton.choice-row {
+  border: 1px solid alpha(@lb_border, 0.35);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+checkbutton.choice-row:checked { background: alpha(@lb_accent, 0.10); border-color: alpha(@lb_accent, 0.5); }
+checkbutton.choice-row > check {
+  border: 1px solid alpha(@lb_border, 0.9);
+  border-radius: 50%;
+  min-width: 14px;
+  min-height: 14px;
+  margin-right: 10px;
+}
+checkbutton.choice-row > check:checked { background: @lb_accent; border-color: @lb_accent; }
+progressbar > trough { background: alpha(@lb_border, 0.3); border-radius: 3px; min-height: 6px; }
+progressbar > trough > progress { background: @lb_accent; border-radius: 3px; min-height: 6px; }
+dropdown > button {
+  background: alpha(@lb_text, 0.04);
+  border: 1px solid alpha(@lb_border, 0.6);
+  border-radius: 5px;
+  padding: 4px 8px;
+}
+popover > contents { background: @lb_surface; border: 1px solid alpha(@lb_border, 0.6); color: @lb_text; padding: 4px; }
+popover listview > row:selected, popover listview > row:hover { background: alpha(@lb_accent, 0.18); }
+
+/* ---------------------------------------------------------------------------------------------------------- map -- */
+.map-bar {
+  background: alpha(@lb_surface, 0.94);
+  border: 1px solid alpha(@lb_border, 0.6);
+  border-radius: 6px;
+  padding: 4px;
+}
+.map-bar entry { background: transparent; border: none; }
+.map-status {
+  background: alpha(@lb_surface, 0.85);
+  border-radius: 4px;
+  color: @lb_dim_text;
+  font-size: 0.85em;
+  padding: 1px 6px;
+}
+.map-results { background: transparent; }
+.map-results > row { border-radius: 5px; padding: 2px 8px; }
+.map-results > row:hover, .map-results > row:selected { background: alpha(@lb_accent, 0.18); }

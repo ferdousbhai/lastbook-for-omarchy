@@ -34,6 +34,8 @@ pub enum Route {
     Web { path: String, meta: String },
     MapAt { lat: f64, lon: f64, label: String },
     Shelf(String),
+    /// Library and downloads (setup, on the library that is open).
+    Manage,
     Section(&'static str),
 }
 
@@ -67,6 +69,12 @@ impl Route {
             "web" => Route::Web { path: rest.to_owned(), meta: String::new() },
             "search" => Route::Search { q: rest.to_owned(), kind: "any".into() },
             "shelf" => Route::Shelf(rest.to_owned()),
+            "manage" => Route::Manage,
+            "map" => {
+                let mut it = rest.splitn(3, ',');
+                let (lat, lon) = (it.next()?.trim().parse().ok()?, it.next()?.trim().parse().ok()?);
+                Route::MapAt { lat, lon, label: it.next().unwrap_or("Here").to_owned() }
+            }
             "section" => Route::Section(SECTIONS.iter().find(|s| s.0 == rest).map(|s| s.0)?),
             _ => return None,
         })
@@ -110,6 +118,7 @@ pub struct App {
     pub web: RefCell<Option<Rc<WebPage>>>,
     pub browse: RefCell<Option<Rc<Browse>>>,
     pub map: RefCell<Option<Rc<MapPage>>>,
+    pub manage: RefCell<Option<Rc<crate::setup::SetupPage>>>,
 }
 
 fn header_button(icon: &str, tip: &str) -> gtk::Button {
@@ -196,6 +205,7 @@ impl App {
             web: RefCell::new(None),
             browse: RefCell::new(None),
             map: RefCell::new(None),
+            manage: RefCell::new(None),
         });
 
         let search = SearchPage::build(&app);
@@ -235,6 +245,10 @@ impl App {
         let map = MapPage::build(&app);
         app.stack.add_named(&map.root, Some("map"));
         app.map.replace(Some(map));
+        let manage = crate::setup::SetupPage::build(app.engine.clone());
+        manage.set_window(&app.window);
+        app.stack.add_named(&manage.root, Some("manage"));
+        app.manage.replace(Some(manage));
 
         let a = app.clone();
         toggle.connect_clicked(move |_| a.toggle_sidebar());
@@ -446,6 +460,12 @@ impl App {
                     b.show_shelf(id, &name);
                 }
                 ("shelf", "library", "Library".to_owned())
+            }
+            Route::Manage => {
+                if let Some(m) = self.manage.borrow().as_ref() {
+                    m.refresh();
+                }
+                ("manage", "about", "Library and downloads".to_owned())
             }
             Route::Section(id) => {
                 match *id {

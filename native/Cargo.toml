@@ -23,6 +23,9 @@ toml = "1.1"
 pulldown-cmark = { version = "0.13", default-features = false }
 webkit6 = { version = "0.6.1", features = ["v2_50"] }
 base64 = "0.22"
+rusqlite = "0.43.0"
+flate2 = "1.1.11"
+pangocairo = "0.22"
 
 [profile.release]
 lto = "thin"

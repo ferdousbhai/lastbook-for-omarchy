@@ -13,9 +13,11 @@ mod guides;
 mod library;
 mod map;
 mod md;
+mod mvt;
 mod pdf;
 mod reader;
 mod search;
+mod setup;
 mod theme;
 mod videos;
 mod web;
@@ -47,7 +49,25 @@ fn main() -> glib::ExitCode {
         let theme = theme::Theme::install(&display);
         gtk::Window::set_default_icon_name(APP_ID);
         match engine::Engine::start(data.as_deref()) {
+            Ok(engine) if engine.ready.setup => {
+                // No library yet: the window is setup, and nothing else.
+                setup::restart_on_notice(app, &engine);
+                let w = gtk::ApplicationWindow::builder().application(app).title("Set up Lastbook").default_width(900).default_height(760).build();
+                let header = gtk::HeaderBar::new();
+                header.set_show_title_buttons(false);
+                let t = gtk::Label::new(Some("Set up Lastbook"));
+                t.add_css_class("header-title");
+                header.set_title_widget(Some(&t));
+                w.set_titlebar(Some(&header));
+                let page = setup::SetupPage::build(engine);
+                page.set_window(&w);
+                w.set_child(Some(&page.root));
+                page.refresh();
+                w.present();
+                unsafe { app.set_data("lastbook-setup", (page, theme)) };
+            }
             Ok(engine) => {
+                setup::restart_on_notice(app, &engine);
                 let ui = ui::App::build(app, engine, theme);
                 ui.window.present();
                 // The window (and the theme it holds) lives as long as the application does.

@@ -126,7 +126,7 @@ class WhatShips(unittest.TestCase):
 
     def test_shipped_code_names_no_household_place(self):
         for rel in ('server.py', 'assistant.py', 'retrieval.py', 'engine/library.py', 'engine/saved_pages.py', 'engine/paths.py', 'app/main.py', 'app/bridge.py',
-                    'app/shell_linux.py'):
+                    'app/engine_pipe.py'):
             self.assertIsNone(HOUSEHOLD.search((ROOT / rel).read_text(encoding='utf-8')), rel)
         self.assertNotIn('118.4', (ROOT / 'server.py').read_text(encoding='utf-8'))
 

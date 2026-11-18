@@ -1,7 +1,7 @@
 """No-port transport between the app's window and the engine. Nothing in here opens a socket.
 
-A request from the web view runs the engine's unchanged request Handler on a worker thread, over in-memory streams.
-The window (shell_linux.py, WebKitGTK's URISchemeRequest) calls start(...), which feeds a Sink piece by piece, with backpressure.
+A request from the window runs the engine's unchanged request Handler on a worker thread, over in-memory streams.
+engine_pipe.py (the native window's engine process) calls start(...), which feeds a Sink piece by piece, with backpressure.
 
 What holds:
   - Lanes. The app's own small requests, everyone else's /api/, page renders, chat and large files each have their own workers

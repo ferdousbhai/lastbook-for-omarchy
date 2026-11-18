@@ -239,7 +239,7 @@ TOOLS = [
         'Get timestamped transcript lines from a library video, optionally around a topic, to cite a moment in it.',
         'parameters': {'type': 'object', 'properties': {'video_id': {'type': 'string'}, 'query': {'type': 'string'}}, 'required': ['video_id']}}},
     {'type': 'function', 'function': {'name': 'lookup_place', 'description':
-        'Find a place (town, ZIP code, named place) in the offline gazetteer, and optionally the nearest help points (hospital, clinic, pharmacy, fire_station, police, drinking_water, toilet, shelter, community_centre, supermarket) from the offline Southern California map.',
+        'Find a place (town, ZIP code, named place) in the offline gazetteer, and optionally the nearest help points (hospital, clinic, pharmacy, fire_station, police, drinking_water, toilet, shelter, community_centre, supermarket) where the offline map has them.',
         'parameters': {'type': 'object', 'properties': {'query': {'type': 'string'},
             'nearby': {'type': 'string', 'description': 'Comma-separated kinds of help point to list near the place'}}, 'required': ['query']}}},
 ]

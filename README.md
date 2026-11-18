@@ -13,7 +13,8 @@ download packs are Lastbook's own, from `downloads.lastbook.org`.
 
 ## Install
 
-Build and install the package from this checkout (both architectures; it compiles the local AI's runner, which takes a while):
+Build and install the package from this checkout (both architectures; it compiles the window and the local AI's runner, which
+takes a while; it needs Rust):
 
 ```bash
 cd packaging/arch && makepkg -si
@@ -23,7 +24,8 @@ For meaning-based search, install Recall for Omarchy as well (`curl -fsSL https:
 Without it everything works, and search matches words only.
 
 Open Lastbook from the application menu. First-run setup downloads your chosen library, state map and optional local AI.
-The app uses the system's GTK, WebKitGTK and GStreamer codecs. Your library and settings stay in your home folder
+The window is a native GTK 4 program (`lastbook`); it uses the system's WebKitGTK, Poppler and GStreamer codecs, and runs
+the Python engine as its own child process. Your library and settings stay in your home folder
 (`~/.local/share/Lastbook`, `~/.config/Lastbook`, `~/.cache/Lastbook`). Updates come from pacman (`omarchy update`).
 
 ## What it does
@@ -32,9 +34,13 @@ The app uses the system's GTK, WebKitGTK and GStreamer codecs. Your library and 
   with page numbers, plus what curators looked for and did not find (`content/gaps.json`).
 - **The full library.** Manuals and PDFs (with a whole-PDF view), videos, and offline encyclopedias (ZIM files), with
   keyword search everywhere and meaning-based search through Recall for Omarchy when it is running.
-- **Offline map.** A base map of the world and the US, plus a detailed map for the state selected during setup: local streets,
-  buildings, terrain, crops, and water, help and resource points. Addresses in that state can be found offline. The person
-  picks the state; Lastbook never detects location.
+- **Offline map of the world.** OpenStreetMap vector tiles drawn natively in the theme's colours: the whole world to city
+  level (`derived/geo/world.mbtiles`, about 0.6 GB), plus street-level detail (roads, buildings, water, and help points:
+  hospitals, pharmacies, police, fire stations, drinking water, shelters) for the region chosen in setup, any of
+  Geofabrik's 554 regions. Places anywhere can be found offline (a GeoNames gazetteer of countries, regions and towns of
+  15,000+). The person picks the region; Lastbook never detects location. Builders: `tools/map_extract.py` (cuts tiles from
+  Protomaps' world build over HTTPS range requests), `tools/build_world_places.py`, `tools/build_map_region.py` (a region's
+  map-set zip and manifest entry). The US library maps (state maps, addresses, terrain) still work where installed.
 - **Optional local AI.** Ask questions in plain words and get answers that cite library pages, from a model that runs on
   the computer itself (see "The local AI" below). Without it, Chat still finds the right pages.
 - **One-download setup.** On first run, setup defaults to Small and selects local AI when the computer can run it.
@@ -43,8 +49,8 @@ The app uses the system's GTK, WebKitGTK and GStreamer codecs. Your library and 
 
 ## Privacy and network use
 
-- **No listening port.** The desktop app opens no network port. The window and the engine talk through an in-memory bridge
-  (`app/bridge.py`) served through WebKitGTK's `URISchemeRequest` (`app/shell_linux.py`). The local AI runner speaks JSON
+- **No listening port.** The desktop app opens no network port. The window (`native/`) and the engine talk in JSON lines over
+  the engine's standard input and output (`app/engine_pipe.py`, through the in-memory bridge `app/bridge.py`). The local AI runner speaks JSON
   lines on standard input and output and opens no socket either. Meaning-based search asks Recall for Omarchy's
   EmbeddingGemma over a local Unix socket in the user's runtime folder; nothing of it leaves the computer.
 - **One use of the network, started by the person.** Setup's downloader (`engine/setup/`), when the person starts or
@@ -68,29 +74,32 @@ The setup contract, including state maps, is in [docs/SETUP-API.md](docs/SETUP-A
 
 | Path | What it is |
 |---|---|
-| `app/` | The desktop app: entry point (`main.py`), the no-port bridge, the GTK/WebKitGTK window (`shell_linux.py`), and tests (`app/tests/`). |
+| `native/` | The desktop window: a Rust crate (binary `lastbook`, app id `io.github.ferdousbhai.Lastbook`) on GTK 4, WebKitGTK 6 and Poppler. It starts the engine as a child process. |
+| `app/` | The engine's side of the app: the pipe the window talks to (`engine_pipe.py`), library lookup and setup hooks (`main.py`), the no-port bridge (`bridge.py`), and tests (`app/tests/`). |
 | `engine/` | Paths and data-folder lookup, library access, saved pages, offline address search (`address_search.py`) and first-run setup (`engine/setup/`). |
 | `server.py`, `assistant.py`, `retrieval.py`, `encyclopedia.py`, `llm_local.py` | The engine: request handler, the assistant and its citation checks, keyword plus meaning-based search (through Recall), encyclopedia articles as passages, and the local AI (model pins, fit check, runner control). |
-| `web/` | The interface, in plain HTML, CSS and JavaScript with no build step and nothing loaded from the web. `setup.*` is the setup screen. |
+| `web/` | The browser interface of the library server (`server.py`), in plain HTML, CSS and JavaScript with no build step and nothing loaded from the web. The desktop app does not use or ship it. |
 | `content/` | The curated guides (`topics/*.json`) and what curators looked for and did not find (`gaps.json`). Format: `content/SCHEMA.md`. |
-| `packaging/` | The Arch package (`arch/`: PKGBUILD, the pack manifest it ships, the package scan), the launcher, desktop entry and video source (`linux/`), icons (`icon/`), pack and state-map builders, release manifest, TLS roots tools, and `packaging/llm/` (the local AI runner). |
+| `packaging/` | The Arch package (`arch/`: PKGBUILD, the pack manifest it ships, the package scan), the desktop entry (`linux/`), icons (`icon/`), pack and state-map builders, release manifest, TLS roots tools, and `packaging/llm/` (the local AI runner). |
 | `derived/packs/pack-spec.json` | What goes into each download pack (Small, Medium, All and add-ons) and each state map. Everything else under `derived/` is generated and not kept here. |
 | `tools/` | Builders for the offline map, addresses and place finder, curator helpers (`libq.py`, `validate_topics.py`), and the retrieval check (`eval/`). |
 | `docs/` | The setup contract (`SETUP-API.md`), how the offline map is put together (`MAPS.md`) and notes on the library server version (`LIBRARY-SERVER.md`). |
 
 ## Run from source
 
-You need Python 3.11 or later and a **data folder**. A data folder holds `library-data/catalog.json` (the library) and gets
-a `derived/` folder for indexes, caches and logs. Get one by running the app once and letting setup download a pack, or by
+You need Python 3.11 or later, Rust, the GTK 4, WebKitGTK 6 and Poppler development files (the Arch packages in the
+PKGBUILD's `depends`), and a **data folder**. A data folder holds `library-data/catalog.json` (the library) and gets a
+`derived/` folder for indexes, caches and logs. Get one by running the app once and letting setup download a pack, or by
 unzipping a pack from lastbook.org.
 
 ```bash
-python3 -m venv --system-site-packages .venv     # the system's PyGObject (python-gobject) gives GTK and WebKitGTK
-.venv/bin/pip install -r packaging/requirements.txt
-.venv/bin/python app/main.py --data /path/to/LastbookData
+python3 -m pip install --target .deps -r packaging/requirements.txt     # for /usr/bin/python3, the Python the window starts
+cargo build --manifest-path native/Cargo.toml
+LASTBOOK_DEV=1 PYTHONPATH=$PWD/.deps native/target/debug/lastbook --data /path/to/LastbookData
 ```
 
-Without `--data`, the app checks `LASTBOOK_DATA`, the folder chosen last time, and its own data folder.
+`LASTBOOK_DEV=1` lets the engine (`/usr/bin/python3 app/engine_pipe.py`, started by the window) take its dependencies from
+`PYTHONPATH`. Without `--data`, the engine checks `LASTBOOK_DATA`, the folder chosen last time, and its own data folder.
 Existing libraries elsewhere are accessed when the person chooses them. If no library is available, it opens setup.
 The full order is in `app/main.py`.
 
@@ -101,7 +110,7 @@ LASTBOOK_DATA=/path/to/LastbookData python3 server.py          # then open http:
 ```
 
 See [docs/LIBRARY-SERVER.md](docs/LIBRARY-SERVER.md). It was written for the household library this project grew out of,
-so some of its paths and ports describe that setup. The desktop app does not use this port.
+so some of its paths and ports describe that setup. The desktop app does not use this port; `web/` is there for this mode only.
 
 ## How Chat finds what it cites
 
@@ -124,9 +133,9 @@ hits@8, MRR and timing on `tools/eval/questions.json` against a real data folder
 
 ## Build
 
-`packaging/arch/PKGBUILD` builds the package from the committed source (`git archive HEAD`): the local AI's runner
-(`packaging/llm/build_llm_linux.sh`, llama.cpp at a pinned tag with Vulkan and every CPU variant), the GStreamer video source,
-and the two Python packages Arch does not carry (libzim and pypdfium2, pinned wheels). Everything else comes from Arch. Check a
+`packaging/arch/PKGBUILD` builds the package from the committed source (`git archive HEAD`): the window
+(`cargo build --release --locked --manifest-path native/Cargo.toml`, installed as `/usr/bin/lastbook`), the local AI's runner
+(`packaging/llm/build_llm_linux.sh`, llama.cpp at a pinned tag with Vulkan and every CPU variant), and the two Python packages Arch does not carry (libzim and pypdfium2, pinned wheels). Everything else comes from Arch. Check a
 built package with `python3 packaging/arch/scan_package.py <package>`.
 
 ## Packs, state maps and the local AI
@@ -168,8 +177,8 @@ python3 -B -m unittest app.tests.test_bridge app.tests.test_setup app.tests.test
 ```
 
 `test_bridge` builds its own made-up library; `test_semantic` runs a stand-in Recall; the others run without a library. `packaging/test_pack_tools.py SAMPLE
-WORK` checks the pack tools against a pack sample (`build_packs.py build <pack> --sample N`). The `linux_*` helpers in
-`app/tests/` drive a running window through AT-SPI.
+WORK` checks the pack tools against a pack sample (`build_packs.py build <pack> --sample N`). The window's own tests run with
+`cargo test --manifest-path native/Cargo.toml`. The `linux_*` helpers in `app/tests/` drive a running window through AT-SPI.
 
 ## Contributing and licence
 

@@ -1,6 +1,6 @@
 """Where things live.
 
-APP   read-only program files (web/, content/). In the packaged app this is the package's own folder (sys._MEIPASS, set by packaging/linux/lastbook.py).
+APP   read-only program files (web/, content/). In the packaged app this is the package's own folder (sys._MEIPASS, set by app/engine_pipe.py).
 DATA  the writable data folder holding library-data/ and derived/. Set with LASTBOOK_DATA (or server.py --data).
 With LASTBOOK_DATA unset, DATA == APP: the same folder layout as running server.py from the source tree.
 """

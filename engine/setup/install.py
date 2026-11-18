@@ -63,7 +63,7 @@ def _member_parts(info, top_optional=False):
 
 MAP_FIXED = {'map-set.json', 'derived/geo/national-status.json', 'derived/geo/socal-cells.json', 'library-data/geography/resources/atlas.sqlite'}
 MAP_DIRS = {'', 'derived', 'derived/geo', 'library-data', 'library-data/geography', 'library-data/geography/resources'}
-MAP_SQLITE = re.compile(r'derived/geo/[A-Za-z0-9._-]+\.sqlite')
+MAP_SQLITE = re.compile(r'derived/geo/[A-Za-z0-9._-]+\.(sqlite|mbtiles)')   # .mbtiles: the world map and its regions (SQLite too)
 SQLITE_SIDES = ('-wal', '-shm', '-journal')     # SQLite's own files beside a database: they move with it, or the new one could be damaged
 
 
@@ -302,7 +302,7 @@ def map_files(lib):
     rels |= {r for r in MAP_FIXED if (lib / r).is_file()}
     out = set()
     for r in rels:
-        for side in ('',) + (SQLITE_SIDES if r.endswith('.sqlite') else ()):
+        for side in ('',) + (SQLITE_SIDES if r.endswith(('.sqlite', '.mbtiles')) else ()):
             if (lib / (r + side)).is_file():
                 out.add(r + side)
     return sorted(out)

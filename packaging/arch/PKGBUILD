@@ -11,13 +11,14 @@ pkgdesc='Offline survival library for Omarchy: manuals, videos, encyclopedias, o
 arch=('x86_64' 'aarch64')
 url='https://github.com/ferdousbhai/lastbook-for-omarchy'
 license=('MIT')
-# Videos play through GStreamer: H.264/AAC through gst-libav, VP9 through gst-plugins-good, AV1 through gst-plugin-dav1d.
+# The engine is Python (numpy, Beautiful Soup, and the two wheels below); the window is GTK 4 (native/), with WebKitGTK 6 for
+# articles, Poppler for PDFs and GStreamer for videos: H.264/AAC through gst-libav, VP9 through gst-plugins-good, AV1 through gst-plugin-dav1d.
 # The local AI's runner needs the GCC runtime (OpenMP) and the Vulkan loader (CPU fallback without a driver).
-depends=('python>=3.14' 'python<3.15' 'python-gobject' 'gtk3' 'webkit2gtk-4.1' 'gstreamer'
-  'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'gst-plugin-dav1d' 'python-numpy' 'python-beautifulsoup4' 'gcc-libs' 'vulkan-icd-loader')
+depends=('python>=3.14' 'python<3.15' 'python-numpy' 'python-beautifulsoup4' 'glib2' 'gtk4' 'webkitgtk-6.0' 'poppler-glib'
+  'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'gst-plugin-dav1d' 'gcc-libs' 'vulkan-icd-loader')
 optdepends=('recall-for-omarchy: meaning-based search, with the embedding model Recall already runs'
   'vulkan-asahi: the local AI on the graphics card of an Apple Silicon Mac')
-makedepends=('git' 'cmake' 'ninja' 'gcc' 'shaderc' 'vulkan-headers' 'spirv-headers' 'pkgconf' 'python-pillow' 'binutils')
+makedepends=('git' 'rust' 'cargo' 'cmake' 'ninja' 'gcc' 'shaderc' 'vulkan-headers' 'spirv-headers' 'pkgconf' 'python-pillow' 'binutils')
 options=('!debug' '!lto' '!strip')
 source=("llama.cpp::git+https://github.com/ggml-org/llama.cpp.git#tag=${_llama}")
 sha256sums=('SKIP')
@@ -36,6 +37,7 @@ prepare() {
   rm -rf "$srcdir/lastbook"
   mkdir -p "$srcdir/lastbook"
   git -C "$_root" archive HEAD | tar -x -C "$srcdir/lastbook"
+  cargo fetch --locked --manifest-path "$srcdir/lastbook/native/Cargo.toml"
   [ "$(python -c 'import sys; print("%d.%d" % sys.version_info[:2])')" = "$_python" ] || { echo "Python is not $_python: update the wheels" >&2; return 1; }
 }
 
@@ -45,27 +47,26 @@ build() {
   mkdir -p "$srcdir/llm"
   ln -sfn "$srcdir/llama.cpp" "$srcdir/llm/llama.cpp"
   W="$srcdir/llm" bash packaging/llm/build_llm_linux.sh
-  # lastbooksrc: WebKitGTK's player has no source for a custom scheme, so the videos come through this GStreamer element.
-  gcc -shared -fPIC -O2 -Wall -Werror -s -ffile-prefix-map="$PWD"=lastbook packaging/linux/gst/lastbooksrc.c \
-    -o "$srcdir/libgstlastbooksrc.so" $(pkg-config --cflags --libs gstreamer-1.0 gstreamer-base-1.0)
-  # web/ and content/ as they ship (general wording, no web addresses in our own pages)
+  # The window: native/, Rust and GTK 4. It runs the engine (app/engine_pipe.py) as its child, over pipes.
+  # No build folder or home folder in the program: source paths in panic messages are remapped.
+  RUSTFLAGS="$RUSTFLAGS --remap-path-prefix=$srcdir=/build --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo" \
+    CARGO_TARGET_DIR="$srcdir/target" cargo build --release --locked --manifest-path native/Cargo.toml
+  # content/ as it ships (general wording for the home area, no working names)
   python -I -B packaging/ship_app_files.py "$srcdir/ship"
 }
 
 package() {
   cd "$srcdir/lastbook"
   local lib="$pkgdir/usr/lib/$pkgname"
-  install -d "$lib/app" "$lib/engine/setup" "$lib/setup" "$lib/lib" "$lib/llm" "$lib/gst"
-  install -m644 app/main.py app/bridge.py app/shell_linux.py "$lib/app/"
+  install -d "$lib/app" "$lib/engine/setup" "$lib/setup" "$lib/lib" "$lib/llm"
+  install -m644 app/engine_pipe.py app/main.py app/bridge.py "$lib/app/"
   install -m644 server.py retrieval.py encyclopedia.py assistant.py llm_local.py VERSION "$lib/"
   install -m644 engine/__init__.py engine/paths.py engine/library.py engine/saved_pages.py engine/address_search.py "$lib/engine/"
   install -m644 engine/setup/*.py engine/setup/roots.pem "$lib/engine/setup/"
   install -m644 packaging/arch/manifest-v1.json "$lib/setup/"
-  install -m644 packaging/linux/lastbook.py "$lib/"
-  cp -R "$srcdir/ship/web" "$srcdir/ship/content" "$lib/"
+  cp -R "$srcdir/ship/content" "$lib/"
   install -m755 "$srcdir/llm/bin-linux/lastbook-llm" "$lib/llm/"
   install -m644 "$srcdir"/llm/bin-linux/*.so* "$srcdir"/llm/bin-linux/LICENSE* "$srcdir"/llm/bin-linux/NOTICE* "$lib/llm/"
-  install -m644 "$srcdir/libgstlastbooksrc.so" "$lib/gst/"
   local whl
   for whl in "$srcdir"/*.whl; do
     python -I -m zipfile -e "$(realpath "$whl")" "$lib/lib"
@@ -73,10 +74,8 @@ package() {
   find "$lib/lib" -depth \( -name tests -o -name testing -o -name __pycache__ -o -name pypdfium2_cli \) -type d -exec rm -rf {} +
   python -I -m compileall -q -j 0 -s "$pkgdir" -p / "$lib" >/dev/null
 
-  install -d "$pkgdir/usr/bin"
-  printf '#!/bin/sh\nexec /usr/bin/python3 -I -B /usr/lib/%s/lastbook.py "$@"\n' "$pkgname" > "$pkgdir/usr/bin/lastbook"
-  chmod 755 "$pkgdir/usr/bin/lastbook"
-  install -Dm644 packaging/linux/lastbook.desktop "$pkgdir/usr/share/applications/lastbook.desktop"
+  install -Dm755 "$srcdir/target/release/lastbook" "$pkgdir/usr/bin/lastbook"
+  install -Dm644 packaging/linux/io.github.ferdousbhai.Lastbook.desktop "$pkgdir/usr/share/applications/io.github.ferdousbhai.Lastbook.desktop"
   python -I - packaging/icon/tile-1024.png "$pkgdir/usr/share/icons/hicolor" <<'PY'
 import sys
 from pathlib import Path
@@ -85,7 +84,7 @@ src, out = Image.open(sys.argv[1]).convert('RGBA'), Path(sys.argv[2])
 for n in (16, 24, 32, 48, 64, 128, 256, 512):
     d = out / f'{n}x{n}' / 'apps'
     d.mkdir(parents=True, exist_ok=True)
-    src.resize((n, n), Image.LANCZOS).save(d / 'lastbook.png', optimize=True)
+    src.resize((n, n), Image.LANCZOS).save(d / 'io.github.ferdousbhai.Lastbook.png', optimize=True)
 PY
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 THIRD_PARTY_NOTICES.md "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES.md"

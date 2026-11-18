@@ -726,7 +726,7 @@ class NothingGoesOut(unittest.TestCase):
     """What must be gone from the window's code is checked in its source."""
 
     def test_no_way_to_hand_anything_to_the_system(self):
-        for name in ('shell_linux.py', 'bridge.py', 'main.py'):
+        for name in ('engine_pipe.py', 'bridge.py', 'main.py'):
             src = (ROOT / 'app' / name).read_text(encoding='utf-8')
             for word in ('open_in_browser', 'open_external', 'startfile', 'NSWorkspace', 'openURL', "'browser'", 'webbrowser', 'Process.Start', 'ShellExecute'):
                 self.assertNotIn(word, src, name)

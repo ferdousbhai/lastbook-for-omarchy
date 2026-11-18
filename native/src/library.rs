@@ -283,6 +283,9 @@ impl Browse {
                 &format!("Lastbook for Omarchy {}", app_version(&me.app)),
                 None,
             ));
+            let m = card("Library and downloads", &glib::markup_escape_text("Add videos, documents or encyclopedias, change the detailed map, add the local AI, or check every file."), "", None);
+            activate(&m, me.app.clone(), Route::Manage);
+            me.about.append(&m);
             if let Some(src) = lib["sources"].as_str() {
                 let c = card("Sources and permissions", "", "Where every document came from, and its licence", None);
                 activate(&c, me.app.clone(), Route::Read { doc: src.to_owned(), page: 1 });

@@ -27,7 +27,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE), str(HERE.parent)]
-if (HERE.parent / 'lib').is_dir():   # the installed package: run as packaged (packaging/linux/lastbook.py has the rules)
+if (HERE.parent / 'lib').is_dir():   # the installed package: program files from here only, its lib/ before the system (engine/paths.py)
     sys.frozen = True
     sys._MEIPASS = str(HERE.parent)
     sys.path.insert(2, str(HERE.parent / 'lib'))
@@ -76,29 +76,57 @@ class PipeSink:
             _open.notify_all()
 
 
+def options(app_main):
+    """Setup's hooks for this window: a finished setup asks the window to restart on the new library (it starts this
+    engine again); folders are chosen by the window's own dialog, so the engine's picker is not used."""
+    def finished(folder):
+        app_main.remember(Path(folder))
+        send({'restart': str(folder)})
+    return dict(app_main.setup_options(), on_finish=finished, pick_folder=lambda files=False: None)
+
+
+def version():
+    v = HERE.parent / 'VERSION'
+    return v.read_text().strip() if v.exists() else None
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument('--data', help='the data folder holding library-data/ (else LASTBOOK_DATA, else the first library found)')
     a = ap.parse_args()
     import main as app_main
-    data = app_main.data_folder(a.data)
-    if data is None or app_main.check(data)[0] is None:
-        send({'ready': None, 'error': 'no-library'})
-        return 2
-    data = app_main.check(data)[0]
-    os.environ['LASTBOOK_DATA'] = str(data)
-    os.environ.setdefault('LASTBOOK_LOCAL_AI', '1')
-    app_main.open_log(data)
-    sys.stdout = sys.stderr      # open_log points the standard streams at the log; keep the protocol on OUT
-    import server
     import bridge as B
     from engine.setup import api as setup_api
-    server.init()
-    setup_api.configure(mode='manage', current=data, **app_main.setup_options())
-    bridge = B.Bridge(server)
-    send({'ready': {'data': str(data), 'library': str(server.LIB), 'version': (HERE.parent / 'VERSION').read_text().strip()
-                    if (HERE.parent / 'VERSION').exists() else None}})
+    # A switch setup staged (a new library, an upgrade, a map) is made now, before anything is open. A folder named outright
+    # (--data, LASTBOOK_DATA) is opened as it is: only its own staged switch is made.
+    given = a.data or os.environ.get('LASTBOOK_DATA')
+    lib, note = setup_api.startup(app_main.app_folders()[0], only=Path(given) if given else None)
+    if lib and not given:
+        app_main.remember(lib)
+    data = app_main.data_folder(a.data)
+    found = app_main.check(data)[0] if data is not None else None
+    if found is None:
+        # No library yet: first-run setup. Nothing here reaches the network until the person starts a download.
+        work = app_main.app_folders()[1] / 'Setup'
+        app_main.open_log(work)
+        sys.stdout = sys.stderr
+        setup_api.configure(mode='first-run', **options(app_main))
+        bridge = B.Bridge(setup_api.SetupServer)
+        send({'ready': {'setup': True, 'data': None, 'library': '', 'version': version()}})
+    else:
+        data = found
+        os.environ['LASTBOOK_DATA'] = str(data)
+        os.environ.setdefault('LASTBOOK_LOCAL_AI', '1')
+        app_main.open_log(data)
+        sys.stdout = sys.stderr      # open_log points the standard streams at the log; keep the protocol on OUT
+        import server
+        server.init()
+        if not given or note:   # the library opened: keep the old one for deleting later, mark the model checked
+            setup_api.opened(app_main.app_folders()[0], data, note)
+        setup_api.configure(mode='manage', current=data, **options(app_main))
+        bridge = B.Bridge(server)
+        send({'ready': {'setup': False, 'data': str(data), 'library': str(server.LIB), 'version': version()}})
     running = {}
     for line in sys.stdin:
         try:

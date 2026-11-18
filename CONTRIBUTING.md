@@ -5,11 +5,10 @@ stays correct, and never sends anything anywhere.
 
 ## Set up
 
-1. Clone the repository on Omarchy and make a virtual environment with Python 3.11 or later, with
-   `--system-site-packages` so the system's PyGObject, GTK and WebKitGTK are found.
-2. Install `packaging/requirements.txt`.
-3. Get a data folder: run `python app/main.py` and let setup download the Small pack, or unzip a pack from lastbook.org.
-   Point the app at it with `--data` or `LASTBOOK_DATA`.
+1. Clone the repository on Omarchy, install Rust, and use the system's Python 3 (`/usr/bin/python3`, which the window starts).
+2. Install `packaging/requirements.txt` into a folder of its own (README, "Run from source"), and build the window with `cargo build --manifest-path native/Cargo.toml`.
+3. Get a data folder: run the window (README, "Run from source") and let setup download the Small pack, or unzip a pack
+   from lastbook.org. Point the app at it with `--data` or `LASTBOOK_DATA`.
 
 The README explains the layout.
 

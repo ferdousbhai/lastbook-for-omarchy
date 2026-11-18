@@ -1,22 +1,18 @@
-"""Lastbook desktop app: the entry point. Opens a window around the engine, with no network port.
-
-  Lastbook --data "<folder>"
+"""Lastbook desktop app: where the library is, and setup's hooks. The native window (native/) runs the engine through
+app/engine_pipe.py, which uses these.
 
 The data folder comes from --data, then LASTBOOK_DATA, then the person's remembered selection, then the app's own data
-folder. Existing libraries elsewhere are opened only when the person chooses them. If no library is available, the app opens
-setup (engine/setup/, web/setup.html) to download one or choose an existing library.
+folder. Existing libraries elsewhere are opened only when the person chooses them. If no library is available, the engine
+starts in setup (engine/setup/) to download one or choose an existing library.
 Output goes to <data>/derived/logs/lastbook.log, rotated by size, because a packaged app has no console.
 
 Sharing with a phone, a chosen port and running with no window all belong to the server version: python server.py.
 """
-import argparse
 import json
 import os
 import sys
 import tempfile
 import threading
-import time
-import traceback
 from pathlib import Path
 
 FROZEN = bool(getattr(sys, 'frozen', False))
@@ -28,8 +24,6 @@ LOG_BACKUPS = 3
 
 DATA_NAME = 'LastbookData'
 CATALOG = os.path.join('library-data', 'catalog.json')
-ASK_TITLE = 'Find your Lastbook library'
-ASK = 'Lastbook needs its library folder, called LastbookData. Unzip the library you downloaded, then choose that folder.'
 
 
 def app_folders():
@@ -100,27 +94,6 @@ def data_folder(arg):
     return None
 
 
-def choose_folder(message):
-    import shell_linux
-    return shell_linux.choose_folder(ASK_TITLE, message)
-
-
-def ask_for_library():
-    """Asks until the person chooses a library or quits. The choice is remembered."""
-    message = ASK
-    while True:
-        chosen = choose_folder(message)
-        if chosen is None:      # Quit
-            return None
-        if not chosen:          # the picker was cancelled: start over, without an old reason
-            message = ASK
-            continue
-        found, message = check(Path(chosen))
-        if found:
-            remember(found)
-            return found
-
-
 # ---------------------------------------------------------------------------------------------------------------- setup --
 def default_parent():
     """Where setup puts LastbookData unless the person chooses: the app's own data folder."""
@@ -135,78 +108,10 @@ def libraries_here():
     return out
 
 
-def pick_folder(files=False):
-    """The native folder or file picker, opened only at the person's request."""
-    import shell_linux
-    from gi.repository import GLib
-    out, done = [], threading.Event()
-
-    def ask():
-        try:
-            chosen = shell_linux.pick(files, str(app_folders()[1]))
-            if chosen:
-                out.append(chosen)
-        except Exception:
-            traceback.print_exc()
-        finally:
-            done.set()
-        return False
-    GLib.idle_add(ask)      # GTK's dialogs belong to the main thread
-    done.wait()
-    return out[0] if out else None
-
-
-def linux_dirs():
-    """(data, cache) for WebKit's own storage: the page's saved settings, and what it can rebuild."""
-    return str(app_folders()[1]), str(Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'Lastbook')
-
-
-def relaunch():
-    """Start again, as the person would by opening the app: it then finds the library setup has just put in place."""
-    if FROZEN:   # /usr/bin/python3 with its flags and Lastbook's launcher, without this run's arguments
-        argv = [sys.executable] + list(sys.orig_argv[1:len(sys.orig_argv) - len(sys.argv) + 1])
-    else:
-        argv = [sys.executable, str(Path(__file__).resolve())]
-    # The engine's current folder and startup flags must not override the
-    # library switch staged by setup on the next normal launch.
-    os.environ.pop('LASTBOOK_DATA', None)
-    print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} setup finished: starting again', flush=True)
-    if 'shell_linux' in sys.modules:
-        sys.modules['shell_linux'].before_exec()
-    os.execv(argv[0], argv)     # same process; pipes to helpers close on exec, so they end
-
-
-def setup_finished(folder):
-    remember(Path(folder))
-    relaunch()
-
-
 def setup_options():
-    return {'settings_dir': app_folders()[0], 'default_parent': default_parent(), 'on_finish': setup_finished,
-            'pick_folder': pick_folder, 'look_for_libraries': libraries_here}
-
-
-def run_setup():
-    """No library yet: the window opens on setup instead. Nothing here reaches the network until the person starts a download."""
-    from engine.setup import api as setup_api
-    import bridge as B
-    work = app_folders()[1] / 'Setup'      # the window's own files and this run's log, until there is a library
-    open_log(work)
-    print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} start pid={os.getpid()} args={sys.argv[1:]} setup', flush=True)
-    setup_api.configure(mode='first-run', **setup_options())
-    import shell_linux
-    shell_linux.run(B.Bridge(setup_api.SetupServer), linux_dirs())
-    return 0
-
-
-def show_error(message):
-    try:
-        import shell_linux
-        shell_linux.show_error(message)
-    except Exception:     # no GTK here: the terminal below still says it
-        pass
-    if sys.stderr is not None:
-        sys.stderr.write(message.rstrip('\n') + '\n')
+    """Setup's hooks. The window that runs setup supplies on_finish and its own folder picker (app/engine_pipe.py)."""
+    return {'settings_dir': app_folders()[0], 'default_parent': default_parent(), 'on_finish': remember,
+            'pick_folder': lambda files=False: None, 'look_for_libraries': libraries_here}
 
 
 class RotatingLog:
@@ -257,56 +162,3 @@ def open_log(data):
         sys.stderr = log
     return logs
 
-
-def main():
-    ap = argparse.ArgumentParser(description='Lastbook')
-    ap.add_argument('--data', help='data folder holding library-data/ and derived/ (or set LASTBOOK_DATA)')
-    ap.add_argument('--ask', action='store_true', help='ask for the library folder in a dialog instead of opening setup')
-    a = ap.parse_args()
-    import shell_linux
-    if not shell_linux.claim(str(app_folders()[1])):     # already open: that window comes to the front instead
-        return 0
-    note = None
-    given = a.data or os.environ.get('LASTBOOK_DATA')    # a folder named outright is opened as it is: only its own staged switch is made
-    from engine.setup import api as setup_api
-    lib, note = setup_api.startup(app_folders()[0], only=Path(given) if given else None)   # before anything is open
-    if lib and not given:
-        remember(lib)
-    data = data_folder(a.data)
-    if data is None:
-        if a.ask:
-            data = ask_for_library()
-            if data is None:
-                return 0
-        else:
-            return run_setup()
-    data = data.resolve()
-    if not (data / CATALOG).is_file():   # only a folder named by --data or LASTBOOK_DATA gets here unchecked
-        show_error(f'Lastbook could not find its library.\n\nIt looked in:\n{data}\n\nThat folder must hold {CATALOG}.')
-        return 2
-    os.environ['LASTBOOK_DATA'] = str(data)   # before the engine is imported: it reads this once
-    os.environ.setdefault('LASTBOOK_LOCAL_AI', '1')   # the optional local AI (llm_local.py), used when its model file is found
-    open_log(data)
-    print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} start pid={os.getpid()} args={sys.argv[1:]} data={data}', flush=True)
-    import server
-    server.init()
-    if not given or note:
-        setup_api.opened(app_folders()[0], data, note)
-    setup_api.configure(mode='manage', current=data, **setup_options())
-    import bridge as B
-    shell_linux.run(B.Bridge(server), linux_dirs())
-    return 0
-
-
-if __name__ == '__main__':
-    try:
-        sys.exit(main())
-    except SystemExit as e:
-        if isinstance(e.code, str):   # the engine refusing a setting: a packaged app has no console to say so on
-            show_error(e.code)
-            sys.exit(1)
-        raise
-    except BaseException as e:
-        traceback.print_exc()
-        show_error(f'Lastbook could not start: {type(e).__name__}: {e}')
-        sys.exit(1)

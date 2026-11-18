@@ -31,7 +31,8 @@ def bundled_paths():
         base = Path(getattr(sys, '_MEIPASS', Path(sys.executable).parent))
         return [base / 'setup' / 'manifest-v1.json']
     root = Path(__file__).resolve().parents[2]
-    return [root / 'setup' / 'manifest-v1.json', root / 'derived' / 'release' / 'setup' / 'manifest-v1.json']
+    return [root / 'setup' / 'manifest-v1.json', root / 'derived' / 'release' / 'setup' / 'manifest-v1.json',
+            root / 'packaging' / 'arch' / 'manifest-v1.json']   # the copy the package ships
 
 
 def _int(v):

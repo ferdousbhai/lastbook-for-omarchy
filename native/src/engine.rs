@@ -29,7 +29,12 @@ pub enum Piece {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Ready {
-    pub data: PathBuf,
+    /// True when there is no library yet and the engine runs first-run setup.
+    #[serde(default)]
+    pub setup: bool,
+    #[serde(default)]
+    pub data: Option<PathBuf>,
+    #[serde(default)]
     pub library: PathBuf,
     pub version: Option<String>,
 }
@@ -41,6 +46,8 @@ pub struct Engine {
     waiters: Waiters,
     next: AtomicU64,
     pub ready: Ready,
+    /// Messages the engine sends on its own (not answers): {"restart": folder} when setup has finished.
+    pub notices: async_channel::Receiver<Value>,
     _child: Mutex<Child>,
 }
 
@@ -62,7 +69,19 @@ fn engine_script() -> PathBuf {
     if std::env::current_exe().is_ok_and(|e| e.starts_with("/usr/")) && installed.is_file() {
         return installed;
     }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../app/engine_pipe.py")
+    // A checkout's own engine, for development builds only: a release build must not carry the build folder's path.
+    #[cfg(debug_assertions)]
+    {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../app/engine_pipe.py")
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        std::env::current_exe()
+            .ok()
+            .and_then(|e| e.ancestors().nth(4).map(|root| root.join("app/engine_pipe.py")))   // <checkout>/native/target/release/lastbook
+            .filter(|p| p.is_file())
+            .unwrap_or(installed)
+    }
 }
 
 impl Engine {
@@ -96,13 +115,17 @@ impl Engine {
         };
         let waiters: Waiters = Arc::default();
         let w = waiters.clone();
+        let (notice_tx, notices) = async_channel::unbounded();
         std::thread::Builder::new()
             .name("engine-read".into())
             .spawn(move || {
                 for line in out.lines() {
                     let Ok(line) = line else { break };
                     let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
-                    let Some(id) = msg.get("id").and_then(Value::as_u64) else { continue };
+                    let Some(id) = msg.get("id").and_then(Value::as_u64) else {
+                        let _ = notice_tx.send_blocking(msg);
+                        continue;
+                    };
                     let piece = if let Some(s) = msg.get("head").and_then(Value::as_u64) {
                         Piece::Head(s as u16, msg.get("type").and_then(Value::as_str).unwrap_or_default().to_owned())
                     } else if let Some(c) = msg.get("chunk").and_then(Value::as_str) {
@@ -127,7 +150,7 @@ impl Engine {
                 }
             })
             .expect("thread");
-        Ok(Arc::new(Self { stdin: Mutex::new(stdin), waiters, next: AtomicU64::new(1), ready, _child: Mutex::new(child) }))
+        Ok(Arc::new(Self { stdin: Mutex::new(stdin), waiters, next: AtomicU64::new(1), ready, notices, _child: Mutex::new(child) }))
     }
 
     /// Sends a request; its answer arrives on the returned channel, piece by piece.
@@ -154,7 +177,16 @@ impl Engine {
 
     /// The whole answer to a GET, read as JSON.
     pub async fn get(&self, path: &str) -> Result<Value, EngineError> {
-        let (_, rx) = self.request("GET", path, None);
+        self.call("GET", path, None).await
+    }
+
+    /// The whole answer to a POST of `body`, read as JSON (an error answer's JSON too: setup explains itself in it).
+    pub async fn post(&self, path: &str, body: &Value) -> Result<Value, EngineError> {
+        self.call("POST", path, Some(body)).await
+    }
+
+    async fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, EngineError> {
+        let (_, rx) = self.request(method, path, body);
         let (mut status, mut text) = (0, String::new());
         while let Ok(piece) = rx.recv().await {
             match piece {
@@ -164,10 +196,13 @@ impl Engine {
                 Piece::End(_) => break,
             }
         }
-        if status != 200 {
-            return Err(EngineError(format!("{path}: {status}")));
+        match serde_json::from_str::<Value>(&text) {
+            Ok(v) if status == 200 || (method == "POST" && v.get("error").is_some()) => Ok(v),
+            Ok(v) if v.get("error").is_some() => Err(EngineError(v["error"].as_str().unwrap_or("error").to_owned())),
+            _ if status != 200 => Err(EngineError(format!("{path}: {status}"))),
+            Ok(v) => Ok(v),
+            Err(e) => Err(EngineError(format!("{path}: {e}"))),
         }
-        serde_json::from_str(&text).map_err(|e| EngineError(format!("{path}: {e}")))
     }
 }
 

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Where the app looks for its library, and the first-open question. Temporary folders and a made-up home only: never the real Documents.
+"""Where the app looks for its library. Temporary folders and a made-up home only: never the real Documents.
 
   python3 -B app/tests/test_data_folder.py [-v]
 
 Never packaged."""
 import json, os, shutil, stat, sys, tempfile, unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import mock
 
 sys.dont_write_bytecode = True
@@ -28,11 +27,9 @@ class Lookup(unittest.TestCase):
         self.home.mkdir()
         env = {k: v for k, v in os.environ.items() if k != 'LASTBOOK_DATA' and not k.startswith('XDG_')}
         env['HOME'] = str(self.home)
-        # the window itself is never opened here: main() only asks it whether another copy is open
-        patches = [mock.patch.dict(os.environ, env, clear=True), mock.patch.dict(sys.modules, {'shell_linux': SimpleNamespace(claim=lambda folder: True, before_exec=lambda: None)})]
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
+        p = mock.patch.dict(os.environ, env, clear=True)
+        p.start()
+        self.addCleanup(p.stop)
         self.assertEqual(Path.home(), self.home)
 
     def tearDown(self):
@@ -80,8 +77,6 @@ class Lookup(unittest.TestCase):
         with mock.patch.object(Path, 'stat', stat), mock.patch.object(Path, 'iterdir', iterdir), mock.patch.object(Path, 'open', read):
             self.assertIsNone(main.data_folder(None))
             self.assertEqual(main.libraries_here(), [])
-            with mock.patch.object(sys, 'argv', ['Lastbook']), mock.patch.object(main, 'run_setup', return_value=7):
-                self.assertEqual(main.main(), 7)
 
     def test_named_folder_wins(self):
         library(self.home / 'Downloads' / 'LastbookData')
@@ -125,36 +120,6 @@ class Lookup(unittest.TestCase):
         found = library(main.default_parent() / 'LastbookData')
         self.assertEqual(main.data_folder(None), found)
 
-    def test_ask_until_good_then_remember(self):
-        good = library(self.tmp / 'Lastbook-Small' / 'LastbookData')
-        asked = []
-        answers = iter([str(self.tmp / 'empty'), str(good.parent)])
-        (self.tmp / 'empty').mkdir()
-        with mock.patch.object(main, 'choose_folder', lambda m: asked.append(m) or next(answers)):
-            self.assertEqual(main.ask_for_library(), good)
-        self.assertEqual(asked[0], main.ASK)
-        self.assertIn('is not a Lastbook library', asked[1])
-        self.assertEqual(main.data_folder(None), good)   # remembered
-
-    def test_cancel_drops_old_reason(self):
-        good = library(self.tmp / 'Lastbook-Small' / 'LastbookData')
-        (self.tmp / 'empty').mkdir()
-        asked = []
-        answers = iter([str(self.tmp / 'empty'), '', str(good)])   # wrong folder, then the picker is cancelled
-        with mock.patch.object(main, 'choose_folder', lambda m: asked.append(m) or next(answers)):
-            self.assertEqual(main.ask_for_library(), good)
-        self.assertIn('is not a Lastbook library', asked[1])
-        self.assertEqual(asked[2], main.ASK)
-
-    def test_quit(self):
-        with mock.patch.object(main, 'choose_folder', lambda m: None):
-            self.assertIsNone(main.ask_for_library())
-            with mock.patch.object(sys, 'argv', ['Lastbook', '--ask']):     # the old question, kept behind --ask
-                self.assertEqual(main.main(), 0)
-            with mock.patch.object(sys, 'argv', ['Lastbook']), mock.patch.object(main, 'run_setup', lambda: 7):
-                self.assertEqual(main.main(), 7)       # no library: the window opens on setup (engine/setup/)
-        self.assertFalse(self.settings().exists())
-
     def test_xdg_places(self):
         with mock.patch.dict(os.environ, {'XDG_CONFIG_HOME': str(self.tmp / 'config'), 'XDG_DATA_HOME': str(self.tmp / 'data')}):
             self.assertEqual(main.app_folders(), (self.tmp / 'config' / 'Lastbook', self.tmp / 'data' / 'Lastbook'))
@@ -165,13 +130,6 @@ class Lookup(unittest.TestCase):
             main.remember(chosen)
             self.assertTrue((self.tmp / 'config' / 'Lastbook' / 'settings.json').is_file())
             self.assertEqual(main.data_folder(None), chosen)
-
-    def test_file_picker_starts_in_app_storage(self):
-        picker = mock.Mock(return_value=str(self.tmp / 'model.gguf'))
-        glib = SimpleNamespace(idle_add=lambda fn: fn())     # GTK's main loop runs the dialog; here it runs at once
-        with mock.patch.dict(sys.modules, {'shell_linux': SimpleNamespace(pick=picker), 'gi': SimpleNamespace(), 'gi.repository': SimpleNamespace(GLib=glib)}):
-            self.assertEqual(main.pick_folder(files=True), str(self.tmp / 'model.gguf'))
-        picker.assert_called_once_with(True, str(main.app_folders()[1]))
 
     def test_model_discovery_stays_inside_selected_library(self):
         import llm_local
@@ -208,23 +166,6 @@ class Lookup(unittest.TestCase):
         chosen = self.home / 'Documents' / 'Models'
         with mock.patch.dict(os.environ, {'LASTBOOK_MODEL_DIR': str(chosen)}):
             self.assertEqual(llm_local.places()[0], chosen)
-
-
-class SetupRelaunch(unittest.TestCase):
-    def test_relaunch_discards_previous_library_overrides(self):
-        """Packaged: /usr/bin/python3 with its own flags and the launcher again, without this run's arguments."""
-        def restarted(executable, argv):
-            self.assertEqual(argv, [sys.executable, '-I', '-B', '/usr/lib/lastbook-for-omarchy/lastbook.py'])
-            self.assertNotIn('LASTBOOK_DATA', os.environ)
-
-        with mock.patch.object(main, 'FROZEN', True), \
-                mock.patch.object(sys, 'orig_argv', ['/usr/bin/python3', '-I', '-B', '/usr/lib/lastbook-for-omarchy/lastbook.py', '--data', '/old/library', '--ask']), \
-                mock.patch.object(sys, 'argv', ['/usr/lib/lastbook-for-omarchy/lastbook.py', '--data', '/old/library', '--ask']), \
-                mock.patch.dict(os.environ, {'LASTBOOK_DATA': '/old/library'}), \
-                mock.patch.dict(sys.modules, {'shell_linux': SimpleNamespace(before_exec=lambda: None)}), \
-                mock.patch.object(os, 'execv', side_effect=restarted) as restart:
-            main.relaunch()
-            restart.assert_called_once()
 
 
 if __name__ == '__main__':

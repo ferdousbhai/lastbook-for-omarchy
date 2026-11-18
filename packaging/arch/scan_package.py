@@ -2,10 +2,10 @@
 
   python3 packaging/arch/scan_package.py lastbook-for-omarchy-<version>-<arch>.pkg.tar.zst [--terms-file FILE]
 
-Refused: test code, the old window, model libraries, the Mac and Windows shells, the remote_storage module, machine names (FILE: private
+Refused: test code, the old web window (GTK 3, lastbooksrc, the Python launcher), model libraries, the Mac and Windows shells, the remote_storage module, machine names (FILE: private
 words, one per line, kept out of this public script), /Users/... and /home/<name> paths, the household's area and working names in our
-own files (ship_edits.json), native code not built for the package's architecture or that links a library from outside the package and the system, a socket in
-the local AI's runner, and in our own Python any network module outside the one way out (setup's downloader) and
+own files (ship_edits.json), native code not built for the package's architecture or that links a library from outside the package and the system
+(the window, /usr/bin/lastbook, may also link the GTK 4, WebKitGTK, Poppler and GStreamer it depends on), a socket in the local AI's runner, and in our own Python any network module outside the one way out (setup's downloader) and
 the engine's request handler, which the app runs with no port, and retrieval.py's local (AF_UNIX) socket to Recall. roots.pem must be there: without it setup downloads nothing.
 """
 import argparse
@@ -19,13 +19,14 @@ from pathlib import Path
 
 BAD_SEGMENTS = {'test', 'tests', 'testing', 'pytest', 'unittest', 'doctest', 'remote_storage', 'webview', 'bottle', 'proxy_tools', 'onnxruntime',
                 'tokenizers', 'shell_windows', 'shell_macos', 'clr', 'clr_loader', 'pythonnet', 'lastbook_launcher', 'tkinter', 'PyInstaller',
-                'objc', 'AppKit', 'Foundation', 'PyObjCTools', 'vendor-macos', 'fixture', 'real_data_check', 'http_regression', 'cdp', 'f2py', 'pypdfium2_cli'}
+                'objc', 'AppKit', 'Foundation', 'PyObjCTools', 'vendor-macos', 'fixture', 'real_data_check', 'http_regression', 'cdp', 'f2py', 'pypdfium2_cli',
+                'shell_linux', 'lastbooksrc', 'libgstlastbooksrc', 'gst'}
 BAD_FILE = re.compile(r'(^|/)(test_[^/]*|[^/]*_test\.(py|pyc|so)|[^/]*_tests[^/]*\.so|[^/]*\.onnx|[^/]*\.gguf|mac_[^/]*|win_[^/]*)$', re.I)
 TEST_MARKERS = [b'TEST-STUB', b'mac_offscreen', b'stub_chat', b'stub-chat']
 P = 'usr/lib/lastbook-for-omarchy/'
 ALLOWED_REMOTE = {P + 'engine/library.py'}     # names remote_storage in the code that skips it when packaged
-USER_PATH = re.compile(rb'/Users/[A-Za-z0-9._-]+|/home/(?!runner\b|user\b)[a-z_][a-z0-9_.-]+')
-OUR_PY = re.compile(r'^usr/lib/lastbook-for-omarchy/(lastbook|server|retrieval|encyclopedia|assistant|llm_local)\.py$|^usr/lib/lastbook-for-omarchy/(app|engine)/.*\.py$')
+USER_PATH = re.compile(rb'/Users/[A-Za-z0-9._-]+|/home/(?!runner\b|user\b)[a-z_][a-z0-9_.-]*')   # one-letter names too
+OUR_PY = re.compile(r'^usr/lib/lastbook-for-omarchy/(server|retrieval|encyclopedia|assistant|llm_local)\.py$|^usr/lib/lastbook-for-omarchy/(app|engine)/.*\.py$')
 FIRST_PARTY = re.compile(r'^usr/lib/lastbook-for-omarchy/(web|content|app|engine|setup)/|^usr/lib/lastbook-for-omarchy/[^/]+\.py$')
 NET_MODULES = {'socket', 'ssl', 'http.client', 'urllib.request', 'http.server', 'socketserver', 'asyncio', 'ftplib', 'smtplib', 'xmlrpc', 'requests', 'urllib3'}
 NET_ALLOWED = {
@@ -38,7 +39,12 @@ NET_ALLOWED = {
 }
 ARCH = {'x86_64': 'X86-64', 'aarch64': 'AArch64'}
 SOCKET_CALLS = re.compile(r'^(socket|connect|bind|listen|accept4?|getaddrinfo|gethostbyname\w*|sendto|recvfrom|curl_\w+|SSL_\w+)$')
-SYSTEM_LIBS = re.compile(r'^(libc|libm|libdl|libpthread|librt|libstdc\+\+|libgcc_s|libgomp|libvulkan|ld-linux-x86-64|ld-linux-aarch64|libz|libgstreamer-1\.0|libgstbase-1\.0|libglib-2\.0|libgobject-2\.0)\.so')
+SYSTEM_LIBS = re.compile(r'^(libc|libm|libdl|libpthread|librt|libstdc\+\+|libgcc_s|libgomp|libvulkan|ld-linux-x86-64|ld-linux-aarch64|libz|libglib-2\.0|libgobject-2\.0)\.so')
+APP_ID = 'io.github.ferdousbhai.Lastbook'
+WINDOW = 'usr/bin/lastbook'
+# What the window links besides SYSTEM_LIBS: the GTK 4 stack, WebKitGTK 6, Poppler and GStreamer, all in depends=().
+WINDOW_LIBS = re.compile(r'^(libgtk-4|libgdk_pixbuf-2\.0|libgio-2\.0|libgmodule-2\.0|libpango(cairo)?-1\.0|libcairo(-gobject)?|libharfbuzz|libgraphene-1\.0|'
+                         r'libwebkitgtk-6\.0|libjavascriptcoregtk-6\.0|libpoppler-glib|libgst[a-z]*-1\.0|libsoup-3\.0)\.so')
 
 
 def bad_name(name):
@@ -85,7 +91,8 @@ def main():
                     problems.append(f'symlink out of the package: {rel} -> {target}')
                 continue
             n_files += 1
-            if not rel.startswith((P, 'usr/bin/lastbook', 'usr/share/applications/lastbook.desktop', 'usr/share/icons/hicolor/', 'usr/share/licenses/lastbook-for-omarchy/')):
+            if not (rel.startswith((P, 'usr/share/licenses/lastbook-for-omarchy/')) or rel in (WINDOW, f'usr/share/applications/{APP_ID}.desktop')
+                    or re.fullmatch(rf'usr/share/icons/hicolor/\d+x\d+/apps/{re.escape(APP_ID)}\.png', rel)):
                 problems.append(f'file outside the places the package owns: {rel}')
             if bad_name(rel.removeprefix(P)) or BAD_FILE.search(rel) or p.name in ship['never_ship']:
                 problems.append(f'file not allowed: {rel}')
@@ -121,9 +128,9 @@ def main():
                 dyn = subprocess.run(['readelf', '-d', str(p)], capture_output=True, text=True).stdout
                 beside = {q.name for q in p.parent.iterdir()}
                 for lib in re.findall(r'\(NEEDED\)\s+Shared library: \[([^\]]+)\]', dyn):
-                    if lib not in beside and not SYSTEM_LIBS.match(lib) and not rel.startswith(P + 'lib/'):
+                    if lib not in beside and not SYSTEM_LIBS.match(lib) and not rel.startswith(P + 'lib/') and not (rel == WINDOW and WINDOW_LIBS.match(lib)):
                         problems.append(f'links outside the package and the system: {rel} -> {lib}')
-                if rel.startswith((P + 'llm/', P + 'gst/')):     # the local AI's runner may not reach a network at all
+                if rel.startswith(P + 'llm/'):     # the local AI's runner may not reach a network at all
                     syms = subprocess.run(['nm', '-D', '--undefined-only', str(p)], capture_output=True, text=True).stdout.split()
                     calls = sorted({s.split('@')[0] for s in syms if SOCKET_CALLS.match(s.split('@')[0])})
                     if calls:
@@ -132,12 +139,16 @@ def main():
             if rel not in ALLOWED_REMOTE:
                 problems.append(f'remote_storage named in {rel}')
         for u, where in user_paths.items():
-            if u.startswith('/Users/') or any(FIRST_PARTY.search(w) for w in where):
+            if u.startswith('/Users/') or any(FIRST_PARTY.search(w) or w == WINDOW for w in where):
                 problems.append(f'path of a person\'s folder {u} in {where[:3]}')
-        for need in [P + f for f in ('engine/setup/roots.pem', 'gst/libgstlastbooksrc.so', 'lastbook.py', 'app/main.py', 'app/shell_linux.py',
-                                      'web/index.html', 'setup/manifest-v1.json', 'VERSION', 'encyclopedia.py')] + ['usr/bin/lastbook', 'usr/share/applications/lastbook.desktop']:
+        for need in [P + f for f in ('engine/setup/roots.pem', 'app/engine_pipe.py', 'app/main.py', 'app/bridge.py', 'setup/manifest-v1.json',
+                                      'VERSION', 'encyclopedia.py', 'server.py')] + [WINDOW, f'usr/share/applications/{APP_ID}.desktop']:
             if need not in packaged:
                 problems.append(f'missing from the package: {need}')
+        if WINDOW in packaged and (root / WINDOW).read_bytes()[:4] != b'\x7fELF':
+            problems.append(f'{WINDOW} is not the native window (not an ELF program)')
+        if any(r.startswith(P + 'web/') for r in packaged):
+            problems.append('web/ is packaged: it belongs to the browser library server (server.py), not the app')
         llm = P + 'llm/lastbook-llm' in packaged
     print(f'files {n_files}, native binaries {n_elf}, local AI runner: {"included" if llm else "not included"}')
     print(f'network modules in our Python (allowed there): {net_report or "none"}')

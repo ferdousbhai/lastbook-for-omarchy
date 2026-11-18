@@ -42,6 +42,7 @@ WEB = APP / 'web'
 CACHE = HERE / 'derived' / 'cache'
 MAPDB = HERE / 'derived' / 'geo' / 'map.sqlite'
 PLACEDB = HERE / 'derived' / 'geo' / 'places.sqlite'
+WORLD_PLACEDB = HERE / 'derived' / 'geo' / 'world-places.sqlite'   # GeoNames: countries, regions, towns of 15,000+ (tools/build_world_places.py)
 os.environ.setdefault('SURVIVAL_DISABLE_INDEX_WATCH', '1')
 import engine.library as library  # noqa: E402  (provides Handler, search DB path, ZIM reader)
 import retrieval, assistant  # noqa: E402
@@ -1414,9 +1415,9 @@ def water_places(q, limit=10, near=None):
 def places(q, limit=20, near=None):
     if address_search.is_address_query(q):
         return address_search.find_addresses(q, HERE / 'derived' / 'geo', limit=min(limit, 8), near=near)
-    if not PLACEDB.exists():
+    dbs = [sqlite3.connect(ro_uri(p), uri=True) for p in (PLACEDB, WORLD_PLACEDB) if p.exists()]
+    if not dbs:
         return []
-    db = sqlite3.connect(ro_uri(PLACEDB), uri=True)
     words = re.findall(r'\w+', q)
     if not words:
         return []
@@ -1427,9 +1428,10 @@ def places(q, limit=20, near=None):
             break  # every word matched somewhere: no need to loosen
         if not ws:
             continue
-        rows += db.execute('SELECT p.name,p.kind,p.detail,p.lat,p.lon,p.rank,p.source FROM place_fts f JOIN place p ON p.id=f.rowid '
-                           'WHERE place_fts MATCH ? ORDER BY p.rank, bm25(place_fts) LIMIT 200',
-                           (' '.join('"%s"*' % w.replace('"', '') for w in ws),)).fetchall()
+        for db in dbs:   # the library's own gazetteer (US detail), then the world's
+            rows += db.execute('SELECT p.name,p.kind,p.detail,p.lat,p.lon,p.rank,p.source FROM place_fts f JOIN place p ON p.id=f.rowid '
+                               'WHERE place_fts MATCH ? ORDER BY p.rank, bm25(place_fts) LIMIT 200',
+                               (' '.join('"%s"*' % w.replace('"', '') for w in ws),)).fetchall()
         if len(ws) == len(words):
             full = bool(rows)
     rows = list(dict.fromkeys(rows))
