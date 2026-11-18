@@ -19,3 +19,4 @@ build/
 *.dmg
 *.exe
 *.zip
+/native/target

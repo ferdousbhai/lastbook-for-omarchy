@@ -1,0 +1,209 @@
+/* Lastbook's stylesheet. Colours are the @lb_* tokens theme.rs defines from the Omarchy theme; the conventions (surface
+   chrome with hairline borders, 5-6px corners, accent tints for hover and selection, accent focus outlines, thin accent
+   scrollbars) follow Strata (github.com/lgse/strata, MIT, src/style.css) so the two read as one desktop. GTK's own
+   theme is reset underneath (theme.rs), so every widget Lastbook shows is styled here. */
+
+window {
+  background: @lb_bg;
+  color: @lb_text;
+}
+
+/* Lastbook draws its own chrome; GTK's client-side decoration only supplies resize edges. */
+window.csd {
+  border-radius: 0;
+  box-shadow: 0 0 0 1px alpha(@lb_border, 0.6);
+}
+
+window.csd.maximized, window.csd.fullscreen, window.csd.tiled, window.csd.tiled-top, window.csd.tiled-right,
+window.csd.tiled-bottom, window.csd.tiled-left {
+  box-shadow: none;
+}
+
+button, entry, tooltip { border-radius: 5px; }
+popover > contents { border-radius: 9px; }
+
+button:focus-visible, entry:focus-visible, row:focus-visible, flowboxchild:focus-visible {
+  outline: 2px solid @lb_accent;
+  outline-offset: -2px;
+}
+
+tooltip {
+  background: @lb_surface;
+  border: 1px solid alpha(@lb_border, 0.6);
+  color: @lb_text;
+  padding: 4px 8px;
+}
+
+/* ------------------------------------------------------------------------------------------------ header bar -- */
+headerbar {
+  background: @lb_surface;
+  border-bottom: 1px solid alpha(@lb_border, 0.6);
+  box-shadow: none;
+  min-height: 40px;
+  padding: 0 6px;
+}
+
+headerbar > windowhandle > box { border-spacing: 4px; min-height: 40px; }
+
+button.header-action {
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  box-shadow: none;
+  color: @lb_text;
+  min-height: 24px;
+  min-width: 24px;
+  padding: 4px;
+  transition: transform 160ms ease-out, background 160ms ease-out;
+}
+
+button.header-action:hover, button.header-action.active { background: alpha(@lb_accent, 0.15); }
+button.header-action:active { background: alpha(@lb_accent, 0.22); transform: scale(0.97); }
+button.header-action:disabled { color: alpha(@lb_text, 0.35); background: transparent; }
+button.header-action image { -gtk-icon-size: 16px; }
+button.sidebar-toggle { color: @lb_accent; }
+
+.header-title { font-weight: 650; }
+
+/* -------------------------------------------------------------------------------------------------- sidebar -- */
+.sidebar-shell {
+  background: @lb_surface;
+  border-right: 1px solid alpha(@lb_border, 0.6);
+}
+
+.sidebar { background: @lb_surface; padding: 5px; }
+
+.sidebar-heading {
+  color: @lb_dim_text;
+  font-size: 0.85em;
+  font-weight: 650;
+  padding: 10px 8px 4px 8px;
+}
+
+.sidebar-row {
+  background: transparent;
+  border-radius: 6px;
+  color: @lb_text;
+  padding: 6px 8px;
+  transition: background-color 220ms ease-out;
+}
+
+.sidebar-row > box { border-spacing: 10px; }
+.sidebar-row image { color: @lb_dim_text; -gtk-icon-size: 16px; }
+.sidebar-row:hover { background: alpha(@lb_text, 0.06); }
+.sidebar-row:selected, .sidebar-row:selected:hover { background: alpha(@lb_accent, 0.18); color: @lb_text; }
+.sidebar-row:selected image { color: @lb_accent; }
+
+.sidebar-footer {
+  color: @lb_dim_text;
+  font-size: 0.88em;
+  padding: 8px 10px;
+}
+.sidebar-footer image { color: @lb_accent; }
+
+/* --------------------------------------------------------------------------------------------------- fields -- */
+entry {
+  background: alpha(@lb_text, 0.04);
+  border: 1px solid alpha(@lb_border, 0.6);
+  color: @lb_text;
+  min-height: 26px;
+  padding: 0 8px;
+  caret-color: @lb_accent;
+}
+entry:focus-within { border-color: @lb_accent; }
+entry > text > placeholder { color: @lb_dim_text; }
+entry > image { color: @lb_dim_text; margin-right: 6px; }
+entry selection, text selection, label selection { background: alpha(@lb_accent, 0.35); color: @lb_text; }
+entry.search-large { min-height: 34px; font-size: 1.1em; }
+
+/* Filter chips: quiet until chosen. */
+button.chip {
+  background: transparent;
+  border: 1px solid alpha(@lb_border, 0.6);
+  border-radius: 5px;
+  color: @lb_text;
+  padding: 3px 10px;
+  transition: background 160ms ease-out;
+}
+button.chip:hover { background: alpha(@lb_accent, 0.15); }
+button.chip:checked, button.chip.active { background: alpha(@lb_accent, 0.18); border-color: alpha(@lb_accent, 0.6); }
+
+button.primary {
+  background: alpha(@lb_accent, 0.18);
+  border: 1px solid alpha(@lb_accent, 0.6);
+  border-radius: 5px;
+  color: @lb_text;
+  font-weight: 650;
+  padding: 4px 14px;
+}
+button.primary:hover { background: alpha(@lb_accent, 0.26); }
+
+/* ------------------------------------------------------------------------------------------------ text kinds -- */
+.page-title { font-size: 1.7em; font-weight: 700; }
+.section-title { font-size: 1.15em; font-weight: 700; }
+.dim { color: @lb_dim_text; }
+.meta { color: @lb_dim_text; font-size: 0.92em; }
+.trust { color: @lb_accent; font-size: 0.88em; }
+.danger { color: @lb_danger; }
+.empty-state { color: @lb_dim_text; font-size: 1.1em; }
+.badge {
+  background: alpha(@lb_accent, 0.18);
+  border-radius: 4px;
+  color: @lb_text;
+  font-size: 0.8em;
+  font-weight: 650;
+  padding: 1px 6px;
+}
+
+/* ------------------------------------------------------------------------------------------------ result rows -- */
+.results { background: transparent; }
+
+.result {
+  background: transparent;
+  border: 1px solid alpha(@lb_border, 0.35);
+  border-radius: 6px;
+  padding: 10px;
+  transition: background-color 160ms ease-out, border-color 160ms ease-out;
+}
+.result:hover { background: alpha(@lb_text, 0.04); border-color: alpha(@lb_border, 0.8); }
+.result:selected, .result:focus-visible { background: alpha(@lb_accent, 0.12); border-color: alpha(@lb_accent, 0.6); }
+.result .result-title { font-weight: 650; }
+.result .snippet { color: @lb_text; }
+
+.thumb {
+  background: #ffffff;
+  border: 1px solid alpha(@lb_border, 0.6);
+  border-radius: 3px;
+}
+
+/* ---------------------------------------------------------------------------------------------------- reader -- */
+.reader-bar {
+  background: @lb_surface;
+  border-bottom: 1px solid alpha(@lb_border, 0.6);
+  padding: 4px 10px;
+}
+.reader-bar > box { border-spacing: 6px; }
+.reader-canvas { background: @lb_bg; }
+.paper {
+  background: #ffffff;
+  box-shadow: 0 2px 10px alpha(black, 0.35);
+}
+entry.page-entry { min-width: 48px; min-height: 24px; padding: 0 6px; }
+
+/* ------------------------------------------------------------------------------------------------ scrollbars -- */
+scrollbar, scrollbar:hover, scrollbar.hovering, scrollbar.dragging {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  transition: opacity 180ms ease-out;
+}
+scrollbar.vertical, scrollbar.vertical > range > trough, scrollbar.vertical > range > trough > slider { min-width: 4px; }
+scrollbar.horizontal, scrollbar.horizontal > range > trough, scrollbar.horizontal > range > trough > slider { min-height: 4px; }
+scrollbar > range > trough { background: alpha(@lb_border, 0.25); border-radius: 2px; }
+scrollbar:hover > range > trough, scrollbar.dragging > range > trough { background: alpha(@lb_border, 0.45); }
+scrollbar > range > trough > slider { background: @lb_accent; border-radius: 2px; margin: 0; }
+scrollbar.vertical > range > trough > slider { min-height: 32px; }
+scrollbar.horizontal > range > trough > slider { min-width: 32px; }
+
+spinner { color: @lb_accent; }

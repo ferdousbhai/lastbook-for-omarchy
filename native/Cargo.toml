@@ -1,0 +1,27 @@
+[package]
+name = "lastbook"
+version = "1.2.0"
+edition = "2024"
+license = "MIT"
+description = "Offline survival library for Omarchy: the native GTK 4 window"
+repository = "https://github.com/ferdousbhai/lastbook-for-omarchy"
+publish = false
+
+[dependencies]
+# The same GTK 4 stack as Strata (github.com/lgse/strata), whose theme approach this app follows.
+gtk = { package = "gtk4", version = "0.11.4", features = ["v4_14"] }
+glib = "0.22.9"
+gio = { version = "0.22.9", features = ["v2_72"] }
+pango = "0.22.9"
+cairo-rs = { version = "0.22.9", features = ["png"] }
+poppler = { package = "poppler-rs", version = "0.26.0" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+async-channel = "2.3"
+urlencoding = "2.1"
+toml = "1.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
