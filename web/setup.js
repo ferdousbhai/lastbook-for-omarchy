@@ -6,8 +6,7 @@
   const $ = s => document.querySelector(s);
   const main = $('#main'), live = $('#live');
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const WIN = document.documentElement.classList.contains('plat-win');
-  const UNIT = WIN ? 1024 : 1000;   // each system's own way of counting a gigabyte, so the numbers match Finder or Explorer
+  const UNIT = 1000;   // decimal gigabytes, as the system's own file manager and df -H count them
   const CAN = { removeAi: true, repair: true };   // one switch each, should a build of the engine be without remove-ai or repair
   const MANAGE_ASKED = /manage/.test(location.hash);   // #manage: the bridge allows no ?query on the top page
 
@@ -53,7 +52,7 @@
     const h = Math.floor(m / 60), r = m % 60;
     return `about ${h} h${r ? ` ${r} min` : ''} left`;
   }
-  const home = p => String(p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^[A-Z]:\\Users\\[^\\]+\\/i, '');   // ~/… on a Mac; Documents\… on Windows, as Explorer names it
+  const home = p => String(p || '');
 
   /* ------------------------------------------------------------ the engine */
   async function call(path, body) {
@@ -110,7 +109,7 @@
     return text.replace(/\ba detailed map of California\b/, () => 'a detailed map of ' + (state ? mapName(state) : 'your state'));
   }
   const packDl = p => p.download_bytes || (p.files || []).reduce((n, f) => n + (f.size || 0), 0);
-  const SEP = WIN ? '\\' : '/', DATA = 'LastbookData';
+  const SEP = '/', DATA = 'LastbookData';
   const asData = p => /[\\/]LastbookData[\\/]?$/i.test(p) ? p.replace(/[\\/]$/, '') : String(p).replace(/[\\/]$/, '') + SEP + DATA;
   /* a file already on this computer, of the right size, for a pack or the model: setup uses it instead of downloading */
   const foundFor = (kind, id) => (S.found || []).find(f => f.kind === kind && (f.size_ok !== false) && (kind === 'model' || f.id === id || f.pack === id));
@@ -118,14 +117,12 @@
 
   function diskFor(path) {
     const ds = (S.hardware && S.hardware.disks) || [];
-    const norm = s => WIN ? String(s).toLowerCase().replace(/\//g, '\\') : String(s);
-    const p = norm(path);
+    const p = String(path);
     let best = null;
-    for (const d of ds) if (p.startsWith(norm(d.path)) && (!best || d.path.length > best.path.length)) best = d;
+    for (const d of ds) if (p.startsWith(String(d.path)) && (!best || d.path.length > best.path.length)) best = d;
     return best || (path ? null : ds[0] || null);   // a folder on a disk the engine did not report: its free space is not known here
   }
-  const diskName = d => !d ? 'this disk' : d.name || (WIN ? (String(d.path).match(/^[A-Z]:/i) || ['this disk'])[0].toUpperCase()   // C:, D:
-    : /^\/Volumes\/[^/]+/.test(d.path) ? d.path.split('/')[2] : /Linux/.test(navigator.platform || '') ? 'this computer' : 'this Mac');
+  const diskName = d => !d ? 'this disk' : d.name || 'this computer';
 
   function plan() {   // what the current choice adds: bytes to download, space it needs (download + unpacked + 2 GB, as the engine counts)
     const c = cur() || {};

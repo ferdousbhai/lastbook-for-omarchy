@@ -1,6 +1,6 @@
 # Lastbook first-run setup: the shared contract
 
-One download per computer: the Mac app (dmg) or the Windows installer (Setup.exe). On first open, Lastbook finds no library and
+One package per computer (Arch/Omarchy). On first open, Lastbook finds no library and
 opens **setup** in its own window. Setup shows what this computer has, recommends a library (Small, Medium or All) and whether
 the optional local AI fits, then downloads, checks, unpacks and switches to it. No separate library or model download, no
 manual unzip. Setup also opens later from inside the app (Library → *Library and local AI*) to upgrade, add the AI or repair.
@@ -11,9 +11,9 @@ Several sessions build this at once. This file is the interface between them. Ch
 
 - **The one way out.** Setup's downloader is the only code in Lastbook that may reach the internet, and only when the person
   starts or resumes a download. It fetches over HTTPS only from hosts in `ALLOWED_HOSTS` (below), with no proxy taken from
-  the system, and follows a redirect only to another allowed host. Everything else stays as it is: the windows block all web
-  loads, the assistant talks to loopback or pipes only, and nothing is sent anywhere (no telemetry, no update check at
-  startup). The owner authorized this route on 2026-11-12 for the first-run install. It replaces "downloads happen outside
+  the system, and follows a redirect only to another allowed host. Everything else stays as it is: the window blocks all web
+  loads, the assistant talks to loopback or pipes only, and nothing is sent anywhere (no telemetry, no update check:
+  updates come from pacman). The owner authorized this route on 2026-11-12 for the first-run install. It replaces "downloads happen outside
   the app" for library packs and the model, and nothing more.
 - **No blanket memory floor.** The local AI is offered when the measured fit says it fits (`llm_local.judge`, about 18 GB
   of memory for model and context, plus a 2.5 GiB reserve). It is not offered below that, and the screen says why in plain words.
@@ -27,9 +27,8 @@ Several sessions build this at once. This file is the interface between them. Ch
 | Downloader, checks, unpacking, switching, hardware, manifest, `/api/setup/*` | **setup-backend** | `engine/setup/` (new package), `packaging/release_manifest.py`, setup mode in `app/main.py` (and the smallest shell change it needs) |
 | Setup screens | **setup-ui** | `web/setup.html`, `web/setup.js`, `web/setup.css`; one link in `web/app.js` (Library page) |
 | Packs: build, zip, upload, manifest entries | **publish-packs** | `derived/packs/`, `derived/release/`; writes `derived/release/manifest-v1.json` entries for each verified pack |
-| Domain for downloads | **download-domain** | DNS, R2 custom domain, URLs in `website/` |
-| Windows runner, Windows package and installer, Windows tests | **windows-ai** | `packaging/llm/*windows*`, `packaging/build_app_windows.sh`, `packaging/lastbook_setup.py`, `packaging/scan_app_package.py` |
-| Local AI engine, assistant, Mac package, Mac tests, final report, website wording at release | **main session** | `llm_local.py`, `assistant.py`, `server.py`, `web/chat.js`, the rest of `web/app.js`, Mac packaging |
+| Domain for downloads | **download-domain** | DNS, R2 custom domain |
+| Local AI engine, assistant, Linux package, final report | **main session** | `llm_local.py`, `assistant.py`, `server.py`, `web/chat.js`, the rest of `web/app.js`, `packaging/linux/` |
 
 Re-read a file just before editing it. Commit nothing and switch no branch: the owner reviews the working tree.
 
@@ -68,9 +67,9 @@ and the hosts Hugging Face redirects model downloads to (`cas-bridge.xethub.hf.c
 
 ## Where things go
 
-- The library folder stays **LastbookData** (layout unchanged: `library-data/`, `derived/`). Default place: the person's
-  Documents folder on Windows, and `~/Library/Application Support/Lastbook/LastbookData` on a Mac, or a folder they choose,
-  on a disk with room. `settings.json` remembers it as before (`app/main.py`).
+- The library folder stays **LastbookData** (layout unchanged: `library-data/`, `derived/`). Default place:
+  `$XDG_DATA_HOME/Lastbook/LastbookData` (`~/.local/share/Lastbook/LastbookData`), or a folder they choose, on a disk
+  with room. `settings.json` remembers it as before (`app/main.py`).
 - Work in progress: `<parent>/LastbookData.setup/`, holding `downloads/` (partial files with a `.part` suffix and a
   `.json` beside each: url, size, sha256, bytes done, ETag) and `unpack/` (the new LastbookData being built).
 - The model goes to `LastbookData/models/<file>`. After its SHA-256 matches, setup calls `llm_local.mark_checked(path)`, so
@@ -106,10 +105,11 @@ Added by setup-backend on 2026-11-12: `pick` (answers `{path, free_bytes, disk}`
 the window's top page; in setup mode it is also served at `/`. An upgrade or a new library is switched to when the app restarts
 after `finish` (the job ends `done` with the switch staged), so nothing is renamed while it is open.
 
-`hardware` = `{os: "macos" or "windows", arch: "arm64" or "x64", ram_bytes, unified_memory: true or false, gpus: [{name,
-vram_bytes}], disks: [{path, free_bytes, total_bytes}], ai: {fits, needs_bytes, why}}`. On a Mac `ai.fits` comes from
-`llm_local.judge` of a real `lastbook-llm --measure` once the model file is present. Before that, it is an estimate from
-`memory_bytes` and RAM, marked `"estimate": true`. On Windows, RAM plus dedicated VRAM, from DXGI.
+`hardware` = `{os: "linux", arch: "arm64" or "x64", ram_bytes, unified_memory: true or false, gpus: [{name,
+vram_bytes}], disks: [{path, name, free_bytes, total_bytes}], ai_runtime: "cuda", "vulkan" or "cpu", ai: {fits, needs_bytes, why}}`.
+`ai.fits` comes from `llm_local.judge` of a real `lastbook-llm --measure` once the model file is present. Before that, it is
+an estimate from `memory_bytes` and RAM (plus a graphics card's own memory, read from `/sys` and the NVIDIA driver's files;
+Apple silicon under Asahi counts as one unified memory), marked `"estimate": true`.
 
 `job` = `{id, state, items: [{id, kind: "pack" or "model", title, state, bytes_done, bytes_total, rate_bps, eta_s,
 error}], error, started, folder}`. Each item also has `source`: `"found"` when its file is already on this computer
@@ -123,7 +123,7 @@ automatically, then fails with `checksum`.
 
 ## Switching to the library
 
-`finish` writes `settings.json` and tells the shell to load `lastbook://app/` (Mac) or `https://lastbook.invalid/` (Windows)
+`finish` writes `settings.json` and tells the shell to load `lastbook://app/`
 with the engine now started on the new folder. If an in-process switch proves fragile, the app may relaunch itself instead,
 with the same result for the person. Either way, an upgrade (for example Small to Medium) renames the old LastbookData to
 `LastbookData.old-<date>` only after the new one is complete and opens, and offers to delete the old one afterwards.

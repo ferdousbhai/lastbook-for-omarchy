@@ -91,7 +91,7 @@ class _Item:
 
 class Setup:
     def __init__(self, mode, settings_dir, default_parent, current=None, manifest=None, allowed=None, context=None,
-                 on_finish=None, pick_folder=None, look_for_libraries=None, home=None, llm_local=None, default_why=None):
+                 on_finish=None, pick_folder=None, look_for_libraries=None, home=None, llm_local=None):
         """mode: 'first-run' or 'manage'. current: the open library (manage). on_finish(folder): the app opens that library
         (it relaunches). pick_folder(): a folder the person chose, or None. look_for_libraries(): LastbookData folders found."""
         self.mode, self.current = mode, Path(current) if current else None
@@ -99,7 +99,6 @@ class Setup:
         self.manifest = manifest or Manifest(allowed=allowed, context=context)
         self.allowed, self.context = allowed, context
         self.on_finish, self.pick_folder, self.look_for_libraries = on_finish, pick_folder, look_for_libraries
-        self.default_why = default_why     # why the default folder is not the usual one (a long Windows user folder), for the screen
         self._llm = llm_local
         self.lock = threading.RLock()
         self.job, self.control, self.thread = None, None, None
@@ -402,8 +401,6 @@ class Setup:
                    'Keep that disk connected: Lastbook reads the library from it.')
         else:
             why = 'Small is selected to get started. You can choose a larger library.'
-        if self.default_why and not elsewhere and not self.current:
-            why = self.default_why + ' ' + why
         if model and hw['ai']['fits'] and not ai:
             why += ' The local AI fits this computer’s memory, but not on the disk as well.'
         elif model and not hw['ai']['fits']:
@@ -482,10 +479,6 @@ class Setup:
                 return {'error': f'Lastbook cannot make a folder there ({type(e).__name__}).', 'code': 'folder'}
             if not os.access(parent, os.W_OK):
                 return {'error': 'Lastbook cannot save in that folder. Choose another.', 'code': 'folder'}
-            if path_too_deep(target):
-                room = WINDOWS_MAX_PATH - LONGEST_INSIDE - len('\\') - len(DATA_NAME) - 1
-                return {'error': f'That folder is too deep for Windows: the library’s longest file name would not fit. '
-                                 f'Choose a folder whose path is at most {room} characters long, such as Documents.', 'code': 'folder'}
             if self.mode == 'first-run' and target.exists() and not install.is_library(target):
                 if any(target.iterdir()):
                     return {'error': f'There is already a folder called {DATA_NAME} there that is not a library. Choose another place.', 'code': 'folder'}
@@ -761,7 +754,7 @@ class Setup:
             free, _ = hardware.disk_of(path)
         except OSError:
             free = None
-        return {'path': path, 'free_bytes': free, 'disk': hardware.disk_name(path)}
+        return {'path': path, 'free_bytes': free, 'disk': None}
 
     def remove_ai(self):
         """Manage mode: the model file goes from the open library. The library itself is not touched."""
@@ -1074,16 +1067,6 @@ class Setup:
             self._save_job()
 
 
-WINDOWS_MAX_PATH = 259      # characters in a path Windows programs can open with long paths off (the default): MAX_PATH less the end
-LONGEST_INSIDE = 190        # the longest file path inside LastbookData in any pack (Medium and All, measured 12 Nov 2026; Small 166)
-
-
-def path_too_deep(target, windows=None):
-    """On Windows the library reads its files by ordinary paths, so <target>\\<longest file> must fit in WINDOWS_MAX_PATH."""
-    windows = os.name == 'nt' if windows is None else windows
-    return windows and len(str(target)) + 1 + LONGEST_INSIDE > WINDOWS_MAX_PATH
-
-
 def _tag_sources(job):
     """Each item's source: 'found' when all its files are already on this computer (plan.sources), else 'download'."""
     plan = job['plan']
@@ -1216,12 +1199,7 @@ def _default():
     global SETUP
     if SETUP is None:
         from engine import paths
-        if sys.platform == 'win32':
-            settings = Path(os.environ.get('APPDATA') or Path.home() / 'AppData' / 'Roaming') / 'Lastbook'
-        elif sys.platform.startswith('linux'):
-            settings = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'Lastbook'
-        else:
-            settings = Path.home() / 'Library' / 'Application Support' / 'Lastbook'
+        settings = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'Lastbook'
         SETUP = Setup('manage', settings, paths.DATA, current=paths.DATA)
     return SETUP
 

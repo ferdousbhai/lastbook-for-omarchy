@@ -4,15 +4,15 @@
   python3 -B app/tests/test_data_folder.py [-v]
 
 Never packaged."""
-import json, os, shutil, stat, sys, unittest
+import json, os, shutil, stat, sys, tempfile, unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent), str(HERE.parents[1])]
 import main  # noqa: E402
-from app.tests import shorttemp  # noqa: E402
 
 
 def library(folder):
@@ -23,12 +23,13 @@ def library(folder):
 
 class Lookup(unittest.TestCase):
     def setUp(self):
-        self.tmp = shorttemp.mkdtemp('lastbook-lookup-')
+        self.tmp = Path(tempfile.mkdtemp(prefix='lastbook-lookup-')).resolve()
         self.home = self.tmp / 'home'
         self.home.mkdir()
-        env = {k: v for k, v in os.environ.items() if k not in ('LASTBOOK_DATA', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE')}
-        env['HOME'] = env['USERPROFILE'] = str(self.home)   # Path.home(): HOME on a Mac, USERPROFILE on Windows
-        patches = [mock.patch.dict(os.environ, env, clear=True), mock.patch.object(main.sys, 'platform', 'darwin')]
+        env = {k: v for k, v in os.environ.items() if k != 'LASTBOOK_DATA' and not k.startswith('XDG_')}
+        env['HOME'] = str(self.home)
+        # the window itself is never opened here: main() only asks it whether another copy is open
+        patches = [mock.patch.dict(os.environ, env, clear=True), mock.patch.dict(sys.modules, {'shell_linux': SimpleNamespace(claim=lambda folder: True, before_exec=lambda: None)})]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -41,7 +42,7 @@ class Lookup(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def settings(self):
-        return self.home / 'Library' / 'Application Support' / 'Lastbook' / 'settings.json'
+        return self.home / '.config' / 'Lastbook' / 'settings.json'
 
     def test_nothing_found(self):
         (self.home / 'Downloads' / 'Other').mkdir(parents=True)
@@ -154,57 +155,23 @@ class Lookup(unittest.TestCase):
                 self.assertEqual(main.main(), 7)       # no library: the window opens on setup (engine/setup/)
         self.assertFalse(self.settings().exists())
 
-    def test_windows_default_fits(self):
-        """A long Windows user name made the default too deep for the library's longest file (1.1.4, Windows)."""
-        from engine.setup import api as setup_api, install
-        deep = lambda t, windows=None: len(str(t)) + 191 > 259
-        long_local = Path('C:/Users/a-much-longer-windows-user-name/AppData/Local/Lastbook')
-        with mock.patch.object(main.sys, 'platform', 'win32'), mock.patch.object(main, 'app_folders', lambda: (long_local, long_local)), \
-                mock.patch.dict(os.environ, {'SystemDrive': 'C:'}), mock.patch.object(setup_api, 'path_too_deep', deep):
-            with mock.patch.object(install, 'private_folder', lambda p: True):
-                folder, why = main.default_choice()
-                self.assertEqual(folder, Path('C:\\') / 'Lastbook')
-                self.assertIn('your user folder’s path is too long', why)
-            with mock.patch.object(install, 'private_folder', lambda p: False):     # cannot make it: the person chooses
-                self.assertEqual(main.default_choice(), (long_local, None))
-        short_local = Path('C:/Users/al/AppData/Local/Lastbook')
-        with mock.patch.object(main.sys, 'platform', 'win32'), mock.patch.object(main, 'app_folders', lambda: (short_local, short_local)), \
-                mock.patch.object(setup_api, 'path_too_deep', deep):
-            self.assertEqual(main.default_choice(), (short_local, None))
-
-    def test_windows_places(self):
-        with mock.patch.object(main.sys, 'platform', 'win32'), mock.patch.dict(os.environ, {'APPDATA': str(self.tmp / 'Roaming'), 'LOCALAPPDATA': str(self.tmp / 'Local')}):
-            self.assertEqual(main.app_folders(), (self.tmp / 'Roaming' / 'Lastbook', self.tmp / 'Local' / 'Lastbook'))
-            self.assertEqual(main.default_parent(), self.tmp / 'Local' / 'Lastbook')
+    def test_xdg_places(self):
+        with mock.patch.dict(os.environ, {'XDG_CONFIG_HOME': str(self.tmp / 'config'), 'XDG_DATA_HOME': str(self.tmp / 'data')}):
+            self.assertEqual(main.app_folders(), (self.tmp / 'config' / 'Lastbook', self.tmp / 'data' / 'Lastbook'))
+            self.assertEqual(main.default_parent(), self.tmp / 'data' / 'Lastbook')
             local = library(main.default_parent() / 'LastbookData')
             self.assertEqual(main.data_folder(None), local)
             chosen = library(self.tmp / 'D' / 'LastbookData')
             main.remember(chosen)
-            self.assertTrue((self.tmp / 'Roaming' / 'Lastbook' / 'settings.json').is_file())
+            self.assertTrue((self.tmp / 'config' / 'Lastbook' / 'settings.json').is_file())
             self.assertEqual(main.data_folder(None), chosen)
 
-
-    def test_mac_file_picker_starts_in_app_storage(self):
-        from types import SimpleNamespace
-        panel = mock.Mock()
-        panel.runModal.return_value = 1
-        panel.URL.return_value.path.return_value = str(self.tmp / 'model.gguf')
-        appkit = SimpleNamespace(NSOpenPanel=SimpleNamespace(openPanel=lambda: panel), NSModalResponseOK=1,
-                                 NSURL=SimpleNamespace(fileURLWithPath_=lambda p: p))
-        helper = SimpleNamespace(AppHelper=SimpleNamespace(callAfter=lambda action: action()))
-        with mock.patch.dict(sys.modules, {'AppKit': appkit, 'PyObjCTools': helper}):
-            self.assertEqual(main.pick_folder(files=True), str(self.tmp / 'model.gguf'))
-        panel.setCanChooseFiles_.assert_called_once_with(True)
-        panel.setCanChooseDirectories_.assert_called_once_with(False)
-        panel.setDirectoryURL_.assert_called_once_with(str(main.app_folders()[1]))
-
-    def test_windows_file_picker_starts_in_app_storage(self):
-        from types import SimpleNamespace
+    def test_file_picker_starts_in_app_storage(self):
         picker = mock.Mock(return_value=str(self.tmp / 'model.gguf'))
-        with mock.patch.object(sys, 'platform', 'win32'), \
-                mock.patch.dict(sys.modules, {'shell_windows': SimpleNamespace(pick_folder=picker)}):
+        glib = SimpleNamespace(idle_add=lambda fn: fn())     # GTK's main loop runs the dialog; here it runs at once
+        with mock.patch.dict(sys.modules, {'shell_linux': SimpleNamespace(pick=picker), 'gi': SimpleNamespace(), 'gi.repository': SimpleNamespace(GLib=glib)}):
             self.assertEqual(main.pick_folder(files=True), str(self.tmp / 'model.gguf'))
-            picker.assert_called_once_with('Choose a library zip or model file', main.app_folders()[1], files=True)
+        picker.assert_called_once_with(True, str(main.app_folders()[1]))
 
     def test_model_discovery_stays_inside_selected_library(self):
         import llm_local
@@ -240,33 +207,19 @@ class Lookup(unittest.TestCase):
 
 class SetupRelaunch(unittest.TestCase):
     def test_relaunch_discards_previous_library_overrides(self):
+        """Packaged: /usr/bin/python3 with its own flags and the launcher again, without this run's arguments."""
         def restarted(executable, argv):
-            self.assertEqual(argv, [sys.executable])
+            self.assertEqual(argv, [sys.executable, '-I', '-B', '/usr/lib/lastbook-for-omarchy/lastbook.py'])
             self.assertNotIn('LASTBOOK_DATA', os.environ)
 
         with mock.patch.object(main, 'FROZEN', True), \
-                mock.patch.object(sys, 'platform', 'darwin'), \
-                mock.patch.object(sys, 'argv', ['Lastbook', '--data', '/old/library', '--ask']), \
+                mock.patch.object(sys, 'orig_argv', ['/usr/bin/python3', '-I', '-B', '/usr/lib/lastbook-for-omarchy/lastbook.py', '--data', '/old/library', '--ask']), \
+                mock.patch.object(sys, 'argv', ['/usr/lib/lastbook-for-omarchy/lastbook.py', '--data', '/old/library', '--ask']), \
                 mock.patch.dict(os.environ, {'LASTBOOK_DATA': '/old/library'}), \
+                mock.patch.dict(sys.modules, {'shell_linux': SimpleNamespace(before_exec=lambda: None)}), \
                 mock.patch.object(os, 'execv', side_effect=restarted) as restart:
             main.relaunch()
             restart.assert_called_once()
-
-    def test_windows_relaunch_discards_previous_library_overrides(self):
-        def restarted(argv, **kwargs):
-            self.assertEqual(argv, [sys.executable])
-            self.assertNotIn('LASTBOOK_DATA', os.environ)
-
-        with mock.patch.object(main, 'FROZEN', True), \
-                mock.patch.object(sys, 'platform', 'win32'), \
-                mock.patch.object(sys, 'argv', ['Lastbook', '--data=/old/library']), \
-                mock.patch.dict(os.environ, {'LASTBOOK_DATA': '/old/library'}), \
-                mock.patch('subprocess.Popen', side_effect=restarted) as restart, \
-                mock.patch.object(os, '_exit', side_effect=SystemExit) as stop:
-            with self.assertRaises(SystemExit):
-                main.relaunch()
-            restart.assert_called_once()
-            stop.assert_called_once_with(0)
 
 
 if __name__ == '__main__':

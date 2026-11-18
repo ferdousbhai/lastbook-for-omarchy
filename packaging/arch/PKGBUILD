@@ -1,0 +1,92 @@
+# Maintainer: Ferdous Bhai <https://github.com/ferdousbhai>
+# Built from the committed source, natively on each architecture:  cd packaging/arch && makepkg -s
+pkgname=lastbook-for-omarchy
+_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+_version=$(cat "$_root/VERSION")
+_llama=b12032                 # packaging/llm/build_llm_linux.sh checks the commit
+_python=3.14                  # the wheels below are built for this Python; a new Arch Python needs new wheels
+pkgver=$_version
+pkgrel=1
+pkgdesc='Offline survival library for Omarchy: manuals, videos, encyclopedias, offline maps and a local AI that cites its sources'
+arch=('x86_64' 'aarch64')
+url='https://github.com/ferdousbhai/lastbook-for-omarchy'
+license=('MIT')
+# The window is the system's GTK 3 and WebKitGTK 4.1 through PyGObject; videos play through GStreamer (H.264/AAC through gst-libav).
+# The local AI's runner needs the GCC runtime (OpenMP) and the Vulkan loader (CPU fallback without a driver).
+depends=('python>=3.14' 'python<3.15' 'python-gobject' 'gtk3' 'webkit2gtk-4.1' 'gstreamer'
+  'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'python-numpy' 'python-beautifulsoup4' 'gcc-libs' 'vulkan-icd-loader')
+optdepends=('recall-for-omarchy: meaning-based search, with the embedding model Recall already runs'
+  'vulkan-asahi: the local AI on the graphics card of an Apple Silicon Mac')
+makedepends=('git' 'cmake' 'ninja' 'gcc' 'shaderc' 'vulkan-headers' 'spirv-headers' 'pkgconf' 'python-pillow' 'binutils')
+options=('!debug' '!lto' '!strip')
+source=("llama.cpp::git+https://github.com/ggml-org/llama.cpp.git#tag=${_llama}")
+sha256sums=('SKIP')
+# Not in the Arch repositories: the ZIM reader and PDFium's bindings, as published on PyPI (pinned files, checked here).
+source_x86_64=("https://files.pythonhosted.org/packages/31/f3/16820fa6041ecbf6c6b54d1b3dcc23e3489f71447870f36a3d2779092434/libzim-3.13.1-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
+  "https://files.pythonhosted.org/packages/4f/a3/c9cc797fc8bdfb8f37b9b0f8b9d02a5fc196b2015f408d53624cab5b0519/pypdfium2-5.14.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl")
+sha256sums_x86_64=('bc29b54e91690de33706d765605d3ca9a63e066ce70175f51bf1169ba63bef70'
+  '11f281613fa22313d9c7ab89947665e84eccf8ebe40e1198a84a88352305648d')
+source_aarch64=("https://files.pythonhosted.org/packages/b6/98/08ce16f4e3d6ec20a8c775272943efda63cd077ef9ebd0e64b83df544f9c/libzim-3.13.1-cp314-cp314-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl"
+  "https://files.pythonhosted.org/packages/92/b4/0c31aa51887cd6cd032191dfe010a6d01ed43cf03204cfbd2184ebe4b715/pypdfium2-5.14.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl")
+sha256sums_aarch64=('77864105f08cceaf8ad3c9d7d4a9cc682a33b4962ac0ee1c31976e5330b24dc8'
+  'f1b696e6901e16f114a2ec6332e5e3f8f5033a901614ead28499ab18ca6024f5')
+noextract=("${source_x86_64[@]##*/}" "${source_aarch64[@]##*/}")
+
+prepare() {
+  rm -rf "$srcdir/lastbook"
+  mkdir -p "$srcdir/lastbook"
+  git -C "$_root" archive HEAD | tar -x -C "$srcdir/lastbook"
+  [ "$(python -c 'import sys; print("%d.%d" % sys.version_info[:2])')" = "$_python" ] || { echo "Python is not $_python: update the wheels" >&2; return 1; }
+}
+
+build() {
+  cd "$srcdir/lastbook"
+  # The local AI's runner: llama.cpp at the pinned tag, Vulkan plus every CPU variant, our pipe-only program.
+  mkdir -p "$srcdir/llm"
+  ln -sfn "$srcdir/llama.cpp" "$srcdir/llm/llama.cpp"
+  W="$srcdir/llm" bash packaging/llm/build_llm_linux.sh
+  # lastbooksrc: WebKitGTK's player has no source for a custom scheme, so the videos come through this GStreamer element.
+  gcc -shared -fPIC -O2 -Wall -Werror -s -ffile-prefix-map="$PWD"=lastbook packaging/linux/gst/lastbooksrc.c \
+    -o "$srcdir/libgstlastbooksrc.so" $(pkg-config --cflags --libs gstreamer-1.0 gstreamer-base-1.0)
+  # web/ and content/ as they ship (general wording, no web addresses in our own pages)
+  python -I -B packaging/ship_app_files.py "$srcdir/ship"
+}
+
+package() {
+  cd "$srcdir/lastbook"
+  local lib="$pkgdir/usr/lib/$pkgname"
+  install -d "$lib/app" "$lib/engine/setup" "$lib/setup" "$lib/lib" "$lib/llm" "$lib/gst"
+  install -m644 app/main.py app/bridge.py app/shell_linux.py "$lib/app/"
+  install -m644 server.py retrieval.py encyclopedia.py assistant.py llm_local.py VERSION "$lib/"
+  install -m644 engine/__init__.py engine/paths.py engine/library.py engine/saved_pages.py engine/address_search.py "$lib/engine/"
+  install -m644 engine/setup/*.py engine/setup/roots.pem "$lib/engine/setup/"
+  install -m644 packaging/arch/manifest-v1.json "$lib/setup/"
+  install -m644 packaging/linux/lastbook.py "$lib/"
+  cp -R "$srcdir/ship/web" "$srcdir/ship/content" "$lib/"
+  install -m755 "$srcdir/llm/bin-linux/lastbook-llm" "$lib/llm/"
+  install -m644 "$srcdir"/llm/bin-linux/*.so* "$srcdir"/llm/bin-linux/LICENSE* "$srcdir"/llm/bin-linux/NOTICE* "$lib/llm/"
+  install -m644 "$srcdir/libgstlastbooksrc.so" "$lib/gst/"
+  local whl
+  for whl in "$srcdir"/*.whl; do
+    python -I -m zipfile -e "$(realpath "$whl")" "$lib/lib"
+  done
+  find "$lib/lib" -depth \( -name tests -o -name testing -o -name __pycache__ -o -name pypdfium2_cli \) -type d -exec rm -rf {} +
+  python -I -m compileall -q -j 0 -s "$pkgdir" -p / "$lib" >/dev/null
+
+  install -d "$pkgdir/usr/bin"
+  printf '#!/bin/sh\nexec /usr/bin/python3 -I -B /usr/lib/%s/lastbook.py "$@"\n' "$pkgname" > "$pkgdir/usr/bin/lastbook"
+  chmod 755 "$pkgdir/usr/bin/lastbook"
+  install -Dm644 packaging/linux/lastbook.desktop "$pkgdir/usr/share/applications/lastbook.desktop"
+  python -I - packaging/icon/tile-1024.png "$pkgdir/usr/share/icons/hicolor" <<'PY'
+import sys
+from pathlib import Path
+from PIL import Image
+src, out = Image.open(sys.argv[1]).convert('RGBA'), Path(sys.argv[2])
+for n in (16, 24, 32, 48, 64, 128, 256, 512):
+    d = out / f'{n}x{n}' / 'apps'
+    d.mkdir(parents=True, exist_ok=True)
+    src.resize((n, n), Image.LANCZOS).save(d / 'lastbook.png', optimize=True)
+PY
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 THIRD_PARTY_NOTICES.md "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES.md"
+}

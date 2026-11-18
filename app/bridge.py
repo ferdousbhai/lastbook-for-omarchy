@@ -1,13 +1,9 @@
 """No-port transport between the app's window and the engine. Nothing in here opens a socket.
 
 A request from the web view runs the engine's unchanged request Handler on a worker thread, over in-memory streams.
-Both shells use this one file; the platform parts live in shell_windows.py and shell_macos.py.
+The window (shell_linux.py, WebKitGTK's URISchemeRequest) calls start(...), which feeds a Sink piece by piece, with backpressure.
 
-  mode='stream'   (macOS, WKURLSchemeHandler)  start(...) calls a Sink piece by piece, with backpressure.
-  mode='buffer'   (Windows, WebResourceRequested)  fetch(...) hands back one whole Response. WebView2 has no way to
-                  stream a response, so chat becomes small polls (top_script and /__bridge/stream/) and video is capped.
-
-What holds on both:
+What holds:
   - Lanes. The app's own small requests, everyone else's /api/, page renders, chat and large files each have their own workers
     and their own byte budget, so a flood of one never takes a worker or a byte from another. The two /api/ lanes also add workers
     when a request has waited, because a slow answer mostly sleeps: it must not hold up a quick one behind it.
@@ -16,39 +12,30 @@ What holds on both:
   - The flood gate. An answer over BIG_BODY reaches only a navigation the app itself started (give_ticket).
   - POST. Every POST needs the key made at launch, which only the app's top frame gets (top_script).
   - The key also marks the top frame's own /api/ reads, which is how they keep a lane that a saved page cannot get into.
-  - No PDF ever reaches the web view. A PDF can carry scripts and both platforms' viewers run them, so what arrives is a page of images PDFium has drawn (_answer_pdf).
+  - No PDF ever reaches the web view. A PDF can carry scripts and the system's viewers run them, so what arrives is a page of images PDFium has drawn (_answer_pdf).
 """
 import hashlib
 import html
 import io
-import json
 import os
-import queue
 import re
 import secrets
-import tempfile
 import threading
 import time
 import traceback
 import urllib.parse
 from collections import deque
 
-ORIGIN_WINDOWS = 'https://lastbook.invalid'
-ORIGIN_MAC = 'lastbook://app'
+ORIGIN = 'lastbook://app'
 
 MiB = 1024 * 1024
 CHUNK = MiB                         # largest piece handed to a stream Sink
-VIDEO_PIECE = {'stream': 8 * MiB,   # most bytes one video Range answer holds. The player asks for the rest.
-               'buffer': 4 * MiB}   # 2.38 MB is the largest request seen from a player, and a 256 KB cap broke playback.
+VIDEO_PIECE = 8 * MiB               # most bytes one video Range answer holds. The player asks for the rest.
 BIG_BODY = 32 * MiB                 # above this, only a navigation the app started gets the whole answer
-WHOLE_MAX = 256 * MiB               # the largest answer of any kind. The largest real page is 44 MB, and PDFs and videos come in pieces. Handing over one answer costs far more than its size, see shell_windows.py.
-SPOOL_AT = 16 * MiB                 # buffer mode: a larger generated body goes to a temp file, not memory
-PER_REQUEST = 8 * MiB               # stream mode: most unacknowledged bytes for one request
+WHOLE_MAX = 256 * MiB               # the largest answer of any kind. The largest real page is 44 MB, and PDFs and videos come in pieces.
+PER_REQUEST = 8 * MiB               # most unacknowledged bytes for one request
 TICKET_LIFE = 30
 MAX_POST = 256 * 1024               # the engine's own limit on a chat request is 200,000 bytes
-MAX_STREAMS = 4                     # chat polls at one time
-STREAM_IDLE = 120                   # a poll stream nobody has asked about for this long is cancelled
-POLL_WAIT = 15
 KEY_HEADER = 'x-lastbook-key'
 
 # name: (workers, most waiting, byte budget). Budgets are separate on purpose: one shared pool would let large files starve /api/.
@@ -86,44 +73,15 @@ TOP_SCRIPT = r"""(() => {
   // Asking for a location goes to the system's location service, which can ask the network. The map's button shows this message.
   const none = { getCurrentPosition(ok, no) { if (no) setTimeout(no, 0, { code: 1, message: 'Lastbook stays offline and does not ask where you are.' }) }, watchPosition() { return 0 }, clearWatch() { } };
   try { Object.defineProperty(Navigator.prototype, 'geolocation', { get() { return none }, configurable: false }) } catch { }
-  const KEY = '__KEY__', POLL = __POLL__, own = location.protocol + '//' + location.host;
+  const KEY = '__KEY__', own = location.protocol + '//' + location.host;
   const real = window.fetch.bind(window);
   const mine = u => u.protocol + '//' + u.host === own;
   const keyed = (req) => { const headers = new Headers(req.headers); headers.set('X-Lastbook-Key', KEY); return real(new Request(req, { headers })) };
-  const call = (p, body) => real('/__bridge/stream' + p, { method: 'POST', body: body || '', headers: { 'Content-Type': 'application/octet-stream', 'X-Lastbook-Key': KEY } });
-  const aborted = () => new DOMException('The operation was aborted.', 'AbortError');
-  async function polled(body, signal) {
-    if (signal && signal.aborted) throw aborted();
-    const s = await call('/start', body);
-    if (!s.ok) return s;
-    const id = s.headers.get('X-Bridge-Stream');
-    let ctl, over = false;
-    const cancel = () => { if (!over) { over = true; call('/' + id + '/cancel').catch(() => { }) } };
-    const stream = new ReadableStream({
-      start(c) { ctl = c },
-      async pull(c) {
-        for (; ;) {
-          if (over) return;
-          const r = await call('/' + id + '/next');
-          if (over) return;
-          const b = new Uint8Array(await r.arrayBuffer());
-          if (over) return;
-          if (b.length) c.enqueue(b);
-          if (r.headers.get('X-Bridge-End')) { over = true; c.close(); return }
-          if (b.length) return;
-        }
-      },
-      cancel() { cancel() }
-    });
-    if (signal) signal.addEventListener('abort', () => { cancel(); try { ctl.error(aborted()) } catch { } });
-    return new Response(stream, { status: +s.headers.get('X-Bridge-Status'), headers: JSON.parse(s.headers.get('X-Bridge-Headers') || '[]') });
-  }
   window.fetch = async function (input, init) {
     const req = new Request(input, init);
     const u = new URL(req.url);
     if (!mine(u)) return real(req);
     if (req.method !== 'POST') return u.pathname.startsWith('/api/') ? keyed(req) : real(req);
-    if (POLL && u.pathname === '/api/chat') return polled(await req.arrayBuffer(), req.signal);
     return keyed(req);
   };
 })();
@@ -138,7 +96,7 @@ def headers_dict(headers):
 
 
 class Sink:
-    """What the macOS shell implements. All three run on a worker thread, in order, for one request, so post them to the
+    """What the shell implements. All three run on a worker thread, in order, for one request, so post them to the
     main thread in order. There, check `exchange.stopped` before touching the task, and never touch it once stopped."""
 
     def head(self, status, reason, headers):
@@ -150,22 +108,6 @@ class Sink:
 
     def finish(self, ok):
         """The last call. ok False: the answer stopped short (didFailWithError, not didFinish)."""
-
-
-class Response:
-    """What fetch hands the Windows shell. Exactly one of body and path is set, or neither for an empty answer."""
-
-    def __init__(self, status, reason, headers, body=None, path=None, delete=False, release=None):
-        self.status, self.reason, self.headers = status, reason, headers
-        self.body, self.path, self.delete = body, path, delete   # delete: a temp file; open it with FileOptions.DeleteOnClose
-        self._release = release
-        self.lane = None
-
-    def release(self):
-        """Call once the bytes are in the web view's hands, or if the answer is dropped. Calling it twice is harmless."""
-        r, self._release = self._release, None
-        if r:
-            r()
 
 
 class _Budget:
@@ -428,8 +370,8 @@ class Exchange:
             self._send_head()
             self._send(TOO_LARGE)
             raise BrokenPipeError   # stops the Handler before it reads the file
-        if self.b.meta_redirects and 300 <= self.status < 400 and self._header('location'):
-            # No public WKURLSchemeTask call follows a redirect, so hand the frame a page that moves itself.
+        if 300 <= self.status < 400 and self._header('location'):
+            # No public URI scheme call follows a redirect, so hand the frame a page that moves itself.
             # A sandbox would stop the refresh, so this one page says instead that it runs nothing and loads nothing. It holds only the engine's address, escaped.
             body = f'<!doctype html><meta http-equiv="refresh" content="0;url={html.escape(self._header("location"), quote=True)}">'.encode()
             self.status, self.reason = 200, 'OK'
@@ -455,10 +397,8 @@ class Exchange:
         return 403, 'Not For This Page'
 
     def file_body(self, source):
-        """The Handler offers a whole open file. Buffer mode can hand it over by name, with nothing copied through Python."""
+        """The Handler offers a whole open file."""
         if self.swallow:
-            return
-        if self._file_by_name(getattr(source, 'name', None)):
             return
         while True:
             if self.stopped:
@@ -487,13 +427,6 @@ class Exchange:
 
     def _send(self, b):
         raise NotImplementedError
-
-    def refuse(self):
-        """Still waiting, and nobody wants it any more. Only buffer mode needs this: there is no other way to hear that the web view has given up on a request."""
-        self.cancel()
-
-    def _file_by_name(self, name):
-        return False
 
 
 class _Streamed(Exchange):
@@ -534,139 +467,20 @@ class _Streamed(Exchange):
         self.b._log_end(self, 'short' if short or cut else 'finished')
 
 
-class _Buffered(Exchange):
-    def __init__(self, bridge, method, target, raw, lane, is_document, done):
-        super().__init__(bridge, method, target, raw, lane, is_document)
-        self.done_cb = done
-        self.mem = bytearray()
-        self.spool = None        # (open file, path)
-        self.named = None
-        self.size = 0
-
-    def _send_head(self):
-        pass
-
-    def _file_by_name(self, name):
-        if isinstance(name, str) and self.method == 'GET':
-            self.named = name
-            self.sent = self.announced or 0
-            return True
-        return False
-
-    def _send(self, b):
-        self.size += len(b)
-        if self.b.whole_max and self.size > self.b.whole_max:   # a body that never said how long it was
-            self._drop_memory()
-            self._drop_spool()
-            self.status, self.reason, self.headers, self.note = 413, 'Too Large', [('Content-Type', 'text/html; charset=utf-8'), ('Content-Security-Policy', self.b.server.Handler.SAVED_PAGE_CSP)], 'too-large'
-            self.mem = bytearray(TOO_LARGE)
-            self.swallow = True
-            raise BrokenPipeError
-        if self.spool:
-            self.spool[0].write(b)
-            return
-        if self.size <= SPOOL_AT:
-            if self.budget.try_acquire(len(b), self):
-                self.mem += b
-                return
-            if not self.held:     # holding nothing, so waiting cannot deadlock: whoever holds bytes will finish or spill
-                self.budget.acquire(len(b), self)
-                self.mem += b
-                return
-        self._spill(b)
-
-    def _spill(self, b):
-        fd, path = tempfile.mkstemp(prefix='lb-spool-', dir=self.b.tmpdir)
-        f = os.fdopen(fd, 'wb')
-        self.spool = (f, path)
-        f.write(self.mem)
-        f.write(b)
-        self._drop_memory()
-        self.b.count('spilled')
-
-    def refuse(self):
-        self.cancel()
-        status, reason, hs, text = _plain(503, 'Busy', b'no longer wanted')
-        self.done_cb(Response(status, reason, hs, body=text))
-
-    def _drop_memory(self):
-        self.mem = bytearray()
-        self.budget.release_all(self)
-
-    def _drop_spool(self):
-        if self.spool:
-            self.spool[0].close()
-            try:
-                os.unlink(self.spool[1])
-            except OSError:
-                pass
-            self.spool = None
-
-    def _end(self):
-        if self.stopped:
-            self._drop_memory()
-            self._drop_spool()
-            return
-        if self.note == 'unknown-length-over-limit':
-            self._drop_memory()
-            self._drop_spool()
-            self.status, self.reason, self.headers = 413, 'Too Large', [('Content-Type', 'text/html; charset=utf-8'), ('Content-Security-Policy', self.b.server.Handler.SAVED_PAGE_CSP)]
-            self.mem = bytearray(TOO_LARGE)
-        if not self.head_done:
-            self.status, self.reason, self.note = 502, 'No Answer', self.note or 'no-answer'
-        headers = self.headers
-        if self.spool:
-            self.spool[0].close()
-            resp = Response(self.status, self.reason, headers, path=self.spool[1], delete=True)
-        elif self.named:
-            resp = Response(self.status, self.reason, headers, path=self.named)
-        else:
-            resp = Response(self.status, self.reason, headers, body=bytes(self.mem), release=lambda: self.budget.release_all(self))
-            self.mem = bytearray()
-        resp.lane = self.lane.name
-        self.b._log_end(self, 'finished', size=self.size)
-        self.done_cb(resp)
-
-
-class _PollSink(Sink):
-    def __init__(self):
-        self.q = queue.Queue()
-        self.headed = threading.Event()
-        self.status, self.headers = None, []
-
-    def head(self, status, reason, headers):
-        self.status, self.headers = status, headers
-        self.headed.set()
-
-    def data(self, chunk, ack):
-        self.q.put((chunk, ack))
-
-    def finish(self, ok):
-        self.q.put(None)
-        self.headed.set()
-
-
 class Bridge:
-    def __init__(self, server_module, mode, origin, tmpdir=None, log=None, lanes=None, per_request=PER_REQUEST, piece=None, whole_max='default', poll_wait=POLL_WAIT):
-        """server_module: the imported engine, after server.init(). mode: 'stream' or 'buffer'. origin: ORIGIN_MAC or ORIGIN_WINDOWS.
-        tmpdir: where buffer mode spools (None: the system's). log: a function taking one dict per request; it never sees the key."""
-        if mode not in ('stream', 'buffer'):
-            raise ValueError(mode)
-        self.server, self.mode, self.origin = server_module, mode, origin
-        self.tmpdir, self.logger = tmpdir, log
+    def __init__(self, server_module, origin=ORIGIN, log=None, lanes=None, per_request=PER_REQUEST, piece=None, whole_max='default'):
+        """server_module: the imported engine, after server.init(). log: a function taking one dict per request; it never sees the key."""
+        self.server, self.origin = server_module, origin
+        self.logger = log
         self.Handler = _make_handler(server_module.Handler)
         self.key = secrets.token_urlsafe(32)     # new each launch; never written to a log
-        self.piece = piece or VIDEO_PIECE[mode]
+        self.piece = piece or VIDEO_PIECE
         self.whole_max = WHOLE_MAX if whole_max == 'default' else whole_max
-        self.meta_redirects = mode == 'stream'
-        self.poll_wait = poll_wait
-        self.lanes = {n: _Lane(n, w, q, b, per_request if mode == 'stream' else None, GROW_TO.get(n)) for n, (w, q, b) in (lanes or LANES).items()}
+        self.lanes = {n: _Lane(n, w, q, b, per_request, GROW_TO.get(n)) for n, (w, q, b) in (lanes or LANES).items()}
         self.waiting_now = threading.Event()
         threading.Thread(target=self._grow_lanes, daemon=True, name='lane-grow').start()
         self.tickets = {}
         self.ticket_lock = threading.Lock()
-        self.streams = {}
-        self.stream_lock = threading.Lock()
         self.counts = {}
         self.count_lock = threading.Lock()
         self.pdf_sizes = {}
@@ -674,7 +488,7 @@ class Bridge:
 
     # ---- for the shell: requests
     def start(self, method, url, headers, body, sink, is_document=None):
-        """Stream mode. Runs sink's calls on a worker. Returns the Exchange, whose cancel() the shell calls when the web view
+        """Runs sink's calls on a worker. Returns the Exchange, whose cancel() the shell calls when the web view
         stops the task, or None if the bridge answered at once (a refusal), in which case sink already has the whole answer.
         headers: (name, value) pairs or a dict. body: bytes or None. is_document: False when the shell knows this is no document."""
         refused, prepared = self._prepare(method, url, headers, body, is_document)
@@ -696,36 +510,6 @@ class Bridge:
             return None
         self.waiting_now.set()
         return ex
-
-    def fetch(self, method, url, headers, body, done, is_document=None):
-        """Buffer mode. done(Response) runs on a worker, or at once on this thread for a refusal. Returns the Exchange or None."""
-        refused, prepared = self._prepare(method, url, headers, body, is_document)
-        if refused:
-            done(Response(refused[0], refused[1], refused[2], body=refused[3]))
-            return None
-        target, raw, lane = prepared
-        if target.split('?', 1)[0].startswith('/__bridge/'):
-            ex = _BridgeRoute(self, method, target, raw, lane, is_document, done, body)
-        else:
-            ex = _Buffered(self, method, target, raw, lane, is_document, done)
-        if not lane.submit(ex):
-            self.count('queue-full')
-            status, reason, hs, text = _plain(503, 'Busy', b'too many requests')
-            done(Response(status, reason, hs, body=text))
-            return None
-        self.waiting_now.set()
-        return ex
-
-    def drop_waiting(self, older_than=1.0):
-        """The app has moved on to another document. What a page before it asked for and is still in line would only hold up the new one."""
-        lane = self.lanes['large']
-        now = time.time()
-        with lane.cond:
-            drop = [ex for ex in lane.waiting if now - ex.t0 >= older_than]
-            lane.waiting = deque(ex for ex in lane.waiting if now - ex.t0 < older_than)
-        for ex in drop:
-            ex.refuse()
-        return len(drop)
 
     def has_key(self, headers):
         """Did this come from the app's top frame's own script? Tells a shell whether a POST's body is worth reading at all."""
@@ -847,10 +631,9 @@ class Bridge:
             self.tickets = {k: t for k, t in self.tickets.items() if now - t < TICKET_LIFE}
             self.tickets[target] = now
 
-    def top_script(self, polling=None):
-        """Install in the top frame only where possible (macOS: forMainFrameOnly; WebView2 runs it in every frame, and it returns at once there)."""
-        polling = self.mode == 'buffer' if polling is None else polling
-        return TOP_SCRIPT.replace('__KEY__', self.key).replace('__POLL__', 'true' if polling else 'false')
+    def top_script(self):
+        """Install in the top frame only (WebKit's TOP_FRAME); in any other frame it returns at once."""
+        return TOP_SCRIPT.replace('__KEY__', self.key)
 
     def target_of(self, url):
         if url == self.origin:
@@ -886,25 +669,21 @@ class Bridge:
         low = _lower(headers)
         path = target.split('?', 1)[0]
         origin = low.get('origin')
-        poll = path.startswith('/__bridge/')
-        if poll and self.mode != 'buffer':
+        if path.startswith('/__bridge/'):
             return self._refusal('no-such-route', 404, 'Not Found', url), None
         if method == 'POST':
             # WebKit sends no Origin on the app's own POST, and none on a sandboxed page's no-cors POST either, so Origin alone
             # cannot tell them apart. Nor can Content-Type: a no-cors POST of a Blob typed application/json arrives with that type.
             # Only the key is proof, and a no-cors request cannot carry a custom header.
             ctype = low.get('content-type', '').lower()
-            wanted = 'application/octet-stream' if poll else 'application/json'
             if origin is not None and origin != self.origin:
                 return self._refusal('post-origin', 403, 'Forbidden', url), None
-            if not ctype.startswith(wanted):
+            if not ctype.startswith('application/json'):
                 return self._refusal('post-type', 403, 'Forbidden', url), None
             if not self.has_key(low):
                 return self._refusal('post-key', 403, 'Forbidden', url), None
             if body is not None and len(body) > MAX_POST:
                 return self._refusal('post-size', 413, 'Too Large', url), None
-        elif poll:
-            return self._refusal('poll-method', 403, 'Forbidden', url), None
         lines = [f'{method} {target} HTTP/1.1', 'Host: localhost', 'Connection: close']
         for k, v in low.items():
             if k in PASS_HEADERS and k != 'range' and not re.search(r'[\r\n]', v):
@@ -957,86 +736,9 @@ class Bridge:
             except Exception:
                 traceback.print_exc()
 
-    def _log_end(self, ex, end, size=None):
-        self._log(kind='req', m=ex.method, t=ex.target[:240], lane=ex.lane.name if ex.lane else None, status=ex.status, sent=size if size is not None else ex.sent,
+    def _log_end(self, ex, end):
+        self._log(kind='req', m=ex.method, t=ex.target[:240], lane=ex.lane.name if ex.lane else None, status=ex.status, sent=ex.sent,
                   ms=round((time.time() - ex.t0) * 1000, 1), end=end, note=ex.note)
-
-    # ---- chat by polling, for a web view that cannot be streamed to
-    def _reap_streams(self):
-        now = time.time()
-        with self.stream_lock:
-            old = [k for k, s in self.streams.items() if now - s['seen'] > STREAM_IDLE]
-            dead = [self.streams.pop(k) for k in old]
-        for s in dead:
-            s['ex'].cancel()
-
-    def _stream_start(self, body):
-        self._reap_streams()
-        with self.stream_lock:
-            if len(self.streams) >= MAX_STREAMS:
-                return 429, 'Busy', [('Content-Type', 'text/plain')], b'too many answers at once'
-            sid = secrets.token_hex(16)
-            sink = _PollSink()
-            raw = ('POST /api/chat HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nOrigin: http://localhost\r\n'
-                   f'Content-Length: {len(body)}\r\n\r\n').encode() + body
-            ex = _Streamed(self, 'POST', '/api/chat', raw, self.lanes['chat'], None, sink)
-            self.streams[sid] = {'sink': sink, 'ex': ex, 'seen': time.time()}
-        threading.Thread(target=ex.run, daemon=True, name='bridge-chat').start()   # a thread of its own: lives as long as the answer
-        sink.headed.wait(30)
-        if sink.status is None:
-            with self.stream_lock:
-                self.streams.pop(sid, None)
-            ex.cancel()
-            return 502, 'No Answer', [], b''
-        hs = [(k, v) for k, v in sink.headers if k.lower() != 'content-length']
-        return 200, 'OK', [('X-Bridge-Stream', sid), ('X-Bridge-Status', str(sink.status)), ('X-Bridge-Headers', json.dumps(hs))], b''
-
-    def _stream_op(self, path, body):
-        m = re.fullmatch(r'/__bridge/stream/(start|([0-9a-f]{32})/(next|cancel))', path)
-        if not m:
-            return 404, 'Not Found', [], b''
-        if m.group(1) == 'start':
-            return self._stream_start(body or b'{}')
-        with self.stream_lock:
-            s = self.streams.get(m.group(2))
-            if s:
-                s['seen'] = time.time()
-        if not s:
-            return 404, 'Not Found', [], b''
-        if m.group(3) == 'cancel':
-            with self.stream_lock:
-                self.streams.pop(m.group(2), None)
-            s['ex'].cancel()
-            return 200, 'OK', [], b''
-        items, end = [], False
-        try:
-            items.append(s['sink'].q.get(timeout=self.poll_wait))
-            while True:
-                items.append(s['sink'].q.get_nowait())
-        except queue.Empty:
-            pass
-        data = bytearray()
-        for it in items:
-            if it is None:
-                end = True
-            else:
-                data += it[0]
-                it[1]()
-        if end:
-            with self.stream_lock:
-                self.streams.pop(m.group(2), None)
-        return 200, 'OK', [('Content-Type', 'application/octet-stream'), ('Cache-Control', 'no-store')] + ([('X-Bridge-End', '1')] if end else []), bytes(data)
-
-
-class _BridgeRoute(Exchange):
-    def __init__(self, bridge, method, target, raw, lane, is_document, done, body):
-        super().__init__(bridge, method, target, raw, lane, is_document)
-        self.done_cb, self.body = done, body
-
-    def run(self):
-        status, reason, hs, data = self.b._stream_op(self.target.split('?', 1)[0], self.body)
-        self.status = status
-        self.done_cb(Response(status, reason, hs, body=data))
 
 
 def _plain(status, reason, text):
@@ -1049,7 +751,7 @@ def _lower(headers):
 
 
 def _lane_for(method, path, keyed=False, target=''):
-    if path.startswith('/__bridge/') or (method == 'POST' and path == '/api/chat'):
+    if method == 'POST' and path == '/api/chat':
         return 'chat'
     if RENDER.match(path) or PDF_PAGE.search(target):
         return 'render'

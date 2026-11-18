@@ -10,17 +10,13 @@ draws a new tile under it, so nothing of the black surround or the old tile edge
   packaging/icon/art.png            the drawing alone, transparent, as it sat on the source tile (1024 px, tile-relative)
   packaging/icon/lastbook-1024.png  THE master: Apple's macOS grid, an 824 px tile at 100,100 of 1024, continuous corners, soft
                                     shadow, transparent outside the tile
-  packaging/icon/tile-1024.png      the same tile edge to edge (a 2% margin), no shadow: Windows, favicons, web app icons
+  packaging/icon/tile-1024.png      the same tile edge to edge (a 2% margin), no shadow: the desktop icon, web app icons
 
-Then, from the masters (needs Pillow and numpy; iconutil on a Mac for the .icns):
+Then, from the masters (needs Pillow and numpy):
 
-  packaging/Lastbook.icns           Mac app (lastbook_macos.spec), 16 to 512 at @1x and @2x
-  packaging/icon/Lastbook.ico       Windows: Lastbook.exe, the installer and uninstaller, shortcuts, Apps & features
   web/icon.svg, web/icon-192.png, web/icon-512.png               the app's own pages
-  website/favicon.svg, favicon.ico, apple-touch-icon.png     the live chooser
-  website-next/favicon.svg, favicon.ico, apple-touch-icon.png, img/icon-192.png, img/icon-512.png
 """
-import base64, io, shutil, struct, subprocess, sys, tempfile
+import base64, io, sys
 from pathlib import Path
 
 import numpy as np
@@ -108,16 +104,6 @@ def png_bytes(img):
     return b.getvalue()
 
 
-def write_ico(img, path, sizes=(16, 20, 24, 32, 40, 48, 64, 128, 256)):
-    """PNG-in-ICO, every size drawn from the master (Windows Vista and later read PNG entries)."""
-    pngs = [(s, png_bytes(sized(img, s))) for s in sizes]
-    head, offset = [struct.pack('<HHH', 0, 1, len(pngs))], 6 + 16 * len(pngs)
-    for s, data in pngs:
-        head.append(struct.pack('<BBBBHHII', s % 256, s % 256, 0, 0, 1, 32, len(data), offset))
-        offset += len(data)
-    Path(path).write_bytes(b''.join(head) + b''.join(d for _, d in pngs))
-
-
 def write_svg(img, path, px=128):
     """An SVG that carries a PNG: browsers take it as a favicon at any size, and it keeps the files' names and links as they are."""
     data = base64.b64encode(png_bytes(sized(img, px))).decode()
@@ -125,38 +111,14 @@ def write_svg(img, path, px=128):
                           f'<image width="{px}" height="{px}" href="data:image/png;base64,{data}" xlink:href="data:image/png;base64,{data}"/></svg>\n')
 
 
-def write_icns(img, path):
-    with tempfile.TemporaryDirectory() as t:
-        d = Path(t) / 'Lastbook.iconset'
-        d.mkdir()
-        for s in (16, 32, 128, 256, 512):
-            sized(img, s).save(d / f'icon_{s}x{s}.png')
-            sized(img, s * 2).save(d / f'icon_{s}x{s}@2x.png')
-        subprocess.run(['iconutil', '-c', 'icns', str(d), '-o', str(path)], check=True)
-
-
 def main():
     if '--master' in sys.argv:
         masters()
-    mac = Image.open(HERE / 'lastbook-1024.png').convert('RGBA')
     flat_tile = Image.open(HERE / 'tile-1024.png').convert('RGBA')
-    flat = Image.open(HERE / 'flat-1024.png').convert('RGB')
-    if shutil.which('iconutil'):
-        write_icns(mac, ROOT / 'packaging' / 'Lastbook.icns')
-    write_ico(flat_tile, HERE / 'Lastbook.ico')
     sizes = {s: sized(flat_tile, s) for s in (192, 512)}
     write_svg(flat_tile, ROOT / 'web' / 'icon.svg')
     for s, im in sizes.items():
         im.save(ROOT / 'web' / f'icon-{s}.png', optimize=True)
-    for site, img_dir in (('website', None), ('website-next', 'img')):     # the live chooser has no web manifest, so no icon-192/512
-        base = ROOT / site
-        if not base.is_dir():
-            continue
-        write_svg(flat_tile, base / 'favicon.svg')
-        write_ico(flat_tile, base / 'favicon.ico', sizes=(16, 32, 48))
-        sized(flat, 180).save(base / 'apple-touch-icon.png', optimize=True)
-        for s, im in sizes.items() if img_dir else ():
-            im.save(base / img_dir / f'icon-{s}.png', optimize=True)
 
 
 if __name__ == '__main__':

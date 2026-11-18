@@ -40,17 +40,17 @@ version above keeps using the model server at `SURVIVAL_MODEL_BASE` unless start
 - **Runner:** `packaging/llm/lastbook_llm.cpp`, our own small program on llama.cpp b12032 (the build the small-model
   evaluation used). It speaks JSON lines on standard input and output and opens no socket or port. It holds no RPC
   backend and none of llama.cpp's common library except the memory fitting (`common/fit.cpp`, the same as llama-server's
-  default `--fit`) and its log. Build it with `bash packaging/llm/build_llm_macos.sh`, which refuses a binary with
-  network calls or a folder of this Mac in it. Prompts go in as segments: Gemma's template markup with special tokens
+  default `--fit`) and its log. Build it with `bash packaging/llm/build_llm_linux.sh`, which refuses a binary with
+  network calls or a folder of this machine in it. Prompts go in as segments: Gemma's template markup with special tokens
   read, library and user text with them never read, so a document cannot start a turn of its own.
 - **Finding the model:** the file in `LastbookData/models/`, `LastbookData/`, Downloads, Documents or Desktop. It is
-  checked once (size, then SHA-256, about 10 s on this Mac), then `lastbook-llm --measure` asks llama.cpp where it fits.
-  It is offered when the computer's memory holds the measured need plus 2.5 GiB. On a Mac GPU and CPU share that memory;
-  on Windows only the part not placed on the graphics card counts. There is no fixed 32 GB rule.
+  checked once (size, then SHA-256), then `lastbook-llm --measure` asks llama.cpp where it fits.
+  It is offered when the computer's memory holds the measured need plus 2.5 GiB. With unified memory (Apple silicon) GPU and
+  CPU share that memory; with a graphics card only the part not placed on it counts. There is no fixed 32 GB rule.
 - **Measured here** (Apple M3 Ultra, 16k context): 16.9 GiB on the GPU plus 0.8 GiB host. Loading takes 1.5 s, and an
   answer with sources takes about 5–12 s. The process holds about 17.4 GB resident.
 - **Lifecycle:** it starts when someone asks and stops after 15 minutes unused, when turned off (About page), and when the
-  app quits or dies (the closed pipe ends it, plus a kill-on-close job object on Windows). A crash while answering
+  app quits or dies (the closed pipe ends it). A crash while answering
   shows a plain error, and the next question starts it again.
 - **Limits:** text only (no `view_page`: the local model is not given page images). Its answers were graded in the
   one-question evaluation (`derived/small-models/RECOMMENDATION.md`): 0–1 dangerous of 60, depending on the reader. The
@@ -59,14 +59,14 @@ version above keeps using the model server at `SURVIVAL_MODEL_BASE` unless start
 ## Retrieval service (`retrieval.py`)
 
 Keyword search = the library's own FTS5/BM25 `search.sqlite` (read only). Meaning-based search =
-BAAI bge-small-en-v1.5 (ONNX, from the official BAAI Hugging Face repo) run locally with onnxruntime.
+EmbeddingGemma vectors from Recall for Omarchy, asked over its local socket.
 Results are fused with reciprocal-rank fusion, lightly weighted by source type, with an exact
 equipment-model boost. Index files: `derived/index/semantic.sqlite` + `vectors.f16` (append-only).
 It updates incrementally: the server re-checks the catalog every 5 minutes and embeds only new or
 changed documents and transcripts (single writer, file lock). Build/refresh by hand:
 
 ```bash
-library-data/runtime/macos-arm64/python/bin/python3 retrieval.py
+python3 retrieval.py
 ```
 
 What it cannot read is reported in the app (About page, `/api/assistant/status`): videos without
@@ -75,19 +75,18 @@ captions (most of them), scanned PDFs without text, pictures inside videos, raw 
 ## Sharing with phones on the same network
 
 ```bash
-library-data/runtime/macos-arm64/python/bin/python3 server.py --lan
+python3 server.py --lan
 ```
 
-Prints a one-time link `http://<this-mac>:8890/?key=…`; opening it sets a cookie. Without the key other
+Prints a one-time link `http://<this-computer>:8890/?key=…`; opening it sets a cookie. Without the key other
 devices get 403. Network clients only get the app, its APIs, encyclopedias and library content folders
 (no worker state, logs, databases or directory listings). Loopback behaves exactly as before. Delete
 `derived/lan-key` to change the key. Nothing is exposed beyond the local network by this server.
 
 ## Runtime dependencies (all local)
 
-The library's bundled Python 3.12 (`library-data/runtime/...`), the library's own `tools/library.py`
-and vendored packages (libzim, bs4), poppler `pdftoppm` (page images), and in `derived/pylib`:
-onnxruntime, tokenizers, numpy. The model server at 19443 is needed only for Ask. No internet.
+Python 3 with `packaging/requirements.txt` (libzim, numpy, bs4, pypdfium2), the library's own
+`tools/library.py`, and Recall for Omarchy for meaning-based search. The model server at 19443 is needed only for Ask. No internet.
 
 ## What's where
 
@@ -108,7 +107,7 @@ onnxruntime, tokenizers, numpy. The model server at 19443 is needed only for Ask
 ```bash
 cd /path/to/lastbook
 unzip -o library-data/geography/openstreetmap/socal-latest-free.gpkg.zip -d derived/geo
-library-data/runtime/macos-arm64/python/bin/python3 tools/build_map.py derived/geo/socal.gpkg derived/geo/map.sqlite
+python3 tools/build_map.py derived/geo/socal.gpkg derived/geo/map.sqlite
 derived/buildenv/bin/python tools/build_coast.py library-data/geography/openstreetmap/socal-latest.osm.pbf derived/geo/map.sqlite
 python3 tools/build_places.py
 ```

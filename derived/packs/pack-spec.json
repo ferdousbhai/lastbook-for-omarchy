@@ -44,7 +44,7 @@
     "exclusions": "library-data/video-exclusions.json",
     "remote_map": "library-data/remote-videos.json",
     "guides": "content/topics/*.json",
-    "credits": "website/data/credits.json"
+    "credits": "packaging/credits.json"
   },
   "video_filters": {
     "flagged_28": {
@@ -577,7 +577,7 @@
       "collection": "About this library",
       "category": "about"
     },
-    "content": "each owner in this pack, from its catalog records: what is included, source site (website/data/credits.json), that owner's terms from the public list when written, removal contact hello@lastbook.org; map sources; the not-clinically-reviewed label",
+    "content": "each owner in this pack, from its catalog records: what is included, source site (packaging/credits.json), that owner's terms from the public list when written, removal contact hello@lastbook.org; map sources; the not-clinically-reviewed label",
     "contains_no_script": true
   },
   "scan": {

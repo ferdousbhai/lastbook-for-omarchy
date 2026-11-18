@@ -1,11 +1,10 @@
 #!/bin/bash
-# Builds lastbook-llm for 64-bit Linux (Ubuntu 24.04 LTS, x86_64 or aarch64): llama.cpp at the pinned tag with Vulkan (NVIDIA, AMD,
+# Builds lastbook-llm for 64-bit Arch Linux / Omarchy (x86_64 or aarch64): llama.cpp at the pinned tag with Vulkan (NVIDIA, AMD,
 # Intel and Arm graphics through their drivers) and every CPU variant of that architecture as a fallback, linked to our runner with nothing that can
-# open a socket (no RPC backend, no common library beyond the fitting and its log). Same layout as Windows: the program and
+# open a socket (no RPC backend, no common library beyond the fitting and its log). Layout: the program with
 # the llama.cpp libraries beside it, which it finds through RUNPATH $ORIGIN. fit.cpp passes C++ objects across libllama.so,
 # so one compiler and one C++ runtime (the system's libstdc++) build and run all of it.
-# Run on Ubuntu 24.04 x86_64 or aarch64 with:
-#   apt-get install build-essential git cmake ninja-build glslc libvulkan-dev spirv-headers
+# Needs: base-devel git cmake ninja shaderc vulkan-headers vulkan-icd-loader spirv-headers
 #   bash packaging/llm/build_llm_linux.sh
 # W  Work folder (default derived/llm). llama.cpp is cloned into W/llama.cpp at the tag if it is not there.
 # Output: W/bin-linux/lastbook-llm, the .so files beside it, LICENSE and notices, deps.txt (what each file needs), SHA256SUMS.txt
@@ -37,10 +36,10 @@ cmake -S "$L" -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc
 CPUS="$(cmake --build "$B" --target help | grep -oE '^ggml-cpu-[a-z0-9_.]+' | sort -u | tr '\n' ' ')"
 cmake --build "$B" -j "$(nproc)" --target llama ggml-vulkan $CPUS > "$W/build-linux.log"
 
-# fit_unused_win.cpp: GNU ld, like the Windows linker, wants every reference in fit.cpp resolved.
+# fit_unused.cpp: GNU ld wants every reference in fit.cpp resolved.
 g++ -std=c++17 -O3 -DNDEBUG $MAP \
   -I"$L/include" -I"$L/ggml/include" -I"$L/common" -I"$L/vendor" -I"$L/src" \
-  "$HERE/lastbook_llm.cpp" "$L/common/fit.cpp" "$L/common/log.cpp" "$L/common/json.cpp" "$HERE/fit_unused_win.cpp" \
+  "$HERE/lastbook_llm.cpp" "$L/common/fit.cpp" "$L/common/log.cpp" "$L/common/json.cpp" "$HERE/fit_unused.cpp" \
   -L"$B/bin" -lllama -lggml -lggml-base -pthread \
   -Wl,-rpath,'$ORIGIN' -Wl,--enable-new-dtags -Wl,--as-needed -s -o "$O/lastbook-llm"
 

@@ -3,17 +3,17 @@
 No port is opened. There is no way for a page to call this program: no script message handler, no JavaScript bridge.
 Python only ever speaks to the page through the scheme's answers and, for menu items, evaluate_javascript.
 
-The rules this file carries out, as the Mac shell does (bridge.py decides, this file obeys):
+The rules this file carries out (bridge.py decides, this file obeys):
   - One window, one copy of the app (GtkApplication's D-Bus name, or a lock file where there is no session bus). Every new-window request is cancelled.
   - The top level shows the app's own page and nothing else. WebKitGTK's navigation request does not say which frame it is for,
     so the frame is judged where it does say: the response, before anything is shown (is_main_frame_main_resource).
   - A frame shows library paths only. Saved pages and encyclopedia entries carry the engine's sandbox policy, so they cannot open
     windows or move the top level: every new-window request and every top-level navigation comes from the app's own page.
-  - Nothing reaches the network: NO_NETWORK (the same content rule list as on the Mac) blocks every load but the app's own, before the first page.
+  - Nothing reaches the network: NO_NETWORK (a content rule list) blocks every load but the app's own, before the first page.
     Nothing is ever handed to a browser or another program.
   - Video plays through GStreamer: H.264/AAC in MP4 needs gstreamer1.0-libav, WebM and the rest gstreamer1.0-plugins-good (the package depends on both,
     so WebKit never asks the system to go and find a codec). WebKit gives GStreamer a lastbook:// video address as it is; lastbooksrc, our own
-    source element in /opt/lastbook/gst, reads it from the library's video folders (packaging/linux/gst/lastbooksrc.c).
+    source element in /usr/lib/lastbook-for-omarchy/gst, reads it from the library's video folders (packaging/linux/gst/lastbooksrc.c).
 """
 import json
 import os
@@ -24,7 +24,7 @@ import time
 import traceback
 
 # Nothing outside may steer WebKit or GTK in the packaged app: WEBKIT_INSPECTOR_SERVER and its kin open a debugging port, GI_TYPELIB_PATH and
-# GST_PLUGIN_PATH could swap in other code, GTK_MODULES loads it. Removed before any of them is imported (the Windows shell does the same for WebView2).
+# GST_PLUGIN_PATH could swap in other code, GTK_MODULES loads it. Removed before any of them is imported.
 SCHEME_NAME = 'lastbook'
 # Kept: WebKit's own switches for graphics drivers that draw badly with its default renderer. They change how pages are drawn and open nothing.
 RENDERING_SWITCHES = {'WEBKIT_DISABLE_COMPOSITING_MODE', 'WEBKIT_DISABLE_DMABUF_RENDERER'}
@@ -50,11 +50,11 @@ import bridge as B   # noqa: E402
 
 APP_ID = 'org.lastbook.Lastbook'
 SCHEME = 'lastbook'
-HOME = B.ORIGIN_MAC + '/'
+HOME = B.ORIGIN + '/'
 SIZE = (1280, 860)
 MIN_SIZE = (640, 480)
 STALL = 60                      # seconds without WebKit reading any of an answer before it is cancelled
-MEMORY_LIMIT_MB = 4096          # the page's process; over it WebKit ends the page and the app starts again at home (as the Mac shell's MEMORY_LIMIT)
+MEMORY_LIMIT_MB = 4096          # the page's process; over it WebKit ends the page and the app starts again at home
 NO_NETWORK = json.dumps([{'trigger': {'url-filter': '.*'}, 'action': {'type': 'block'}}]
                         + [{'trigger': {'url-filter': '^' + scheme + ':'}, 'action': {'type': 'ignore-previous-rules'}} for scheme in (SCHEME, 'data', 'blob', 'about')])
 NO_NETWORK_REFUSED = 'Lastbook could not switch off its network access, so it will not open anything.'
@@ -66,7 +66,7 @@ STOPPED = 'A page stopped working, so it was closed.'
 TOO_BIG = 'A page was using too much memory, so it was closed.'
 GO = [('Videos', '#/videos'), ('Map', '#/map'), ('Chat', '#/ask')]
 SIDE_TOGGLE = "document.getElementById('sideBtn').click()"
-FIND = "document.dispatchEvent(new KeyboardEvent('keydown',{key:'f',code:'KeyF',metaKey:true}))"   # the page's own find, as the Mac menu asks for it
+FIND = "document.dispatchEvent(new KeyboardEvent('keydown',{key:'f',code:'KeyF',metaKey:true}))"   # the page's own find
 _gtk_ok = None
 
 
@@ -185,7 +185,7 @@ SHELL = None
 # --------------------------------------------------------------------------------------------------------- the scheme --
 class _Task(B.Sink):
     """One lastbook:// request. Its answer goes to WebKit through a pipe: WebKit reads the read end as the body, the bridge's worker writes the
-    other. A write waits while WebKit has not read what came before, so a page that stops reading stops the engine (the Mac shell's acks do this).
+    other. A write waits while WebKit has not read what came before, so a page that stops reading stops the engine.
     When WebKit gives up on the request it lets go of the stream, which closes its end; the next write fails and the exchange is cancelled.
     For that, nothing here keeps the request once its answer has begun: holding it would hold the stream, and the writer would wait forever.
     A request WebKit has not read from for STALL seconds is cancelled too, and the log says so."""
@@ -393,7 +393,7 @@ class Shell:
         self.keys(w)
         self.switch_off_network()
 
-    # ---- header and keys: the Mac menu's items
+    # ---- header and keys: the menu's items
     def header(self):
         bar = Gtk.HeaderBar(title='Lastbook', show_close_button=True)
         menu = Gio.Menu()
@@ -408,7 +408,6 @@ class Shell:
         menu.append_section(None, view)
         helps = Gio.Menu()
         helps.append('Lastbook Help', 'win.help')
-        helps.append('Check for Updates…', 'win.updates')
         helps.append('Quit Lastbook', 'win.quit')
         menu.append_section(None, helps)
         btn = Gtk.MenuButton(menu_model=menu, image=Gtk.Image.new_from_icon_name('open-menu-symbolic', Gtk.IconSize.BUTTON))
@@ -430,7 +429,6 @@ class Shell:
                  ('find', lambda *a: self.js(FIND), ['<Primary>f']),
                  ('fullscreen', lambda *a: self.toggle_fullscreen(), ['F11']),
                  ('help', lambda *a: self.js("location.hash='#/about'"), ['F1']),
-                 ('updates', lambda *a: self.js('window.LBUpdate && LBUpdate.fromMenu()'), []),
                  ('back', lambda *a: self.view.go_back(), ['<Alt>Left']),
                  ('forward', lambda *a: self.view.go_forward(), ['<Alt>Right']),
                  ('quit', lambda *a: quit_app(), ['<Primary>q']),
@@ -523,7 +521,7 @@ class Shell:
             self.actions.pop(next(iter(self.actions)))
         if self.bridge.top_url_ok(url):
             decision.use()
-        elif url.startswith('blob:' + B.ORIGIN_MAC + '/') and gesture:
+        elif url.startswith('blob:' + B.ORIGIN + '/') and gesture:
             # The chat's "save this conversation" (<a download>): WebKit turns this into a download (on_download asks where). Shown as a page,
             # it would be the top level showing something other than the app, which decide_response refuses.
             decision.use()
@@ -534,7 +532,7 @@ class Shell:
                 self.bridge.give_ticket(url)
             decision.use()
         else:
-            if kind == WebKit2.NavigationType.LINK_CLICKED:   # a plain link in the UI to the web: nothing opens, as on the Mac
+            if kind == WebKit2.NavigationType.LINK_CLICKED:   # a plain link in the UI to the web: nothing opens
                 self.leave(url, gesture)
             decision.ignore()
         return True
@@ -583,7 +581,7 @@ class Shell:
     # ---- downloads: the chat's "save this conversation" only
     def on_download(self, ctx, download):
         url = str(download.get_request().get_uri())
-        if download.get_web_view() is not self.view or not url.startswith('blob:' + B.ORIGIN_MAC + '/'):
+        if download.get_web_view() is not self.view or not url.startswith('blob:' + B.ORIGIN + '/'):
             download.cancel()
             return
         download.connect('decide-destination', self.on_destination)

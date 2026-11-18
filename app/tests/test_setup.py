@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """First-run setup, engine side (engine/setup/), against a local HTTPS test server. No real internet, never the real home folder.
 
-  derived/app-build/mac-venv/bin/python -B app/tests/test_setup.py [-v] [Class.test_name]
-  LASTBOOK_FULL_DISK=1 ...   also runs the full-disk case on a small disk image (hdiutil, macOS only)
+  python3 -B app/tests/test_setup.py [-v] [Class.test_name]
 
 The test server lives only in this file: it serves a small fake pack and model over HTTPS on 127.0.0.1 with a certificate made
 for the run, and can cut the connection mid-file, send wrong bytes, change the file's ETag, ignore Range, or redirect anywhere.
 The product's allowlist is not touched: tests pass their own `allowed` and TLS context to the downloader. Never packaged.
 """
-import hashlib, http.server, importlib.util, io, json, os, shutil, signal, socketserver, ssl, subprocess, sys, threading, time, unittest, zipfile
+import hashlib, http.server, io, json, os, shutil, signal, socketserver, ssl, subprocess, sys, tempfile, threading, time, unittest, zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -17,9 +16,8 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path[:0] = [str(HERE.parent), str(ROOT)]
 from engine.setup import api, download, hardware, install, manifest  # noqa: E402
-from app.tests import shorttemp  # noqa: E402
 
-ALLOWED = {'127.0.0.1'}     # an address, not 'localhost': Windows tries ::1 first, which the test server does not listen on
+ALLOWED = {'127.0.0.1'}     # an address, not 'localhost': the system may try ::1 first, which the test server does not listen on
 MiB = 1024 * 1024
 
 
@@ -125,8 +123,8 @@ class TLSServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
 
     def handle_error(self, request, client_address):
-        """A client that pauses, cancels or is killed drops its connection, which is what these tests ask for. On Windows the
-        server's next read then raises ConnectionResetError, and the default handler prints a traceback into a passing run.
+        """A client that pauses, cancels or is killed drops its connection, which is what these tests ask for. The server's
+        next read can then raise ConnectionResetError, and the default handler would print a traceback into a passing run.
         Anything else is still printed."""
         if not isinstance(sys.exception(), ConnectionError):
             super().handle_error(request, client_address)
@@ -164,7 +162,7 @@ class Control:
 class Base(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tmp_class = shorttemp.mkdtemp('lastbook-setup-srv-')
+        cls.tmp_class = Path(tempfile.mkdtemp(prefix='lastbook-setup-srv-')).resolve()
         cls.files = Files()
         cls.srv, cls.ctx, cls.base = start_server(cls.tmp_class, cls.files)
 
@@ -177,7 +175,7 @@ class Base(unittest.TestCase):
         F = self.files
         F.data.clear(); F.etag.clear(); F.log.clear(); F.cut_after.clear(); F.corrupt.clear(); F.ignore_range.clear(); F.ignore_once.clear(); F.redirect.clear()
         F.pace = 0
-        self.tmp = shorttemp.mkdtemp('lastbook-setup-')
+        self.tmp = Path(tempfile.mkdtemp(prefix='lastbook-setup-')).resolve()
         self.home = self.tmp / 'home'
         for d in ('Downloads', 'Documents', 'Desktop'):
             (self.home / d).mkdir(parents=True)
@@ -579,17 +577,6 @@ class Jobs(Base):
         self.assertGreater(it['rate_bps'], 0)
         self.assertIsNotNone(it['eta_s'])
 
-    def test_windows_folder_too_deep(self):
-        self.assertFalse(api.path_too_deep(r'C:\Users\you\Documents\LastbookData', windows=True))
-        self.assertTrue(api.path_too_deep('C:\\' + 'x' * 60 + '\\LastbookData', windows=True))
-        self.assertFalse(api.path_too_deep('/' + 'x' * 200 + '/LastbookData', windows=False))
-        s = self.setup()
-        with mock.patch.object(api, 'path_too_deep', lambda t: True):
-            r = s.start('small', False)
-        self.assertEqual(r['code'], 'folder')
-        self.assertIn('characters', r['error'])
-        self.assertIsNone(s.public_job())
-
     def test_no_space_refusal(self):
         s = self.setup()
         with mock.patch.object(hardware, 'disk_of', lambda p: (10 ** 9, 10 ** 12)):
@@ -713,7 +700,7 @@ class Jobs(Base):
             else:
                 self.fail('the child never started downloading: ' + child.stderr.read1(4000).decode())
         finally:
-            child.kill()                      # SIGKILL on a Mac, TerminateProcess on Windows
+            child.kill()                      # SIGKILL
             child.wait()
             child.stderr.close()              # the pipe is ours to close: left open, it is a ResourceWarning in the output
         had = (work / 'Lastbook-Small.zip.part').stat().st_size
@@ -748,7 +735,7 @@ class Jobs(Base):
             else:
                 self.fail('the child never unpacked: ' + child.stderr.read1(4000).decode())
         finally:
-            child.kill()                      # SIGKILL on a Mac, TerminateProcess on Windows
+            child.kill()                      # SIGKILL
             child.wait()
             child.stderr.close()              # the pipe is ours to close: left open, it is a ResourceWarning in the output
         s = self.setup(manifest=self.manifest())
@@ -910,8 +897,6 @@ class Manage(Base):
         r = s.pick()
         self.assertEqual(r['path'], str(self.tmp))
         self.assertGreater(r['free_bytes'], 0)
-        if sys.platform == 'darwin' and importlib.util.find_spec('Foundation'):   # the disk name needs PyObjC (packaging/requirements_macos.txt)
-            self.assertTrue(r['disk'])
         self.assertEqual(self.setup(pick_folder=lambda: None).pick(), {'path': None, 'cancelled': True})
         self.assertTrue(all('name' in d for d in hardware.detect([self.parent])['disks']))
 
@@ -978,7 +963,7 @@ class Maps(Base):
         self.assertEqual(self.setup('manage', current=lib, manifest=mf).start(None, False, map_id='CA')['code'], 'nothing')
 
     def test_map_into_a_library_with_another_name(self):
-        """Windows 1.1.4 test: a library opened with --data from a folder not called LastbookData got the map in a nested
+        """1.1.4: a library opened with --data from a folder not called LastbookData got the map in a nested
         LastbookData. The job must target the open library as it is."""
         mf, files = self.map_manifest()
         cur = self.parent / 'data'
@@ -1319,21 +1304,18 @@ class Recommend(Base):
             self.assertFalse(str(path).startswith('/Volumes'), str(path))
             return original_stat(path, *args, **kwargs)
 
-        for platform in ('darwin', 'win32'):
-            with self.subTest(platform=platform), \
-                    mock.patch.object(sys, 'platform', platform), \
-                    mock.patch.object(Path, 'stat', stat), \
-                    mock.patch.object(Path, 'iterdir', side_effect=AssertionError('Automatic directory scan')), \
-                    mock.patch.object(Path, 'home', side_effect=AssertionError('Automatic home probe')), \
-                    mock.patch.object(hardware, 'disk_name', return_value='Selected disk'):
-                disks = hardware.candidate_disks([self.parent])
-                self.assertEqual([d['path'] for d in disks], [str(self.parent)])
-                self.assertGreater(disks[0]['free_bytes'], 0)
-                self.assertEqual(hardware.candidate_disks(), [])
+        with mock.patch.object(Path, 'stat', stat), \
+                mock.patch.object(Path, 'iterdir', side_effect=AssertionError('Automatic directory scan')), \
+                mock.patch.object(Path, 'home', side_effect=AssertionError('Automatic home probe')):
+            disks = hardware.candidate_disks([self.parent])
+            self.assertEqual([d['path'] for d in disks], [str(self.parent)])
+            self.assertGreater(disks[0]['free_bytes'], 0)
+            self.assertEqual(hardware.candidate_disks(), [])
 
     def test_hardware_here(self):
         hw = hardware.detect([self.parent])
-        self.assertIn(hw['os'], ('macos', 'windows'))
+        self.assertEqual(hw['os'], 'linux')
+        self.assertIn(hw['ai_runtime'], ('cuda', 'vulkan', 'cpu'))
         self.assertGreater(hw['ram_bytes'], 2 ** 30)
         self.assertTrue(hw['disks'] and hw['disks'][0]['free_bytes'] > 0)
 
@@ -1345,15 +1327,27 @@ class Through(Base):
         import bridge as B
         s = self.setup()
         with mock.patch.object(api, 'SETUP', s):
-            b = B.Bridge(api.SetupServer, 'buffer', B.ORIGIN_WINDOWS, tmpdir=str(self.tmp))
-            got = []
-            done = threading.Event()
+            b = B.Bridge(api.SetupServer)
+
+            class Got(B.Sink):
+                def __init__(self):
+                    self.status, self.body, self.done = None, b'', threading.Event()
+
+                def head(self, status, reason, headers):
+                    self.status = status
+
+                def data(self, chunk, ack):
+                    self.body += chunk
+                    ack()
+
+                def finish(self, ok):
+                    self.done.set()
 
             def ask(method, path, headers=None, body=None):
-                got.clear(); done.clear()
-                b.fetch(method, B.ORIGIN_WINDOWS + path, headers or {}, body, lambda r: (got.append(r), done.set()))
-                done.wait(20)
-                return got[0]
+                got = Got()
+                b.start(method, B.ORIGIN + path, headers or {}, body, got)
+                got.done.wait(20)
+                return got
             r = ask('GET', '/api/setup/state')
             self.assertEqual(r.status, 200)
             self.assertEqual(json.loads(r.body)['mode'], 'first-run')
@@ -1363,30 +1357,9 @@ class Through(Base):
             self.assertEqual(r.status, 200)
             r = ask('GET', '/')
             self.assertEqual(r.status, 200)
-            self.assertTrue(b.top_url_ok(B.ORIGIN_WINDOWS + '/ui/setup.html'))
+            self.assertTrue(b.top_url_ok(B.ORIGIN + '/ui/setup.html'))
             r = ask('GET', '/documents/x.pdf')
             self.assertEqual(r.status, 404)
-
-
-@unittest.skipUnless(os.environ.get('LASTBOOK_FULL_DISK') == '1' and sys.platform == 'darwin', 'LASTBOOK_FULL_DISK=1 on a Mac')
-class FullDisk(Base):
-    def test_disk_fills_during_download(self):
-        img = self.tmp / 'small.dmg'
-        subprocess.run(['hdiutil', 'create', '-size', '3m', '-fs', 'HFS+', '-volname', 'LBFULL', str(img)], check=True, capture_output=True)
-        out = subprocess.run(['hdiutil', 'attach', '-nobrowse', '-mountrandom', str(self.tmp), str(img)], check=True, capture_output=True, text=True).stdout
-        mount = Path(out.strip().split('\t')[-1])
-        try:
-            s = self.setup()
-            r = s.start('small', True, str(mount))
-            self.assertEqual(r['code'], 'no_space')            # refused before starting, with the numbers
-            self.assertLess(r['free_bytes'], r['need_bytes'])
-            d = download.Download(f'{self.base}/Lastbook-Small.zip', mount / 'x.zip', len(self.zip), sha(self.zip), download.Control(),
-                                  allowed=ALLOWED, context=self.ctx)
-            with self.assertRaises(download.Failed) as e:
-                d.run()                                       # the space check skipped: the disk really fills
-            self.assertEqual(e.exception.code, 'no_space')
-        finally:
-            subprocess.run(['hdiutil', 'detach', str(mount), '-force'], capture_output=True)
 
 
 def child(cfg):

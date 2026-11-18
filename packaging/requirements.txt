@@ -1,12 +1,7 @@
-# Windows build of Lastbook. These are the versions tested on the Alienware (derived/windows-test/BUILD_NOTES.md).
-pyinstaller==6.22.3
+# Lastbook's Python packages, beside the system's PyGObject (python-gobject), GTK 3 and WebKitGTK 4.1, which never come from here.
 # Below 4: libzim 4.0.0 renamed getResults and getEstimatedMatches, which engine/library.py calls.
 libzim==3.13.1
-onnxruntime==1.31.1
-tokenizers==0.23.3
-numpy==2.5.4
+# server.py renders PDF pages through bitmap.to_numpy().
+numpy==2.4.6
 beautifulsoup4==4.15.0
 pypdfium2==5.14.0
-pywebview==6.2.1
-pythonnet==3.2.1; sys_platform == "win32"
-clr_loader==0.3.1; sys_platform == "win32"

@@ -1,12 +1,10 @@
-"""What this computer has: OS, processor type, memory, graphics memory (Windows, through DXGI) and room on each disk.
+"""What this computer has: OS, processor type, memory, graphics memory and room on each disk.
 No new dependency and no subprocess for any of it, except the AI's own measure (measure_ai), which runs lastbook-llm."""
-import ctypes
 import json
 import os
 import platform
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 GiB = 2 ** 30
@@ -15,86 +13,12 @@ VRAM_KEPT = GiB              # graphics memory the estimate leaves for the card'
 
 
 def os_name():
-    return 'macos' if sys.platform == 'darwin' else 'windows' if sys.platform == 'win32' else 'linux' if sys.platform.startswith('linux') else sys.platform
+    return 'linux'
 
 
 def arch():
     m = platform.machine().lower()
     return 'arm64' if m in ('arm64', 'aarch64') else 'x64' if m in ('x86_64', 'amd64', 'x64') else m
-
-
-# --------------------------------------------------------------------------------------------------------------- Mac --
-def _sysctl(name, kind='int'):
-    libc = ctypes.CDLL('/usr/lib/libc.dylib', use_errno=True)
-    if kind == 'int':
-        v, n = ctypes.c_uint64(0), ctypes.c_size_t(8)
-        if libc.sysctlbyname(name.encode(), ctypes.byref(v), ctypes.byref(n), None, ctypes.c_size_t(0)) != 0:
-            return None
-        return v.value
-    n = ctypes.c_size_t(0)
-    if libc.sysctlbyname(name.encode(), None, ctypes.byref(n), None, ctypes.c_size_t(0)) != 0 or not n.value:
-        return None
-    buf = ctypes.create_string_buffer(n.value)
-    if libc.sysctlbyname(name.encode(), buf, ctypes.byref(n), None, ctypes.c_size_t(0)) != 0:
-        return None
-    return buf.value.decode('utf-8', 'replace')
-
-
-# ----------------------------------------------------------------------------------------------------------- Windows --
-class _MemoryStatus(ctypes.Structure):
-    _fields_ = [('dwLength', ctypes.c_uint32), ('dwMemoryLoad', ctypes.c_uint32), ('ullTotalPhys', ctypes.c_uint64), ('ullAvailPhys', ctypes.c_uint64),
-                ('ullTotalPageFile', ctypes.c_uint64), ('ullAvailPageFile', ctypes.c_uint64), ('ullTotalVirtual', ctypes.c_uint64),
-                ('ullAvailVirtual', ctypes.c_uint64), ('ullAvailExtendedVirtual', ctypes.c_uint64)]
-
-
-class _Guid(ctypes.Structure):
-    _fields_ = [('a', ctypes.c_uint32), ('b', ctypes.c_uint16), ('c', ctypes.c_uint16), ('d', ctypes.c_ubyte * 8)]
-
-
-class _AdapterDesc1(ctypes.Structure):
-    _fields_ = [('Description', ctypes.c_wchar * 128), ('VendorId', ctypes.c_uint32), ('DeviceId', ctypes.c_uint32), ('SubSysId', ctypes.c_uint32),
-                ('Revision', ctypes.c_uint32), ('DedicatedVideoMemory', ctypes.c_size_t), ('DedicatedSystemMemory', ctypes.c_size_t),
-                ('SharedSystemMemory', ctypes.c_size_t), ('AdapterLuid', ctypes.c_uint64), ('Flags', ctypes.c_uint32)]
-
-
-def _com(ptr, index, *argtypes):
-    """Method `index` of a COM object's vtable, bound to the object."""
-    vtbl = ctypes.cast(ptr, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
-    fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, *argtypes)(vtbl[index])
-    return lambda *a: fn(ptr, *a)
-
-
-def _windows_ram():
-    st = _MemoryStatus()
-    st.dwLength = ctypes.sizeof(st)
-    return st.ullTotalPhys if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)) else None
-
-
-def _windows_gpus():
-    """Each real graphics adapter (not Microsoft's software one) with its dedicated memory, from IDXGIFactory1::EnumAdapters1."""
-    iid = _Guid(0x770aae78, 0xf26f, 0x4dba, (ctypes.c_ubyte * 8)(0xa8, 0x29, 0x25, 0x3c, 0x83, 0xd1, 0xb3, 0x87))   # IID_IDXGIFactory1
-    factory = ctypes.c_void_p()
-    try:
-        dxgi = ctypes.WinDLL('dxgi', winmode=0x800)     # LOAD_LIBRARY_SEARCH_SYSTEM32: never a dxgi.dll from a folder searched first (audit W2)
-    except OSError:
-        return []
-    if dxgi.CreateDXGIFactory1(ctypes.byref(iid), ctypes.byref(factory)) != 0 or not factory:
-        return []
-    out = []
-    try:
-        for i in range(16):
-            adapter = ctypes.c_void_p()
-            if _com(factory, 12, ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p))(i, ctypes.byref(adapter)) != 0:   # EnumAdapters1; DXGI_ERROR_NOT_FOUND ends it
-                break
-            try:
-                d = _AdapterDesc1()
-                if _com(adapter, 10, ctypes.POINTER(_AdapterDesc1))(ctypes.byref(d)) == 0 and not d.Flags & 2:     # GetDesc1; 2 = DXGI_ADAPTER_FLAG_SOFTWARE
-                    out.append({'name': d.Description.strip(), 'vram_bytes': int(d.DedicatedVideoMemory)})
-            finally:
-                _com(adapter, 2)()     # Release
-    finally:
-        _com(factory, 2)()
-    return out
 
 
 # ------------------------------------------------------------------------------------------------------------- Linux --
@@ -139,7 +63,7 @@ def _linux_gpus():
 
 def _apple_silicon_linux(tree='/proc/device-tree'):
     """The model name of an Apple silicon computer running Linux, else None. The kernel's device tree names it ("apple,t8103"); its
-    graphics are not on a PCI bus, so _linux_gpus finds no card, and they share the computer's one memory like on a Mac."""
+    graphics are not on a PCI bus, so _linux_gpus finds no card, and they share the computer's one memory."""
     try:
         if not any(c.startswith(b'apple,') for c in (Path(tree) / 'compatible').read_bytes().split(b'\0')):
             return None
@@ -193,27 +117,6 @@ def disk_of(path):
     return u.free, u.total
 
 
-def disk_name(path):
-    """What the system calls the disk holding path: a volume name on a Mac (Macintosh HD), "Label (D:)" on Windows. None if unknown (and on Linux)."""
-    try:
-        if sys.platform == 'win32':
-            root = os.path.splitdrive(os.path.abspath(path))[0] + '\\'
-            label = ctypes.create_unicode_buffer(261)
-            if not ctypes.windll.kernel32.GetVolumeInformationW(ctypes.c_wchar_p(root), label, 261, None, None, None, None, 0):
-                return None
-            return f'{label.value or "Local Disk"} ({root[:2]})'
-        if sys.platform == 'darwin':
-            import Foundation
-            p = Path(path)
-            while not p.exists() and p.parent != p:
-                p = p.parent
-            ok, name, _ = Foundation.NSURL.fileURLWithPath_(str(p)).getResourceValue_forKey_error_(None, Foundation.NSURLVolumeLocalizedNameKey, None)
-            return str(name) if ok and name else None
-    except Exception:
-        return None
-    return None
-
-
 def candidate_disks(extra=()):
     """Disk capacity for app-owned or explicitly selected paths only."""
     places = list(map(Path, extra))
@@ -230,7 +133,7 @@ def candidate_disks(extra=()):
         except OSError:
             continue
         seen.add(dev)
-        out.append({'path': str(p), 'name': disk_name(q), 'free_bytes': free, 'total_bytes': total})
+        out.append({'path': str(p), 'name': None, 'free_bytes': free, 'total_bytes': total})
     return out
 
 
@@ -241,7 +144,7 @@ def _gb(n):
 
 def estimate_ai(ram, gpus, unified, memory_bytes):
     """Before the model file is here to measure: the model and its context need memory_bytes, plus RESERVE for everything else.
-    On a Mac that is all one memory. On Windows the part that fits on the graphics card does not count against the computer's own."""
+    With unified memory (Apple silicon) that is all one memory. With a graphics card, the part that fits on it does not count against the computer's own."""
     needs = int(memory_bytes + RESERVE)
     if not ram:
         return {'fits': False, 'needs_bytes': needs, 'estimate': True, 'why': 'Lastbook could not tell how much memory this computer has.'}
@@ -268,9 +171,8 @@ def measure_ai(llm_local, model_path, timeout=180):
         return None
     threads = max(4, min(16, (os.cpu_count() or 8) // 2))
     argv = [str(runner), '--model', str(model_path), '--ctx', str(llm_local.CTX), '--threads', str(threads), '--measure']
-    kw = {'creationflags': 0x08000000} if os.name == 'nt' else {}     # CREATE_NO_WINDOW
     try:
-        out = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout, **kw)
+        out = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
         fit = next((json.loads(l) for l in out.stdout.decode('utf-8', 'replace').splitlines() if l.startswith('{"ev":"fit"')), None)
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
@@ -286,23 +188,11 @@ def detect(extra_disks=()):
     name = os_name()
     ram, gpus, unified = None, [], False
     try:
-        if name == 'macos':
-            ram = _sysctl('hw.memsize')
-            unified = arch() == 'arm64'
-            chip = _sysctl('machdep.cpu.brand_string', 'str')
-            if chip:
-                gpus = [{'name': chip, 'vram_bytes': 0}]     # Apple silicon: the graphics share the one memory
-        elif name == 'windows':
-            ram = _windows_ram()
-            gpus = _windows_gpus()
-        elif name == 'linux':
-            ram = _linux_ram()
-            gpus = _linux_gpus()
-            if model := _apple_silicon_linux():
-                gpus, unified = [{'name': model, 'vram_bytes': 0}], True
+        ram = _linux_ram()
+        gpus = _linux_gpus()
+        if model := _apple_silicon_linux():
+            gpus, unified = [{'name': model, 'vram_bytes': 0}], True
     except Exception as e:      # a strange driver must not stop setup: it then estimates from what it has
         print('setup: hardware detection:', type(e).__name__, e, flush=True)
-    out = {'os': name, 'arch': arch(), 'ram_bytes': ram, 'unified_memory': unified, 'gpus': gpus, 'disks': candidate_disks(extra_disks)}
-    if name == 'linux':
-        out['ai_runtime'] = linux_ai_runtime()
-    return out
+    return {'os': name, 'arch': arch(), 'ram_bytes': ram, 'unified_memory': unified, 'gpus': gpus, 'disks': candidate_disks(extra_disks),
+            'ai_runtime': linux_ai_runtime()}

@@ -5,7 +5,7 @@ const MapView = (() => {
   const EXT = 512;            // tile coordinate extent sent by the server
   const MINZ = 3, MAXZ = 19, DATAZ = 17;
   let HOME = null;   // a household's own opening place, from web/home-area.json: a local file never packaged. "Set as my area" wins over it.
-  const IN_WINDOW = location.protocol === 'lastbook:' || location.hostname === 'lastbook.invalid';
+  const IN_WINDOW = location.protocol === 'lastbook:';
   const US = [-124.8, 24.4, -66.9, 49.4];  // lower 48
   const FULL = ['<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>'];   // full screen, and leave it
   const C = { land: '#f2efe6', ocean: '#aad3df', water: '#aad3df', wet: '#cfe3d4', beach: '#f4e7b6',

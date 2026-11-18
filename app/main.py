@@ -20,7 +20,6 @@ import traceback
 from pathlib import Path
 
 FROZEN = bool(getattr(sys, 'frozen', False))
-os.environ['ORT_DISABLE_TELEMETRY'] = '1'  # before anything imports onnxruntime; retrieval.py has the reason
 if not FROZEN:
     sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parents[1])]
 LOG_LIMIT = 5 * 1024 * 1024
@@ -34,16 +33,10 @@ ASK = 'Lastbook needs its library folder, called LastbookData. Unzip the library
 
 
 def app_folders():
-    """(settings, this computer's app data): roaming and local on Windows, one place on a Mac, XDG's config and data folders on Linux."""
-    if sys.platform.startswith('linux'):
-        home = Path.home()
-        return (Path(os.environ.get('XDG_CONFIG_HOME') or home / '.config') / 'Lastbook',
-                Path(os.environ.get('XDG_DATA_HOME') or home / '.local' / 'share') / 'Lastbook')
-    if sys.platform == 'win32':
-        local = Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData' / 'Local')
-        return Path(os.environ.get('APPDATA') or Path.home() / 'AppData' / 'Roaming') / 'Lastbook', local / 'Lastbook'
-    mine = Path.home() / 'Library' / 'Application Support' / 'Lastbook'
-    return mine, mine
+    """(settings, this computer's app data): XDG's config and data folders."""
+    home = Path.home()
+    return (Path(os.environ.get('XDG_CONFIG_HOME') or home / '.config') / 'Lastbook',
+            Path(os.environ.get('XDG_DATA_HOME') or home / '.local' / 'share') / 'Lastbook')
 
 
 def remembered():
@@ -108,17 +101,8 @@ def data_folder(arg):
 
 
 def choose_folder(message):
-    if sys.platform == 'darwin':
-        import shell_macos
-        return shell_macos.choose_folder(ASK_TITLE, message)
-    if sys.platform == 'win32':
-        import shell_windows
-        return shell_windows.choose_folder(ASK_TITLE, message)
-    if sys.platform.startswith('linux'):
-        import shell_linux
-        return shell_linux.choose_folder(ASK_TITLE, message)
-    show_error(message)
-    return None
+    import shell_linux
+    return shell_linux.choose_folder(ASK_TITLE, message)
 
 
 def ask_for_library():
@@ -139,23 +123,8 @@ def ask_for_library():
 
 # ---------------------------------------------------------------------------------------------------------------- setup --
 def default_parent():
-    """Where setup puts LastbookData unless the person chooses (default_choice has the reason when it is not the usual place)."""
-    return default_choice()[0]
-
-
-def default_choice():
-    """(folder, why or None). The app's own data folder until the person chooses another. On Windows the library's longest file
-    must fit in an ordinary path (engine/setup/api.py path_too_deep): when a long user name makes the per-user folder too deep,
-    <system drive>:\\Lastbook instead, made and closed to other accounts (install.private_folder). If even that cannot be made,
-    the per-user folder stays and setup asks the person to choose."""
-    parent = app_folders()[1]
-    if sys.platform == 'win32':
-        from engine.setup import api as setup_api, install
-        if setup_api.path_too_deep(parent / DATA_NAME):
-            short = Path((os.environ.get('SystemDrive') or 'C:') + '\\') / 'Lastbook'
-            if install.private_folder(short):
-                return short, f'Saves to {short} because your user folder’s path is too long for the library’s longest file names.'
-    return parent, None
+    """Where setup puts LastbookData unless the person chooses: the app's own data folder."""
+    return app_folders()[1]
 
 
 def libraries_here():
@@ -168,78 +137,43 @@ def libraries_here():
 
 def pick_folder(files=False):
     """The native folder or file picker, opened only at the person's request."""
+    import shell_linux
+    from gi.repository import GLib
     out, done = [], threading.Event()
-    if sys.platform == 'darwin':
-        import AppKit
-        from PyObjCTools import AppHelper
 
-        def ask():
-            try:
-                panel = AppKit.NSOpenPanel.openPanel()
-                panel.setCanChooseDirectories_(not files)
-                panel.setCanChooseFiles_(files)
-                panel.setDirectoryURL_(AppKit.NSURL.fileURLWithPath_(str(app_folders()[1])))
-                panel.setAllowsMultipleSelection_(False)
-                panel.setCanCreateDirectories_(not files)
-                panel.setPrompt_('Choose')
-                if panel.runModal() == AppKit.NSModalResponseOK:
-                    out.append(str(panel.URL().path()))
-            finally:
-                done.set()
-        AppHelper.callAfter(ask)    # AppKit's panels belong to the main thread
-    elif sys.platform == 'win32':
-        import shell_windows
-
-        def ask():
-            try:
-                out.append(shell_windows.pick_folder('Choose a library zip or model file' if files else 'Choose a folder', app_folders()[1], files=files))
-            except Exception:
-                traceback.print_exc()
-            finally:
-                done.set()
-        threading.Thread(target=ask, daemon=True, name='pick-folder').start()   # pick_folder makes its own thread a COM apartment
-    elif sys.platform.startswith('linux'):
-        import shell_linux
-        from gi.repository import GLib
-
-        def ask():
-            try:
-                chosen = shell_linux.pick(files, str(app_folders()[1]))
-                if chosen:
-                    out.append(chosen)
-            except Exception:
-                traceback.print_exc()
-            finally:
-                done.set()
-            return False
-        GLib.idle_add(ask)      # GTK's dialogs belong to the main thread
-    else:
-        return None
+    def ask():
+        try:
+            chosen = shell_linux.pick(files, str(app_folders()[1]))
+            if chosen:
+                out.append(chosen)
+        except Exception:
+            traceback.print_exc()
+        finally:
+            done.set()
+        return False
+    GLib.idle_add(ask)      # GTK's dialogs belong to the main thread
     done.wait()
     return out[0] if out else None
 
 
 def linux_dirs():
-    """(data, cache) for WebKit's own storage on Linux: the page's saved settings, and what it can rebuild."""
+    """(data, cache) for WebKit's own storage: the page's saved settings, and what it can rebuild."""
     return str(app_folders()[1]), str(Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'Lastbook')
 
 
 def relaunch():
     """Start again, as the person would by opening the app: it then finds the library setup has just put in place."""
-    argv = [sys.executable] + ([] if FROZEN else [str(Path(__file__).resolve())])
-    if sys.platform.startswith('linux') and FROZEN:   # /usr/bin/python3 with its flags and Lastbook's launcher, without this run's arguments
+    if FROZEN:   # /usr/bin/python3 with its flags and Lastbook's launcher, without this run's arguments
         argv = [sys.executable] + list(sys.orig_argv[1:len(sys.orig_argv) - len(sys.argv) + 1])
+    else:
+        argv = [sys.executable, str(Path(__file__).resolve())]
     # The engine's current folder and startup flags must not override the
     # library switch staged by setup on the next normal launch.
     os.environ.pop('LASTBOOK_DATA', None)
     print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} setup finished: starting again', flush=True)
-    if sys.platform == 'win32':
-        import subprocess
-        subprocess.Popen(argv, close_fds=True, creationflags=0x00000008 | 0x00000200)   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-        os._exit(0)
-    if sys.platform.startswith('linux') and 'shell_linux' in sys.modules:
+    if 'shell_linux' in sys.modules:
         sys.modules['shell_linux'].before_exec()
-    os.execv(argv[0], argv)     # same process, same Dock icon; pipes to helpers close on exec, so they end
+    os.execv(argv[0], argv)     # same process; pipes to helpers close on exec, so they end
 
 
 def setup_finished(folder):
@@ -248,8 +182,7 @@ def setup_finished(folder):
 
 
 def setup_options():
-    parent, why = default_choice()
-    return {'settings_dir': app_folders()[0], 'default_parent': parent, 'default_why': why, 'on_finish': setup_finished,
+    return {'settings_dir': app_folders()[0], 'default_parent': default_parent(), 'on_finish': setup_finished,
             'pick_folder': pick_folder, 'look_for_libraries': libraries_here}
 
 
@@ -261,40 +194,17 @@ def run_setup():
     open_log(work)
     print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} start pid={os.getpid()} args={sys.argv[1:]} setup', flush=True)
     setup_api.configure(mode='first-run', **setup_options())
-    if sys.platform == 'darwin':
-        import shell_macos
-        shell_macos.run(B.Bridge(setup_api.SetupServer, 'stream', B.ORIGIN_MAC))
-        return 0
-    if sys.platform == 'win32':
-        import ctypes
-        ctypes.windll.kernel32.SetErrorMode(0x0003)
-        import shell_windows
-        problem = shell_windows.preflight()
-        if problem:
-            show_error(problem)
-            return 3
-        return shell_windows.run(setup_api.SetupServer, work)
-    if sys.platform.startswith('linux'):
-        import shell_linux
-        shell_linux.run(B.Bridge(setup_api.SetupServer, 'stream', B.ORIGIN_MAC), linux_dirs())
-        return 0
-    show_error('The Lastbook desktop app runs on Windows and macOS. Everywhere else, use the server version: python server.py')
-    return 2
+    import shell_linux
+    shell_linux.run(B.Bridge(setup_api.SetupServer), linux_dirs())
+    return 0
 
 
 def show_error(message):
-    if sys.platform == 'darwin':
-        import shell_macos
-        shell_macos.show_error(message)
-    elif sys.platform == 'win32':
-        import ctypes
-        ctypes.windll.user32.MessageBoxW(None, message, 'Lastbook', 0x10)  # MB_ICONERROR
-    elif sys.platform.startswith('linux'):
-        try:
-            import shell_linux
-            shell_linux.show_error(message)
-        except Exception:     # no GTK here: the terminal below still says it
-            pass
+    try:
+        import shell_linux
+        shell_linux.show_error(message)
+    except Exception:     # no GTK here: the terminal below still says it
+        pass
     if sys.stderr is not None:
         sys.stderr.write(message.rstrip('\n') + '\n')
 
@@ -327,7 +237,7 @@ class RotatingLog:
                     os.replace(older, self.path.with_name(f'{self.path.name}.{i + 1}'))
             os.replace(self.path, self.path.with_name(f'{self.path.name}.1'))
             self.file = open(self.path, 'ab')
-        except OSError:  # another copy has it open (Windows): start over rather than grow without limit
+        except OSError:  # could not rotate: start over rather than grow without limit
             self.file = open(self.path, 'wb')
 
     def flush(self):
@@ -353,10 +263,9 @@ def main():
     ap.add_argument('--data', help='data folder holding library-data/ and derived/ (or set LASTBOOK_DATA)')
     ap.add_argument('--ask', action='store_true', help='ask for the library folder in a dialog instead of opening setup')
     a = ap.parse_args()
-    if sys.platform.startswith('linux'):
-        import shell_linux
-        if not shell_linux.claim(str(app_folders()[1])):     # already open: that window comes to the front instead
-            return 0
+    import shell_linux
+    if not shell_linux.claim(str(app_folders()[1])):     # already open: that window comes to the front instead
+        return 0
     note = None
     given = a.data or os.environ.get('LASTBOOK_DATA')    # a folder named outright is opened as it is: only its own staged switch is made
     from engine.setup import api as setup_api
@@ -379,32 +288,13 @@ def main():
     os.environ.setdefault('LASTBOOK_LOCAL_AI', '1')   # the optional local AI (llm_local.py), used when its model file is found
     open_log(data)
     print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} start pid={os.getpid()} args={sys.argv[1:]} data={data}', flush=True)
-    if sys.platform == 'win32':
-        import ctypes
-        ctypes.windll.kernel32.SetErrorMode(0x0003)     # SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX: a crash here goes to nobody, and processes started from here inherit that
-        import shell_windows
-        problem = shell_windows.preflight()
-        if problem:
-            show_error(problem)
-            return 3
     import server
     server.init()
     if not given or note:
         setup_api.opened(app_folders()[0], data, note)
     setup_api.configure(mode='manage', current=data, **setup_options())
     import bridge as B
-    if sys.platform == 'darwin':
-        import shell_macos
-        shell_macos.run(B.Bridge(server, 'stream', B.ORIGIN_MAC))
-    elif sys.platform == 'win32':
-        import shell_windows
-        return shell_windows.run(server, data)
-    elif sys.platform.startswith('linux'):
-        import shell_linux
-        shell_linux.run(B.Bridge(server, 'stream', B.ORIGIN_MAC), linux_dirs())
-    else:
-        show_error('The Lastbook desktop app runs on Windows and macOS. Everywhere else, use the server version: python server.py')
-        return 2
+    shell_linux.run(B.Bridge(server), linux_dirs())
     return 0
 
 

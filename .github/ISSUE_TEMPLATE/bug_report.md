@@ -15,7 +15,7 @@ What you did, what you expected, and what you saw instead.
 
 **Your computer**
 - Lastbook version (About page):
-- System: macOS / Windows, and its version
+- System: Omarchy version (`omarchy version`), and x86_64 or Apple silicon (Asahi)
 - Library: Small / Medium / All, or your own
 - Local AI on or off:
 

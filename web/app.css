@@ -1,5 +1,5 @@
-/* Lastbook — offline, system fonts only. The look follows the computer: plat-mac or plat-win on <html> (plat.js), light or dark from the system. */
-/* ---------- tokens: Mac, also every browser that is not on Windows ---------- */
+/* Lastbook — offline, system fonts only. plat-desktop on <html> (plat.js); light or dark from the system. */
+/* ---------- tokens ---------- */
 :root{
   --side-w:240px; --top-h:52px; --bar-h:var(--top-h); --row-h:34px; --pad:40px;
   --bg:#ffffff; --paper:#f5f5f7; --sunk:#efeff1; --ink:#1d1d1f; --ink2:#55555a; --ink3:#6e6e73; --line:#dcdce0; --line2:#e6e6e9; --desk:#ececee;
@@ -22,32 +22,8 @@
   --side-bg:#2a2a2c; --side-line:rgba(255,255,255,.07); --sel:#3cc690; --sel-ink:#06170f; --sel-off:rgba(255,255,255,.1); --logo:#3cc690;
   --bar-bg:rgba(30,30,31,.84); --bar-line:rgba(255,255,255,.09); --field:rgba(255,255,255,.08); --focus:#8ab8ff; --seg-on:#5d5d61;
 }}
-/* the Mac's own label and separator colours, so Increase Contrast follows the system */
-@supports (color:-apple-system-label){.plat-mac{--ink:-apple-system-label;--ink2:-apple-system-secondary-label;--line2:-apple-system-separator}}
-/* in the Mac app, selection takes the accent and highlight chosen in System Settings, as Apple's own apps do */
-/* one accent per window, as Apple's apps have: selection, buttons and links all take it. The Lastbook mark keeps its own green (--logo). */
-@supports (color:AccentColor){html.plat-mac.in-app{--sel:AccentColor;--sel-ink:#fff;--side-ico:AccentColor;--accent:AccentColor;--accent-ink:#fff;--accent-soft:color-mix(in srgb,AccentColor 14%,var(--bg));--tc:AccentColor}}
-
-/* ---------- tokens: Windows 11 ---------- */
-html.plat-win{
-  --font:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif; --display:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
-  --side-w:280px; --top-h:48px; --bar-h:var(--top-h); --row-h:40px; --pad:36px;
-  --bg:#f9f9f9; --paper:#ffffff; --sunk:#f3f3f3; --ink:#1b1b1b; --ink2:#5d5d5d; --ink3:#616161; --line:#e5e5e5; --line2:#ebebeb; --desk:#eeeeee;
-  --accent:var(--sys-acc-l,#0e7a56); --accent-soft:color-mix(in srgb,var(--accent) 13%,var(--paper));
-  /* the shell gives Windows' own accent as --sys-acc-l / --sys-acc-d (light and dark theme shades); a browser keeps Lastbook green */
-  --sel:var(--accent); --sel-ink:#fff;
-  --side-bg:#f3f3f3; --side-line:transparent; --side-ico:var(--ink); --row-hover:rgba(0,0,0,.04); --sel-bg:rgba(0,0,0,.055); --sel-off:var(--sel-bg);
-  --bar-bg:var(--bg); --bar-line:var(--line); --field:rgba(255,255,255,.75); --field-line:rgba(0,0,0,.42);
-  --r:8px; --r2:6px; --r-row:5px; --r-ctl:5px;
-  --shadow:0 1px 2px rgba(0,0,0,.04);
-}
-@media (prefers-color-scheme:dark){html.plat-win{
-  --bg:#272727; --paper:#2d2d2d; --sunk:#252525; --ink:#ffffff; --ink2:#cfcfcf; --ink3:#9d9d9d; --line:#383838; --line2:#333333; --desk:#1c1c1c;
-  --accent:var(--sys-acc-d,#4cc79a); --accent-ink:#05150e; --accent-soft:color-mix(in srgb,var(--accent) 16%,var(--paper));
-  --sel:var(--accent); --sel-ink:#000;
-  --side-bg:#202020; --row-hover:rgba(255,255,255,.04); --sel-bg:rgba(255,255,255,.065);
-  --bar-bg:var(--bg); --field:rgba(255,255,255,.055); --field-line:rgba(255,255,255,.55); --shadow:none;
-}}
+/* the system's own label and separator colours where the engine has them (Safari viewing the server version), so Increase Contrast follows the system */
+@supports (color:-apple-system-label){.plat-desktop{--ink:-apple-system-label;--ink2:-apple-system-secondary-label;--line2:-apple-system-separator}}
 
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -57,12 +33,10 @@ a{color:var(--accent)}
 img,video{max-width:100%}
 button,input,select{font:inherit;color:inherit}
 :focus-visible{outline:3px solid var(--focus);outline-offset:2px;border-radius:8px}
-.plat-mac :focus-visible{outline:auto 3px -webkit-focus-ring-color;outline-offset:1px}
-.plat-win :focus-visible{outline:2px solid var(--ink);outline-offset:1px;box-shadow:0 0 0 1px var(--bg);border-radius:var(--r-ctl)}
+.plat-desktop :focus-visible{outline:auto 3px -webkit-focus-ring-color;outline-offset:1px}
 [tabindex="-1"]:focus{outline:none!important;box-shadow:none!important}   /* the page title takes focus on each new page, for screen readers; it is not a control */
 /* fields whose box already shows focus get no second ring inside it */
 .bigsearch input:focus-visible,.comp-row textarea:focus-visible,.map-search input:focus-visible,.top-search input:focus-visible{outline:none}
-.plat-win .bigsearch input:focus-visible,.plat-win .comp-row textarea:focus-visible,.plat-win .map-search input:focus-visible{box-shadow:none}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .skip{position:absolute;left:-999px;top:8px;background:var(--paper);padding:10px 14px;z-index:40}
 .skip:focus{left:8px}
@@ -78,24 +52,19 @@ svg{stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-lin
 .side-top{display:flex;align-items:center;gap:8px;height:var(--top-h);padding:0 6px 0 10px}
 .side-brand{display:flex;align-items:center;gap:8px;color:var(--ink);text-decoration:none;font:650 16.5px/1 var(--display);min-width:0}
 .side-brand svg{width:22px;height:22px;color:var(--logo);flex:none}
-.in-app .side-brand{display:none}
 .side-nav{display:flex;flex-direction:column;gap:2px;padding:0 10px}
 .side a.row-s{position:relative;display:flex;align-items:center;gap:11px;height:var(--row-h);padding:0 10px;border-radius:var(--r-row);color:var(--ink);text-decoration:none;font:400 15.5px/1 var(--font)}
 .side a.row-s svg{width:20px;height:20px;flex:none;stroke-width:1.75;color:var(--side-ico)}
 .side a.row-s:hover{background:var(--row-hover)}
 .side a.row-s[aria-current]{background:var(--sel-bg);color:var(--sel-ink)}
-.plat-mac .side a.row-s[aria-current] svg{color:currentColor}
-.plat-mac.inactive .side a.row-s[aria-current]{background:var(--sel-off);color:var(--ink)}
-.plat-mac.inactive .seg button[aria-pressed=true],.plat-mac.inactive .chip.on,.plat-mac.inactive .chip[aria-pressed=true]{background:color-mix(in srgb,var(--ink3) 28%,transparent);border-color:transparent;color:var(--ink)}
-.plat-mac.inactive .side a.row-s svg,.plat-mac.inactive .side-ok svg{color:var(--ink3)}
-.plat-mac.inactive .btn:not(.plain):not(.ghost):not([aria-pressed=true]),.plat-mac.inactive .bigsearch button,.plat-mac.inactive .sendbtn:not(.stop),.plat-mac.inactive .rbar .btn.nav:not(.plain),.plat-mac.inactive .msg.user .bubble{background:color-mix(in srgb,var(--ink3) 22%,var(--bg));border-color:transparent;color:var(--ink)}   /* a window behind another: its sidebar goes grey, as Finder's does */
-.plat-win .side a.row-s svg{stroke-width:1.5}
-.plat-win .side a.row-s[aria-current]{font-weight:600;color:var(--ink)}   /* Fluent: a quiet fill and the accent bar; the text stays ink */
-.plat-win .side a.row-s[aria-current]::before{content:"";position:absolute;left:0;top:calc(50% - 9px);width:3px;height:18px;border-radius:2px;background:var(--sel)}
+.plat-desktop .side a.row-s[aria-current] svg{color:currentColor}
+.plat-desktop.inactive .side a.row-s[aria-current]{background:var(--sel-off);color:var(--ink)}
+.plat-desktop.inactive .seg button[aria-pressed=true],.plat-desktop.inactive .chip.on,.plat-desktop.inactive .chip[aria-pressed=true]{background:color-mix(in srgb,var(--ink3) 28%,transparent);border-color:transparent;color:var(--ink)}
+.plat-desktop.inactive .side a.row-s svg,.plat-desktop.inactive .side-ok svg{color:var(--ink3)}
+.plat-desktop.inactive .btn:not(.plain):not(.ghost):not([aria-pressed=true]),.plat-desktop.inactive .bigsearch button,.plat-desktop.inactive .sendbtn:not(.stop),.plat-desktop.inactive .rbar .btn.nav:not(.plain),.plat-desktop.inactive .msg.user .bubble{background:color-mix(in srgb,var(--ink3) 22%,var(--bg));border-color:transparent;color:var(--ink)}   /* a window behind another: its sidebar goes grey, as Finder's does */
 .side-n{margin-left:auto;font-size:14px;color:var(--ink3);font-variant-numeric:tabular-nums}
 .side a.row-s[aria-current] .side-n{color:inherit;opacity:.85}
 .side-h{margin:18px 20px 6px;font:600 14px/1 var(--font);color:var(--ink3)}
-.plat-win .side-h{font-size:14.5px;color:var(--ink)}
 .side-end{margin-top:auto;padding:10px 10px 4px}
 .side-ok{display:flex;align-items:center;gap:8px;padding:8px 10px 2px;font-size:14px;color:var(--ink2)}
 .side-ok svg{width:16px;height:16px;flex:none;color:var(--accent)}
@@ -111,10 +80,6 @@ svg{stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-lin
 .tb-btn:active:not([disabled]){opacity:.7}
 .tb-btn[disabled]{opacity:.35}
 .tb-btn svg{width:21px;height:21px;stroke-width:1.75}
-.plat-win .tb-btn{width:40px;height:36px}
-.plat-win .tb-btn:hover:not([disabled]){background:var(--row-hover)}   /* Fluent's subtle button: a faint fill on hover, then back to rest */
-.plat-win .tb-btn:active:not([disabled]){opacity:1;background:var(--row-hover);color:var(--ink3)}
-.plat-win #tbFwd{display:none!important}
 .tb-title{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;line-height:1.2}
 .tb-title b,.tb-title small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;visibility:hidden}
 .tb-title b{font:600 16.5px/1.2 var(--display)}
@@ -128,11 +93,9 @@ svg{stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-lin
 .top-search input::-webkit-search-cancel-button{opacity:.6}
 .top-search button{position:absolute;left:2px;top:50%;transform:translateY(-50%);width:30px;height:30px;border:0;background:transparent;color:var(--ink3);display:grid;place-items:center;pointer-events:none}
 .top-search button svg{width:16px;height:16px}
-.plat-mac .top-search input{border:0;border-radius:999px}   /* the capsule field of macOS 26 */
-.plat-mac .top-search input:focus{box-shadow:0 0 0 3px color-mix(in srgb,var(--focus) 45%,transparent)}
-.plat-win .top-search input{height:34px}
-.plat-win .top-search input:focus{background:var(--paper);border-bottom:2px solid var(--sel)}
-body.home .top-search,.plat-mac body.v-search .top-search{visibility:hidden}
+.plat-desktop .top-search input{border:0;border-radius:999px}   /* the capsule field of macOS 26 */
+.plat-desktop .top-search input:focus{box-shadow:0 0 0 3px color-mix(in srgb,var(--focus) 45%,transparent)}
+body.home .top-search,.plat-desktop body.v-search .top-search{visibility:hidden}
 @media (max-width:639px){body.v-search .top-search{display:none}}   /* these pages have their own big search field */
 /* a section's name comes into the toolbar once its large title has scrolled away, as in Apple's apps */
 @media (min-width:640px){.h1-gone .tb-title b{visibility:visible}}
@@ -158,8 +121,6 @@ main:focus{outline:none}
   .tb-title,.tb-acts{display:none}
   .top-search{flex:1;max-width:none}
   .top{background:var(--bg);-webkit-backdrop-filter:none;backdrop-filter:none}   /* opaque on phones: nothing shows through the bars */
-  html.plat-mac.in-app .top-in{padding-left:84px}
-  html.plat-mac.in-app .brand{display:none}
 }
 @media (max-width:420px){body:not(.home) .brand span{display:none}}
 /* wider: toolbar with back and forward; the page's own back button goes; the sidebar is fixed on the left */
@@ -172,81 +133,30 @@ main:focus{outline:none}
   .side{display:flex;flex-direction:column;position:fixed;z-index:30;left:0;top:0;bottom:0;width:var(--side-w);background:var(--side-bg);overflow:auto;overscroll-behavior:contain;padding-bottom:8px}
   .side-open body::after{content:"";position:fixed;inset:0;z-index:25;background:rgba(0,0,0,.18)}
   @media (prefers-color-scheme:dark){.side-open body::after{background:rgba(0,0,0,.45)}}
-  /* the sidebar button stays put, by the traffic lights in the app */
+  /* the sidebar button stays put */
   #sideBtn{position:fixed;z-index:31;left:12px;top:11px}
-  html.plat-mac.in-app #sideBtn{left:84px}
-  .plat-mac .top-in{padding-left:56px}
-  html.plat-mac.in-app .top-in{padding-left:128px}
-  /* Mac 640-899: the sidebar is away until asked for, then comes over the page. Away, it is hidden outright: no shadow at the window's edge, no Tab stops. */
-  .plat-mac .side{top:8px;left:8px;bottom:8px;border-radius:14px;border:1px solid var(--side-line);transform:translateX(calc(-100% - 60px));visibility:hidden;transition:transform .18s ease,visibility 0s linear .18s;box-shadow:0 8px 40px rgba(0,0,0,.25);
+  .plat-desktop .top-in{padding-left:56px}
+  /* 640-899: the sidebar is away until asked for, then comes over the page. Away, it is hidden outright: no shadow at the window's edge, no Tab stops. */
+  .plat-desktop .side{top:8px;left:8px;bottom:8px;border-radius:14px;border:1px solid var(--side-line);transform:translateX(calc(-100% - 60px));visibility:hidden;transition:transform .18s ease,visibility 0s linear .18s;box-shadow:0 8px 40px rgba(0,0,0,.25);
     background:color-mix(in srgb,var(--side-bg) 82%,transparent);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%)}
-  .plat-mac.side-open .side{transform:none;visibility:visible;transition:transform .18s ease}
-  html.plat-mac:not(.in-app) .side-top{padding-left:48px}   /* room for the sidebar button, which stays over the sidebar's top row */
-  /* Windows: the full pane, ☰ at its top and search under it, as in Settings. The rows scroll under the search when the window is short. */
-  .plat-win #tbBack{position:fixed;z-index:31;left:8px;top:6px}
-  .plat-win #sideBtn{left:52px;top:6px}
-  .plat-win .side-top{height:48px;padding-left:96px}
-  html.plat-win.no-bar{--bar-h:0px}
-  html.plat-win.no-bar .top{min-height:0;height:0;border:0;background:transparent}
-  html.plat-win.no-bar .top-in{min-height:0;height:0;padding:0}
-  html.plat-win.no-bar .tb-title,html.plat-win.no-bar .tb-acts{display:none}
-  html.plat-win.no-bar main{padding-top:32px}
-  .plat-win .tb-title{margin-left:4px}
-  html.plat-win body.v-search #searchQF{display:none}   /* the pane's field is the search page's field: one field, not two */
-  .plat-win .side{overflow:hidden}
-  .plat-win .side>.side-nav:not(.side-end){flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:46px;padding-top:0}
-  .plat-win .top-search{position:fixed;z-index:31;left:12px;top:52px;width:calc(var(--side-w) - 24px);max-width:none;margin:0}
-  .plat-win body.home .top-search{visibility:visible}
-  .plat-win .top-in{padding-left:12px}
-  .plat-win body{padding-left:var(--side-w);background:transparent}   /* transparent: the content layer below draws under the page, over the pane colour */
-  html.plat-win{background:var(--side-bg)}
-  /* the content is a layer with a rounded corner over the pane colour, which the caption shares */
-  .plat-win body::before{content:"";position:fixed;z-index:-1;left:var(--side-w);top:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);border-left:1px solid var(--line);border-top-left-radius:8px}
-  .plat-win .top{z-index:32;border-top-left-radius:8px;background:var(--bg);-webkit-backdrop-filter:none;backdrop-filter:none;border-top:1px solid var(--line);border-left:1px solid var(--line)}
-  /* Windows rail (640-899, or the pane folded): icons only, as Fluent's compact pane; ☰ opens the full pane over the page */
-  .plat-win.compact .side{width:56px}
-  .plat-win.compact body{padding-left:56px}
-  .plat-win.compact body::before{left:56px}
-  .plat-win.compact .side-brand,.plat-win.compact .row-s span,.plat-win.compact .side-h,.plat-win.compact .side-ok{display:none}
-  .plat-win.compact .side-top{padding-left:0;height:88px}
-  .plat-win.compact #sideBtn{left:8px;top:46px}
-  .plat-win.compact .side-nav{padding:0 8px}
-  .plat-win.compact .side a.row-s{padding:0 0 0 10px}
-  .plat-win.compact .top-search{position:relative;left:auto;top:auto;width:auto;max-width:300px;margin-left:auto}
-  .plat-win.compact body.home .top-search{visibility:hidden}
-  .plat-win.compact .side-nav{padding-top:0}
-  .plat-win.compact .side>.side-nav:not(.side-end){margin-top:0}
-  .plat-win.compact.side-open .side{z-index:40;width:var(--side-w);box-shadow:0 8px 40px rgba(0,0,0,.3)}
-  .plat-win.compact.side-open #sideBtn{z-index:41}   /* ☰ stays on top of the opened pane, and closes it again */
-  .plat-win.compact.side-open body::after{z-index:35}
-  .plat-win.compact.side-open .side-h{display:revert}
-  .plat-win.compact.side-open .side-brand,.plat-win.compact.side-open .side-ok{display:flex}
-  .plat-win.compact.side-open .row-s span{display:inline}
-  .plat-win.compact.side-open .side-top{padding-left:52px;height:88px}
-  .plat-win.compact.side-open .side-nav{padding:0 10px}
-  .plat-win.compact.side-open .side a.row-s{padding:0 10px}
+  .plat-desktop.side-open .side{transform:none;visibility:visible;transition:transform .18s ease}
+  html.plat-desktop .side-top{padding-left:48px}   /* room for the sidebar button, which stays over the sidebar's top row */
 }
-/* 900 and wider: the Mac sidebar stays, floating inset as in macOS 26 */
+/* 900 and wider: the sidebar stays */
 @media (min-width:900px){
   main{padding:24px var(--pad) 64px}
-  .plat-mac .side{transform:none;visibility:visible;transition:none;box-shadow:0 1px 3px rgba(0,0,0,.05);z-index:21;background:var(--side-bg);-webkit-backdrop-filter:none;backdrop-filter:none}
+  .plat-desktop .side{transform:none;visibility:visible;transition:none;box-shadow:0 1px 3px rgba(0,0,0,.05);z-index:21;background:var(--side-bg);-webkit-backdrop-filter:none;backdrop-filter:none}
   .side-open body::after{display:none}
-  .plat-mac.side-off .side{display:none}
-  .plat-mac body{padding-left:calc(var(--side-w) + 16px)}
-  .plat-mac.side-off body{padding-left:0}
-  html.plat-mac:not(.side-off) .top-in{padding-left:16px}
-  html.plat-mac:not(.in-app):not(.side-off) #sideBtn{left:calc(var(--side-w) - 34px)}
-  html.plat-mac:not(.in-app) .side-top{padding-left:10px}
-  /* In the Mac app the sidebar is the window's own sidebar material, which takes the desktop's tint: the page is clear there, and the
-     content's colour is drawn around the sidebar's shape instead (a shadow spread from a box the sidebar's size, behind the page). */
-  html.plat-mac.in-app:not(.side-off),html.plat-mac.in-app:not(.side-off) body{background:transparent}
-  html.plat-mac.in-app:not(.side-off) body::before{content:"";position:fixed;z-index:-1;top:8px;left:8px;bottom:8px;width:var(--side-w);border-radius:14px;box-shadow:0 0 0 200vmax var(--bg);pointer-events:none}
-  html.plat-mac.in-app:not(.side-off) .side{background:transparent;box-shadow:0 0 0 .5px rgba(0,0,0,.08),0 1px 3px rgba(0,0,0,.06)}
+  .plat-desktop.side-off .side{display:none}
+  .plat-desktop body{padding-left:calc(var(--side-w) + 16px)}
+  .plat-desktop.side-off body{padding-left:0}
+  html.plat-desktop:not(.side-off) .top-in{padding-left:16px}
+  html.plat-desktop:not(.side-off) #sideBtn{left:calc(var(--side-w) - 34px)}
+  html.plat-desktop .side-top{padding-left:10px}
 }
 
 h1{font:700 clamp(28px,5vw,34px)/1.15 var(--display);letter-spacing:-.018em;margin:.1em 0 .3em}
 h2{font:650 21px/1.25 var(--display);letter-spacing:-.01em;margin:1.4em 0 .6em}
-.plat-win h1{font-weight:600;letter-spacing:-.01em}.plat-win h2{font-weight:600;font-size:20px}
 h3{font-size:17.5px;line-height:1.3;margin:0}
 p{margin:.45em 0}
 .lead{font-size:18px;color:var(--ink2);max-width:44em;margin:0}
@@ -264,13 +174,11 @@ p{margin:.45em 0}
 .btn:active{opacity:.85}
 .btn.ghost{background:transparent;color:var(--accent)}
 .btn.plain{background:var(--paper);border-color:var(--line);color:var(--ink)}
-.plat-win .btn.plain{background:var(--paper);border-color:var(--line);box-shadow:0 1px 0 rgba(0,0,0,.06)}
 .btn svg{width:19px;height:19px}
 .btn[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 [data-save][aria-pressed=true] svg{fill:currentColor}
 .btn[disabled]{opacity:.4;cursor:default}
 .chip{display:inline-flex;align-items:center;gap:6px;min-height:38px;padding:6px 15px;border-radius:999px;border:1px solid var(--line);background:var(--bg);color:var(--ink2);text-decoration:none;font-size:15px;font-weight:500;white-space:nowrap}
-.plat-win .chip{border-radius:var(--r-ctl);background:var(--paper)}
 .chip svg{width:17px;height:17px}
 .chip.on,.chip[aria-pressed=true]{background:var(--sel);border-color:var(--sel);color:var(--sel-ink)}
 .chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;scrollbar-width:none}
@@ -291,18 +199,14 @@ p{margin:.45em 0}
 .notice{padding:12px 14px;border-radius:var(--r2);background:var(--sunk);color:var(--ink2);font-size:15px;margin:12px 0}
 .toast{position:fixed;left:50%;bottom:88px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:11px 18px;border-radius:999px;z-index:50;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.2)}
 @media (min-width:640px){.toast{bottom:28px}}
-@media (min-width:900px){.plat-mac .toast{left:calc(50% + var(--side-w) / 2 + 8px)}.plat-win .toast{left:calc(50% + var(--side-w) / 2)}.side-off .toast{left:50%}}
-.plat-win.compact .toast{left:calc(50% + 28px)}
+@media (min-width:900px){.plat-desktop .toast{left:calc(50% + var(--side-w) / 2 + 8px)}.side-off .toast{left:50%}}
 
 /* ---------- search box ---------- */
 .bigsearch{display:flex;align-items:center;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:4px 4px 4px 16px;max-width:720px}
 .bigsearch:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
-.plat-win .bigsearch{border-radius:var(--r-ctl);border-bottom:2px solid var(--field-line)}
-.plat-win .bigsearch:focus-within{box-shadow:none;border-color:var(--line);border-bottom-color:var(--accent)}
 .bigsearch>svg{width:22px;height:22px;color:var(--ink3);flex:none}
 .bigsearch input{flex:1;min-width:0;border:0;background:transparent;font-size:18px;padding:12px 10px;outline:none}
 .bigsearch button{border:0;border-radius:10px;background:var(--accent);color:var(--accent-ink);font-weight:600;padding:0 20px;min-height:46px}
-.plat-win .bigsearch button{border-radius:var(--r-ctl);min-height:40px}
 
 /* ---------- home ---------- */
 .hero h1{font-size:clamp(30px,6vw,40px)}
@@ -315,7 +219,6 @@ p{margin:.45em 0}
 @media (min-width:640px){.needs{grid-template-columns:repeat(3,1fr)}}
 @media (min-width:980px){.needs{grid-template-columns:repeat(4,1fr);gap:14px}}
 .need{position:relative;display:flex;flex-direction:column;gap:10px;padding:16px;min-height:118px;background:var(--paper);border-radius:var(--r);text-decoration:none;color:var(--ink);box-shadow:var(--shadow);border:1px solid var(--line2);overflow:hidden}
-.plat-win .need:hover{background:color-mix(in srgb,var(--paper) 92%,var(--ink))}
 .need:active{opacity:.9}
 .need[href="#/t/hurt"]{border:1.5px solid color-mix(in srgb,var(--stop) 60%,transparent)}
 .need .ico{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--tc) 15%,var(--paper));color:var(--tc)}
@@ -329,7 +232,6 @@ p{margin:.45em 0}
 .banner{display:flex;align-items:center;gap:16px;padding:16px 18px;border-radius:var(--r);text-decoration:none;color:var(--ink);background:var(--paper);border:1px solid var(--line2);box-shadow:var(--shadow);margin-top:12px;--tc:var(--accent)}
 .banners .banner{margin-top:0;align-items:flex-start}
 .banners .banner .go{align-self:center}
-.plat-win .banner:hover{background:color-mix(in srgb,var(--paper) 92%,var(--ink))}
 .banner .ico{flex:none;width:44px;height:44px;border-radius:50%;background:color-mix(in srgb,var(--tc) 15%,var(--paper));color:var(--tc);display:grid;place-items:center}
 .banner .ico svg{width:23px;height:23px;stroke-width:1.9}
 .banner b{display:block;font:600 18.5px/1.22 var(--display)}
@@ -453,7 +355,7 @@ details.more>summary .prep-ico{display:grid;color:var(--tc)}
 details.more>summary .prep-ico svg{color:inherit}
 details.more>summary .n{font:600 14px var(--font);color:var(--ink3)}
 details.more>summary::-webkit-details-marker{display:none}
-/* a disclosure row: the chevron leads, points right, and turns down when open, as in macOS and Windows lists */
+/* a disclosure row: the chevron leads, points right, and turns down when open, as in desktop lists */
 details.more>summary::before{content:"";width:8px;height:8px;margin:0 4px 0 2px;border-right:2px solid var(--ink3);border-bottom:2px solid var(--ink3);transform:rotate(-45deg);transition:transform .15s;flex:none}
 details.more[open]>summary::before{transform:rotate(45deg)}
 details.more>.body{padding:0 12px 14px}
@@ -482,7 +384,6 @@ details.more>.body{padding:0 12px 14px}
 /* ---------- reader ---------- */
 .rtop{display:flex;gap:10px;align-items:center;justify-content:space-between}
 .rtitle{font:700 clamp(20px,3.4vw,28px)/1.2 var(--display);margin:12px 0 4px}
-.plat-win .rtitle{font-weight:600}
 .rsrc{font-size:15.5px;color:var(--ink3)}
 .rsrc b{color:var(--ink2)}
 .rmodes{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}   /* the view switch, then Ask and Save: under the title they act on */
@@ -505,33 +406,26 @@ body.v-wiki main{padding-bottom:0}
 .v-wiki .frame.scrolled{box-shadow:0 -1px 0 var(--bar-line)}   /* the platform's separator where the text goes under the source line, as a toolbar's once content scrolls under it */
 .rbar{position:sticky;bottom:calc(16px + env(safe-area-inset-bottom));z-index:15;width:max-content;max-width:calc(100% - 8px);margin:18px auto 0;padding:5px;border-radius:999px;background:color-mix(in srgb,var(--paper) 86%,transparent);color:var(--ink);border:1px solid var(--line);-webkit-backdrop-filter:blur(16px) saturate(180%);backdrop-filter:blur(16px) saturate(180%);box-shadow:0 4px 20px rgba(0,0,0,.12);display:flex;gap:6px;align-items:center}
 @media (prefers-color-scheme:dark){.rbar{box-shadow:0 6px 24px rgba(0,0,0,.4)}}
-.plat-win .rbar{border-radius:8px}
 .rbar .pnum{display:flex;align-items:center;gap:6px;font-weight:600;color:var(--ink2);font-size:16px;padding:0 6px}
 .rbar .pnum input{width:58px;height:40px;text-align:center;border:0;border-radius:8px;background:var(--field);color:var(--ink);font-weight:700;font-size:17px}
 .rbar .btn.nav{width:46px;min-width:0;height:46px;min-height:0;padding:0;border-radius:50%;border:0;background:var(--field);color:var(--ink)}
 .rbar .btn.nav:not(.plain){background:var(--accent);color:var(--accent-ink)}
-.plat-win .rbar .btn.nav{border-radius:6px}
-.plat-win .rbar .pnum input{border:1px solid var(--line);border-bottom-color:var(--field-line);border-radius:4px}
 .rbar .nav span{display:none}
 @media (max-height:700px){.rbar{position:static;margin-top:14px}}   /* a short window: the pager sits under the page, not over its last lines */
 .seg{display:inline-flex;border-radius:9px;background:var(--field);padding:2px;flex-wrap:wrap}
 .seg button{border:0;background:transparent;min-height:36px;padding:3px 14px;border-radius:7px;font-weight:500;font-size:14.5px;color:var(--ink2)}
 .seg button[aria-pressed=true]{background:var(--sel);color:var(--sel-ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.14)}
-.plat-mac .seg button[aria-pressed=true]{background:var(--seg-on);color:var(--ink);box-shadow:0 0 0 .5px rgba(0,0,0,.1),0 1px 2px rgba(0,0,0,.16)}
-.plat-mac .chip.on,.plat-mac .chip[aria-pressed=true]{background:color-mix(in srgb,var(--ink) 11%,var(--bg));border-color:transparent;color:var(--ink);font-weight:600}
-.plat-win .seg{border-radius:var(--r-ctl);background:var(--paper);border:1px solid var(--line)}
-.plat-win .seg button{border-radius:4px}
-.plat-win .seg button[aria-pressed=true]{box-shadow:none}
+.plat-desktop .seg button[aria-pressed=true]{background:var(--seg-on);color:var(--ink);box-shadow:0 0 0 .5px rgba(0,0,0,.1),0 1px 2px rgba(0,0,0,.16)}
+.plat-desktop .chip.on,.plat-desktop .chip[aria-pressed=true]{background:color-mix(in srgb,var(--ink) 11%,var(--bg));border-color:transparent;color:var(--ink);font-weight:600}
 .tb-acts .seg button{min-height:28px;font-size:14px}
 .tb-acts .seg{order:-1;margin-right:6px}
 .tb-acts .btn{min-height:30px;padding:3px 12px;font-size:14.5px;gap:6px}
 .tb-acts .btn svg{width:17px;height:17px}
 .tb-acts [data-save]{width:34px;padding:0}
 .tb-acts [data-save] span{display:none}
-.plat-mac .tb-acts .btn.plain{border-color:transparent;background:transparent;color:var(--ink2);width:34px;padding:0}
-.plat-mac .tb-acts .btn.plain span{display:none}
-.plat-win .tb-acts [data-save]{width:auto;padding:3px 12px}.plat-win .tb-acts [data-save] span{display:inline}
-.plat-mac .tb-acts .btn.plain:hover{background:var(--field)}
+.plat-desktop .tb-acts .btn.plain{border-color:transparent;background:transparent;color:var(--ink2);width:34px;padding:0}
+.plat-desktop .tb-acts .btn.plain span{display:none}
+.plat-desktop .tb-acts .btn.plain:hover{background:var(--field)}
 .insp-btn{display:none!important}
 .about-src{margin-top:18px;background:var(--paper);border:1px solid var(--line2);border-radius:var(--r);font-size:15px}
 .about-src summary{padding:14px 16px;font-weight:600;min-height:52px;display:flex;align-items:center;gap:12px;list-style:none}
@@ -555,7 +449,6 @@ body.v-wiki main{padding-bottom:0}
   /* the inspector is a full-height column from the window's top, as in Preview; the toolbar's controls stop at its edge */
   html:not(.insp-off) body.v-read .top-in{padding-right:316px}
   html:not(.insp-off) .v-read .about-src{position:fixed;z-index:22;top:0;right:0;bottom:0;width:300px;margin:0;padding-top:var(--bar-h);border:0;border-left:1px solid var(--line);border-radius:0;background:var(--paper);overflow:auto}
-  html.plat-win:not(.insp-off) .v-read .about-src{z-index:33}
   html:not(.insp-off) .v-read .about-src summary{pointer-events:none;list-style:none;font-size:14px;color:var(--ink3);min-height:0;padding:12px 20px 4px}
   html:not(.insp-off) .v-read .about-src summary::-webkit-details-marker,html:not(.insp-off) .v-read .about-src summary::before{display:none}
   html:not(.insp-off) .v-read .about-src .in{padding:4px 20px 20px}
@@ -564,9 +457,6 @@ body.v-wiki main{padding-bottom:0}
   html:not(.insp-off) .v-read .about-src .insp-h{display:block}
 }
 @media (min-width:640px){.v-wiki .tb-title b{visibility:visible}.v-wiki .rsrc .zn{display:none}.v-wiki main.own-title .rtitle{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}}   /* the toolbar names the encyclopedia (and the article, once its own title has scrolled away), so the source line does not */
-/* Windows: the title bar already names a reading page in full, so the toolbar keeps its controls and not a cut-off copy of the title */
-html.plat-win.in-app body:not(.v-wiki) .tb-title b{display:none}
-@media (min-width:1060px){html.plat-win.in-app .v-read .tb-title small{font-size:14.5px;color:var(--ink2)}}
 .insp-h{display:none;font:600 19px/1.25 var(--display);margin:0 0 14px}
 
 /* ---------- video player ---------- */
@@ -614,7 +504,6 @@ mark{background:#fff0a3;color:inherit;padding:0 1px;border-radius:3px}
 @media (min-width:1000px){.cards2.three{grid-template-columns:1fr 1fr 1fr}}
 .card{display:block;background:var(--paper);border:1px solid var(--line2);border-radius:var(--r);padding:18px;text-decoration:none;color:var(--ink);box-shadow:var(--shadow)}
 a.card:active{opacity:.9}
-.plat-win a.card:hover,.plat-win .shelfrow:hover{background:color-mix(in srgb,var(--paper) 92%,var(--ink))}
 .card b{display:block;font:600 18.5px/1.25 var(--display)}
 .card small{display:block;color:var(--ink2);font-size:16px;margin-top:4px;line-height:1.45}
 .card .ico{display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:var(--accent-soft);color:var(--accent);margin-bottom:10px} .card .ico svg{width:22px;height:22px;stroke-width:1.9}
@@ -657,7 +546,6 @@ body.v-ask main{padding-bottom:0}
 .chat{display:grid;grid-template-columns:1fr;gap:22px;min-height:calc(100vh - 120px)}
 /* wider: the page starts a title's margin under the toolbar, and fills the window exactly, so the composer is already at the bottom and Stop never moves under the pointer */
 @media (min-width:640px){body.v-ask main{padding-top:28px}.chat{min-height:calc(100vh - var(--bar-h) - 28px - 2px)}}   /* 2px: the toolbar's own hairlines, so the page itself never scrolls a pixel or two */
-@media (min-width:640px){html.plat-win.no-bar .chat{min-height:calc(100vh - 32px - var(--cap-h,0px))}}   /* Windows with no toolbar row: the page starts 32px down instead (below the title bar's band, when the page draws it) */
 @media (min-width:1000px){.chat{grid-template-columns:270px minmax(0,1fr)}}
 .chat-side{display:none;flex-direction:column;gap:12px;position:sticky;top:calc(var(--bar-h) + 28px);align-self:start;max-height:calc(100vh - var(--bar-h) - 28px - 16px)}
 @media (min-width:1000px){.chat-side{display:flex}.chat-histbtn,.cs-head .iconbtn,#newChat{display:none!important}}   /* one New chat button: the one in the chats column */
@@ -782,7 +670,6 @@ main.map-page{max-width:none;padding-bottom:24px}   /* the same side and top ins
 .map-page .maptools{max-height:calc(100vh - var(--map-top,170px) - var(--map-bottom,24px));overflow:auto;margin:0;align-content:start}.map-page .maptools .panel{padding:14px 16px}
 .mapwrap canvas{cursor:grab}.mapwrap canvas.dragging{cursor:grabbing}
 .mapwrap.max{position:fixed;inset:0;z-index:60;height:auto!important;min-height:0;border-radius:0;border:0}
-html.plat-mac.in-app .mapwrap.max,html.plat-mac.in-app .chat-side.open{top:var(--top-h)}
 .mapwrap:fullscreen{height:100vh!important;width:100vw;border-radius:0;border:0}
 body.map-maxed{overflow:hidden}
 .msym{display:inline-grid;place-items:center;flex:none;border-radius:50%;color:#fff;font:700 10px/1 -apple-system,Segoe UI,sans-serif;font-style:normal;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.18);box-sizing:border-box;vertical-align:middle}
@@ -861,29 +748,3 @@ body.map-maxed{overflow:hidden}
 .t3d .hint{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);background:rgba(27,35,32,.82);color:#fff;font-size:13px;padding:6px 12px;border-radius:12px;pointer-events:none;text-align:center;max-width:calc(100% - 30px)}
 @media(max-width:600px){.mapelev{display:none}.t3d .bar label span{display:none}}
 
-/* ---------- Windows app: one title bar. The shell takes the caption out of the frame, keeps the system's caption buttons at the right end,
-   and sets wcap, the band's height (--cap-h) and how much of it is above a maximised window's screen edge (--cap-top) on this page; the band is the window's caption wherever it is app-region: drag. ---------- */
-.capband{display:none}
-@media (min-width:640px){
-  html.plat-win.wcap{--bar-h:calc(var(--top-h) + var(--cap-h))}
-  html.plat-win.wcap.no-bar{--bar-h:var(--cap-h)}
-  html.wcap .capband{display:flex;align-items:center;gap:12px;position:fixed;z-index:45;left:0;top:0;right:0;height:var(--cap-h);padding:var(--cap-top,0px) 0 0 104px;background:var(--side-bg);color:var(--ink);font:12px/1 var(--font);white-space:nowrap;-webkit-user-select:none;user-select:none;app-region:drag;-webkit-app-region:drag}
-  html.wcap .capband svg{width:16px;height:16px;flex:none;color:var(--logo)}
-  html.wcap.inactive .capband span{color:var(--ink3)}   /* as a Windows 11 title bar's name goes grey behind another window */
-  html.wcap #tbBack,html.wcap #sideBtn,html.wcap.compact #sideBtn{position:fixed;z-index:46;top:calc(var(--cap-top,0px) + max(0px,(var(--cap-h) - var(--cap-top,0px) - 32px) / 2));width:40px;height:min(32px,calc(var(--cap-h) - var(--cap-top,0px)));app-region:no-drag;-webkit-app-region:no-drag}
-  html.wcap #tbBack{left:4px}
-  html.wcap #tbBack:focus-visible,html.wcap #sideBtn:focus-visible{outline:none;box-shadow:none}
-  html.wcap #tbBack:focus-visible::after,html.wcap #sideBtn:focus-visible::after{content:"";position:absolute;inset:6px 2px 1px;border:2px solid var(--ink);border-radius:var(--r-ctl);pointer-events:none}   /* the ring inside the button, below the window's top edge: the system keeps that strip for resizing, and would cut a ring drawn there */
-  html.wcap .skip{top:calc(var(--cap-h) + 8px)}   /* under the band, not behind it */
-  html.wcap.inactive #tbBack,html.wcap.inactive #sideBtn{color:var(--ink3)}
-  html.wcap.inactive .capband svg{opacity:.5}   /* the whole band greys behind another window, as the system's caption buttons do */
-  html.wcap #sideBtn,html.wcap.compact #sideBtn,html.wcap.compact.side-open #sideBtn{left:48px}
-  html.wcap body{padding-top:var(--cap-h)}
-  html.wcap .side{top:var(--cap-h)}
-  html.wcap .side-top{display:none}
-  html.wcap:not(.compact) .top-search{top:calc(var(--cap-h) + 4px)}
-  html.wcap.compact .side-nav{padding-top:4px}
-  html.wcap body::before,html.wcap .top{top:var(--cap-h)}
-  html.wcap .mapwrap.max,html.wcap .chat-side.open{top:var(--cap-h)}   /* the title bar stays, as in Windows' own apps */
-  html.wcap:fullscreen .capband,html.wcap:has(:fullscreen) .capband{display:none}   /* nothing of the band, its drag area included, over a page in full screen */
-}

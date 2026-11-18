@@ -1,5 +1,0 @@
-/api/videos
-/api/videos/health?sort=az
-/api/videos/related/video-5zz9o_wy-Y0
-/api/videos/all?q=fire&len=short
-/api/videos/guides

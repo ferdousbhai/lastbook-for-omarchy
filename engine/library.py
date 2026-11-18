@@ -26,10 +26,9 @@ PDF_LOCK=threading.Lock()  # PDFium is not thread-safe
 CLIENT_GONE=(BrokenPipeError,ConnectionResetError,ConnectionAbortedError,TimeoutError)
 # The library folders a file may be served from. One may itself be a link to another disk (videos-external).
 SERVED_FOLDERS=('documents','pages','videos','videos-external','transcripts','metadata/videos','courses','collections','assets')
-RESERVED_NAMES={'con','prn','aux','nul'}|{f'{d}{i}' for d in ('com','lpt') for i in range(1,10)}
 
 def load_remote_storage():
- """Videos this Mac has moved to other machines. That code stays in the library's own tools and is never packaged."""
+ """Videos this computer has moved to other machines. That code stays in the library's own tools and is never packaged."""
  path=ROOT/'tools'/'remote_storage.py'
  if FROZEN or not path.is_file():return None
  writes=sys.dont_write_bytecode
@@ -37,21 +36,15 @@ def load_remote_storage():
  try:
   spec=importlib.util.spec_from_file_location('remote_storage',path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
   return module
- except Exception:return None  # e.g. no fcntl on Windows
+ except Exception:return None
  finally:sys.dont_write_bytecode=writes
 _remote=load_remote_storage()
 remote_records=_remote.records if _remote else (lambda:{})
 serve_remote=_remote.serve if _remote else None
 
 def real_path(path):
- """Where a path really ends up: links and junctions followed and, on Windows, 8.3 short names expanded."""
- real=os.path.realpath(path)
- if os.name=='nt':
-  import ctypes
-  buf=ctypes.create_unicode_buffer(32768);n=ctypes.windll.kernel32.GetLongPathNameW(real,buf,32768)
-  if 0<n<32768:real=buf.value
-  if real.startswith('\\\\?\\') and not real.startswith('\\\\?\\UNC\\'):real=real[4:]
- return real
+ """Where a path really ends up: links followed."""
+ return os.path.realpath(path)
 
 def parts_below(real,root):
  """The path parts of real below root, or None when real is not inside root."""
@@ -75,18 +68,11 @@ def folder_refused(parts):
 
 def parts_refused(parts,folders=False):
  """Run on what a path really resolves to: a link can end at "x.info.json:s", which the name check alone would pass."""
- return name_refused(parts) or (folders and folder_refused(parts)) or not segments_ok('/'.join(parts))
-
-def segments_ok(path,windows=os.name=='nt'):
- """NTFS opens "x.", "x " and "x::$DATA" as x, and treats some names as devices; the name checks would not see those."""
- if not windows:return True
- for s in path.split('/'):
-  if s!=s.rstrip('. ') or ':' in s or '\\' in s or s.split('.')[0].lower() in RESERVED_NAMES:return False
- return True
+ return name_refused(parts) or (folders and folder_refused(parts))
 
 def zim_file(name):
  """The file behind a /zim/<name>/ address, after the same checks as any other file; ValueError if refused."""
- if not name or '\0' in name or Path(name).name!=name or not segments_ok(name):raise ValueError('Invalid collection')
+ if not name or '\0' in name or Path(name).name!=name:raise ValueError('Invalid collection')
  path=ROOT/'collections'/name
  real=real_path(path);parts=parts_below(real,real_path(ROOT/'collections'))
  if parts is None or parts_refused(parts) or not real.lower().endswith('.zim'):raise ValueError('Invalid collection')
@@ -287,7 +273,7 @@ ZIMS={};ZIM_LOCK=threading.Lock()
 class Handler(http.server.SimpleHTTPRequestHandler):
  timeout=30  # a client that sends half a request gives its thread back; do_GET allows longer for sending
  SEND_TIMEOUT=600  # a paused video stops reading for minutes at a time; the player asks again with a Range when it resumes
- # Windows' registry can call .js text/plain, which X-Content-Type-Options: nosniff would then refuse to run.
+ # The system's MIME table can call .js text/plain, which X-Content-Type-Options: nosniff would then refuse to run.
  extensions_map={**http.server.SimpleHTTPRequestHandler.extensions_map,'.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.svg':'image/svg+xml'}
  def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT),**kwargs)
  def log_message(self,*args):pass
@@ -428,13 +414,7 @@ if __name__=='__main__':
  args=parser.parse_args()
  if args.command=='build':
   with (ROOT/'index.lock').open('w') as lock:
-   if os.name=='nt':
-    import msvcrt
-    while True:
-     try:msvcrt.locking(lock.fileno(),msvcrt.LK_LOCK,1);break
-     except OSError:pass
-   else:
-    import fcntl;fcntl.flock(lock,fcntl.LOCK_EX)
+   import fcntl;fcntl.flock(lock,fcntl.LOCK_EX)
    build()
  elif args.command=='search':print(json.dumps(search(args.query,args.limit),indent=2,ensure_ascii=False))
  else:

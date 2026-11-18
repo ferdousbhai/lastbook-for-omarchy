@@ -1,5 +1,0 @@
-// The repository root, relative to mobile/ipad. Override locally if needed.
-LASTBOOK_SOURCE = $(SRCROOT)/../..
-// The local AI runtime (llama.cpp) is built for arm64 only: simulator builds need an Apple silicon Mac.
-EXCLUDED_ARCHS[sdk=iphonesimulator*] = x86_64
-#include? "Local.xcconfig"

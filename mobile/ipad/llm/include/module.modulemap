@@ -1,4 +1,0 @@
-module LastbookLLM {
-    header "lastbook_llm.h"
-    export *
-}

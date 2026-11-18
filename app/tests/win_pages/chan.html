@@ -1,9 +1,0 @@
-<!doctype html><title>chan</title><body><script>
-const R={origin:self.origin};
-const T=(k,f)=>{try{R[k]=f()}catch(e){R[k]='THREW '+e.name}};
-T('chrome',()=>typeof window.chrome);T('webview',()=>typeof (window.chrome&&window.chrome.webview));T('hostObjects',()=>typeof (window.chrome&&window.chrome.webview&&window.chrome.webview.hostObjects));
-T('pywebview',()=>typeof window.pywebview);T('fetch_native',()=>/native code/.test(window.fetch.toString()));T('ext',()=>typeof (window.external&&window.external.notify));
-T('members',()=>window.chrome.webview?Object.getOwnPropertyNames(Object.getPrototypeOf(window.chrome.webview)).concat(Object.keys(window.chrome.webview)).join(','):'none');T('post',()=>'value '+window.chrome.webview.postMessage({channel:'frame'}));T('host',()=>'value '+String(window.chrome.webview.hostObjects.anything));T('sync',()=>'value '+String(window.chrome.webview.hostObjects.sync.anything));
-T('open_nogesture',()=>String(window.open('https://example.invalid/from-frame-nogesture')));
-fetch('/api/chat',{method:'POST',mode:'no-cors',body:new Blob(['{"messages":[{"role":"user","content":"chan-post"}]}'],{type:'application/json'})}).then(r=>{R.post2=r.type},e=>{R.post2=e.name}).then(()=>parent.postMessage({v3:'chan',R},'*'));
-</script>

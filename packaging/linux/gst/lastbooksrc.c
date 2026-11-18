@@ -4,7 +4,7 @@
    claims the address's protocol. Nothing claims lastbook:, so without this every video fails at once (the page says it cannot be played).
    This element reads the video straight from the library folder: no port, no copy in memory, seeking by position.
 
-   Only the app's web process finds it: shell_linux.py puts /opt/lastbook/gst on GST_PLUGIN_PATH_1_0 for itself and its children, names lastbook
+   Only the app's web process finds it: shell_linux.py puts /usr/lib/lastbook-for-omarchy/gst on GST_PLUGIN_PATH_1_0 for itself and its children, names lastbook
    in WEBKIT_GST_ALLOWED_URI_PROTOCOLS (WebKit's player refuses other schemes before GStreamer sees them), and the library folder is in
    LASTBOOK_LIBRARY (engine/paths.py sets it). The file must be called libgstlastbooksrc.so: GStreamer finds the plugin's entry by its name.
    It opens nothing else:

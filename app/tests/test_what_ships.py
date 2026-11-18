@@ -2,7 +2,7 @@
 """What a pack's app shows and ships: encyclopedia articles with their scripts taken out, guide items that open nothing hidden,
 and no household area or working name in the web/ and content/ an app build packages.
 
-  PYTHONDONTWRITEBYTECODE=1 <venv python> -B app/tests/test_what_ships.py [-v]
+  python3 -B app/tests/test_what_ships.py [-v]
 
 Uses the made-up library in derived/app-build/testdata (no model). Never packaged."""
 import json, os, re, subprocess, sys, tempfile, unittest
@@ -17,7 +17,7 @@ DATA = fixture.ensure()
 os.environ['LASTBOOK_DATA'] = str(DATA)
 os.environ['SURVIVAL_MODEL_BASE'] = 'http://127.0.0.1:9'
 os.environ['SURVIVAL_DISABLE_INDEX_WATCH'] = '1'
-sys.modules['onnxruntime'] = None   # this Mac runs no AI models
+sys.modules['onnxruntime'] = None   # no model runtime here
 from engine import saved_pages  # noqa: E402
 import server  # noqa: E402
 
@@ -122,23 +122,11 @@ class WhatShips(unittest.TestCase):
             self.assertTrue(HOUSEHOLD.search(word), word)
         for fine in ('39.0997', 'Southern California', 'Los Angeles County', 'claude_source_id'):
             self.assertIsNone(HOUSEHOLD.search(fine), fine)
-        for scan in ('scan_package_macos.py', 'scan_app_package.py'):
-            self.assertIn("with_name('ship_edits.json')", (ROOT / 'packaging' / scan).read_text(encoding='utf-8'))
-        if not any(r'\d' in f for f in SHIP['forbidden']):
-            return   # this copy's list has no coordinate patterns, so there are no numbers to look for
-        import importlib.util, marshal   # numbers in compiled code are not text: the scans write them out before they look
-        for scan in ('scan_package_macos.py', 'scan_app_package.py'):
-            spec = importlib.util.spec_from_file_location(scan[:-3], ROOT / 'packaging' / scan)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            for src in ('HOME = (39.0997, -94.5786)', 'def f():\n    return {"lat": 39.0997, "lon": -94.5786}', 'P = [-94.5786, 39.0997]'):
-                code = marshal.loads(marshal.dumps(compile(src, 'x', 'exec')))
-                self.assertTrue(mod.HOUSEHOLD.search(mod.numbers(code)), (scan, src))
-            self.assertIsNone(mod.HOUSEHOLD.search(mod.numbers(compile('A = (39.0997, 2.5)', 'x', 'exec'))))
+        self.assertIn("'ship_edits.json'", (ROOT / 'packaging' / 'arch' / 'scan_package.py').read_text(encoding='utf-8'))
 
     def test_shipped_code_names_no_household_place(self):
         for rel in ('server.py', 'assistant.py', 'retrieval.py', 'engine/library.py', 'engine/saved_pages.py', 'engine/paths.py', 'app/main.py', 'app/bridge.py',
-                    'app/shell_macos.py', 'app/shell_windows.py'):
+                    'app/shell_linux.py'):
             self.assertIsNone(HOUSEHOLD.search((ROOT / rel).read_text(encoding='utf-8')), rel)
         self.assertNotIn('118.4', (ROOT / 'server.py').read_text(encoding='utf-8'))
 

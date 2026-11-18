@@ -1,2 +1,0 @@
-"Microsoft-Windows-Kernel-Network" 0xffffffffffffffff 0xff
-"Microsoft-Windows-DNS-Client" 0xffffffffffffffff 0xff

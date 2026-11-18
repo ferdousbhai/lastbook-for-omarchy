@@ -1,4 +1,4 @@
-"""Starts the packaged Linux app: /usr/bin/lastbook runs  /usr/bin/python3 -I -B /opt/lastbook/lastbook.py.
+"""Starts the packaged Linux app: /usr/bin/lastbook runs  /usr/bin/python3 -I -B /usr/lib/lastbook-for-omarchy/lastbook.py.
 
 The folder is laid out as a PyInstaller build is (web/, content/, setup/, engine/setup/roots.pem, llm/ under one root), and this marks the
 run as packaged the same way (sys.frozen, sys._MEIPASS), so every packaged-app rule in the engine holds here too: program files from this

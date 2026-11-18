@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The bridge with no window: Range forms, streaming, cancel, lanes, the in-flight cap, every refusal.
 
-  PYTHONDONTWRITEBYTECODE=1 <venv python> -B app/tests/test_bridge.py [-v]
+  python3 -B app/tests/test_bridge.py [-v]
 
 Uses the made-up library in derived/app-build/testdata (no model) and a stub for chat. Never packaged."""
 import faulthandler, hashlib, json, os, shutil, socket, statistics, subprocess, sys, threading, time, types, unittest
@@ -17,9 +17,9 @@ DATA = fixture.ensure()
 os.environ['LASTBOOK_DATA'] = str(DATA)
 os.environ['SURVIVAL_MODEL_BASE'] = 'http://127.0.0.1:9'   # a dead address: the real model server is never contacted
 os.environ['SURVIVAL_DISABLE_INDEX_WATCH'] = '1'
-sys.modules['onnxruntime'] = None                          # importing it now raises ImportError: this Mac runs no AI models
+os.environ['LASTBOOK_RECALL_SOCKET'] = '/nonexistent/recall.sock'   # no embedding model: meaning-based search stays off
 
-import server, assistant, retrieval  # noqa: E402
+import server, assistant  # noqa: E402
 import bridge as B  # noqa: E402
 
 LISTENS = []
@@ -33,11 +33,9 @@ def _no_listen(self, *a):
 
 socket.socket.listen = _no_listen
 server.init(no_index=True)
-assert not retrieval.AVAILABLE and server.INDEX.emb is None, 'a model is available; refusing to run on this Mac'
+assert server.INDEX.query_vector('water') is None, 'meaning-based search is on; refusing to run here'
 
 MiB = B.MiB
-OR = {'stream': B.ORIGIN_MAC, 'buffer': B.ORIGIN_WINDOWS}
-TMP = DATA / 'tmp'
 A = '/videos/a.mp4'
 A_SIZE = 20 * MiB
 pat = fixture.pattern
@@ -153,34 +151,16 @@ class Rec(B.Sink):
 
 
 class Res:
-    def __init__(self, status, hs, body, ok=True, path=None):
-        self.status, self.hs, self.body, self.ok, self.path = status, hs, body, ok, path
+    def __init__(self, status, hs, body, ok=True):
+        self.status, self.hs, self.body, self.ok = status, hs, body, ok
 
 
 def call(b, method, path, headers=None, body=None, is_document=None, timeout=60, url=None):
     url = url if url is not None else b.origin + path
-    if b.mode == 'stream':
-        r = Rec()
-        b.start(method, url, headers or {}, body, r, is_document)
-        assert r.done.wait(timeout), f'no answer: {method} {path}'
-        return Res(r.status, r.hs, r.body, r.ok)
-    ev = threading.Event()
-    box = []
-
-    def done(resp):
-        box.append(resp)
-        ev.set()
-    b.fetch(method, url, headers or {}, body, done, is_document)
-    assert ev.wait(timeout), f'no answer: {method} {path}'
-    resp = box[0]
-    data = resp.body or b''
-    if resp.path:
-        with open(resp.path, 'rb') as f:
-            data = f.read()
-        if resp.delete:
-            os.unlink(resp.path)
-    resp.release()
-    return Res(resp.status, {k.lower(): v for k, v in resp.headers}, data, True, resp.path)
+    r = Rec()
+    b.start(method, url, headers or {}, body, r, is_document)
+    assert r.done.wait(timeout), f'no answer: {method} {path}'
+    return Res(r.status, r.hs, r.body, r.ok)
 
 
 def wait_until(fn, timeout=10):
@@ -192,19 +172,14 @@ def wait_until(fn, timeout=10):
     return False
 
 
-def tmp_files():
-    return sorted(p.name for p in TMP.iterdir())
-
-
 class Both:
-    """Every test in a subclass runs against one mode."""
-    mode = None
+    """The tests StreamTests runs on a fresh bridge each."""
 
     def setUp(self):
         self.logged = []
-        self.b = B.Bridge(MOD, self.mode, OR[self.mode], tmpdir=str(TMP), log=self.logged.append)
+        self.b = B.Bridge(MOD, log=self.logged.append)
         self.key = {'X-Lastbook-Key': self.b.key, 'Content-Type': 'application/json'}
-        self.piece = B.VIDEO_PIECE[self.mode]
+        self.piece = B.VIDEO_PIECE
 
     def get(self, path, rng=None, **k):
         return call(self.b, 'GET', path, {'Range': rng} if rng else {}, **k)
@@ -374,7 +349,7 @@ class Both:
         self.assertEqual(call(self.b, 'POST', '/api/chat', self.key, b'x' * (B.MAX_POST + 1)).status, 413)
 
     def test_each_launch_has_its_own_key(self):
-        other = B.Bridge(MOD, self.mode, OR[self.mode], tmpdir=str(TMP))
+        other = B.Bridge(MOD)
         self.assertNotEqual(self.b.key, other.key)
         self.assertEqual(call(other, 'POST', '/api/chat', self.key, b'{}').status, 403)
 
@@ -395,7 +370,7 @@ class Both:
     def test_symlink_out_of_the_library_is_refused(self):
         """A link to a file outside the library, in its own test: on a machine with no right to make links the fixture cannot build one, and a skip says so where an address that is simply absent would have looked like a pass."""
         if not fixture.LINKED:
-            self.skipTest('no right to make symbolic links (Developer Mode on Windows)')
+            self.skipTest('no right to make symbolic links here')
         for method in ('GET', 'HEAD'):
             r = call(self.b, method, '/documents/out.txt')
             self.assertGreaterEqual(r.status, 400, method)
@@ -471,7 +446,7 @@ class Both:
 
     def test_rewrite_takes_linear_time_on_tags_that_never_close(self):
         """A whole page against 1/64 of one. In step with its size the whole page takes 64 times as long; quadratic, 4096 times. A limit in seconds
-        says more about the computer, and what else it is doing, than about rewrite: at 5 s this failed two runs in five on a busy Windows laptop, on
+        says more about the computer, and what else it is doing, than about rewrite: at 5 s this failed two runs in five on a busy laptop, on
         '<a x>', which takes 2.2 s there when the laptop is idle. The eleven other pages take 0.1 to 0.5 s."""
         from engine import saved_pages as P
 
@@ -505,31 +480,11 @@ class Both:
         r = self.get('/documents/t/slowbig', is_document=True)
         self.assertEqual(r.status, 200)
 
-    def test_drop_waiting_answers_what_is_in_line(self):
-        if self.b.mode != 'buffer':
-            return
-        b = B.Bridge(MOD, 'buffer', B.ORIGIN_WINDOWS, tmpdir=str(TMP), lanes={**B.LANES, 'large': (1, 100, 64 * MiB)})
-        answers = []
-        for i in range(5):
-            b.fetch('GET', b.origin + f'/documents/t/slow?ms=400&i={i}', {}, None, answers.append)
-        time.sleep(0.05)
-        for ex in b.lanes['large'].waiting:
-            ex.t0 -= 5
-        self.assertEqual(b.drop_waiting(), 4)
-        self.assertEqual(sorted(r.status for r in answers), [503] * 4)
-        deadline = time.time() + 5
-        while len(answers) < 5 and time.time() < deadline:
-            time.sleep(0.02)
-        self.assertEqual(len(answers), 5)
-
     def test_unknown_length_over_the_limit(self):
         r = self.get('/documents/t/nolen?mb=40')
-        if self.mode == 'stream':
-            self.assertEqual(r.status, 200)
-            self.assertFalse(r.ok)
-            self.assertLessEqual(len(r.body), B.BIG_BODY + MiB)
-        else:
-            self.assertEqual(r.status, 413)
+        self.assertEqual(r.status, 200)
+        self.assertFalse(r.ok)
+        self.assertLessEqual(len(r.body), B.BIG_BODY + MiB)
         self.assertEqual(self.b.counts['unknown-length'], 1)
         self.assertEqual(self.b.lanes['large'].budget.used, 0)
 
@@ -561,13 +516,10 @@ class Both:
             self.assertIn(r.status, (200, 404), t)
             self.no_code(r)
         r = self.get('/pages/kinds/folder')     # a folder with no slash: a redirect
-        self.assertEqual(r.status, 200 if self.mode == 'stream' else 301)
-        if self.mode == 'stream':               # the page that stands in for it holds no code either, and cannot be sandboxed
-            self.assertEqual(r.hs['content-security-policy'], "default-src 'none'; script-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'")
-            self.assertIn(b'http-equiv="refresh"', r.body)
-            self.assertNotIn(b'<script', r.body)
-        else:
-            self.no_code(r)
+        self.assertEqual(r.status, 200)         # the page that stands in for it holds no code either, and cannot be sandboxed
+        self.assertEqual(r.hs['content-security-policy'], "default-src 'none'; script-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'")
+        self.assertIn(b'http-equiv="refresh"', r.body)
+        self.assertNotIn(b'<script', r.body)
         for t in ('/zim/none.zim/A/x', '/zim/none.zim/', '/zim/'):
             r = self.get(t)
             self.no_code(r, 'sandbox allow-same-origin;')
@@ -608,7 +560,7 @@ class Both:
                     link.unlink()
                 os.symlink(target, link)
             except OSError as e:
-                why = f'{type(e).__name__}: {e}'     # e.g. WinError 1314, no right to make links on Windows
+                why = f'{type(e).__name__}: {e}'     # e.g. no right to make links on this file system
         if not usable():
             self.skipTest(f'could not make a usable link to the tools folder ({why})')
         r = self.get('/courses/c1/tools-link/secret.txt')
@@ -700,8 +652,7 @@ class Both:
     def test_short_answer(self):
         r = self.get('/documents/t/short')
         self.assertEqual(r.status, 200)
-        if self.mode == 'stream':
-            self.assertFalse(r.ok)
+        self.assertFalse(r.ok)
 
     # ---- where things may go
     def test_frame_rule(self):
@@ -772,23 +723,22 @@ class AssistantStaysHere(unittest.TestCase):
 
 
 class NothingGoesOut(unittest.TestCase):
-    """The shells cannot run here on both systems, so what must be gone from them is checked in their source."""
+    """What must be gone from the window's code is checked in its source."""
 
     def test_no_way_to_hand_anything_to_the_system(self):
-        for name in ('shell_macos.py', 'shell_windows.py', 'bridge.py', 'main.py'):
+        for name in ('shell_linux.py', 'bridge.py', 'main.py'):
             src = (ROOT / 'app' / name).read_text(encoding='utf-8')
             for word in ('open_in_browser', 'open_external', 'startfile', 'NSWorkspace', 'openURL', "'browser'", 'webbrowser', 'Process.Start', 'ShellExecute'):
                 self.assertNotIn(word, src, name)
 
 
 class StreamTests(Both, unittest.TestCase):
-    mode = 'stream'
 
     def chat_count(self):
         return len(STUB['runs'])
 
     def test_cancel_mid_body_stops_the_handler(self):
-        b = B.Bridge(MOD, 'stream', B.ORIGIN_MAC, per_request=4 * MiB)
+        b = B.Bridge(MOD, per_request=4 * MiB)
         r = Rec(auto=False)
         ex = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r)
         self.assertTrue(wait_until(lambda: len(r.parts) == 4))
@@ -871,7 +821,7 @@ class StreamTests(Both, unittest.TestCase):
 
     def test_cancel_while_waiting_on_the_budget(self):
         tiny = {**B.LANES, 'large': (2, 10, 2 * MiB)}
-        b = B.Bridge(MOD, 'stream', B.ORIGIN_MAC, lanes=tiny, per_request=8 * MiB)
+        b = B.Bridge(MOD, lanes=tiny, per_request=8 * MiB)
         r1, r2 = Rec(auto=False), Rec(auto=False)
         e1 = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r1)
         e2 = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r2)
@@ -887,7 +837,7 @@ class StreamTests(Both, unittest.TestCase):
 
     def test_cancel_while_queued_never_runs(self):
         lanes = {**B.LANES, 'large': (1, 10, 64 * MiB)}
-        b = B.Bridge(MOD, 'stream', B.ORIGIN_MAC, lanes=lanes)
+        b = B.Bridge(MOD, lanes=lanes)
         r1, r2 = Rec(auto=False), Rec()
         e1 = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r1)
         self.assertTrue(r1.first.wait(5))
@@ -901,7 +851,7 @@ class StreamTests(Both, unittest.TestCase):
     def test_cap_holds_and_work_resumes(self):
         cap, per = 4 * MiB, 2 * MiB
         lanes = {**B.LANES, 'large': (6, 100, cap)}
-        b = B.Bridge(MOD, 'stream', B.ORIGIN_MAC, lanes=lanes, per_request=per)
+        b = B.Bridge(MOD, lanes=lanes, per_request=per)
         recs = [Rec(auto=False) for _ in range(12)]
         for r in recs:
             b.start('GET', b.origin + '/videos/a.mp4', {'Range': 'bytes=0-3145727'}, None, r)   # 3 MiB each
@@ -930,7 +880,7 @@ class StreamTests(Both, unittest.TestCase):
         self.assertEqual(lane.budget.used, 0)
 
     def test_per_request_limit(self):
-        b = B.Bridge(MOD, 'stream', B.ORIGIN_MAC)
+        b = B.Bridge(MOD)
         r = Rec(auto=False)
         ex = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r)
         self.assertTrue(wait_until(lambda: len(r.parts) == B.PER_REQUEST // MiB))
@@ -939,7 +889,7 @@ class StreamTests(Both, unittest.TestCase):
         ex.cancel()
 
     def test_default_cap_under_flood(self):
-        b = B.Bridge(MOD, 'stream', B.ORIGIN_MAC)
+        b = B.Bridge(MOD)
         recs = [Rec(auto=False) for _ in range(300)]
         exs = [b.start('GET', b.origin + '/videos/huge.mkv', {'Range': f'bytes={i * 1000}-'}, None, r) for i, r in enumerate(recs)]
         lane = b.lanes['large']
@@ -968,7 +918,7 @@ class StreamTests(Both, unittest.TestCase):
 
     def test_queue_full(self):
         lanes = {**B.LANES, 'large': (1, 2, 64 * MiB)}
-        b = B.Bridge(MOD, 'stream', B.ORIGIN_MAC, lanes=lanes)
+        b = B.Bridge(MOD, lanes=lanes)
         recs = [Rec(auto=False) for _ in range(3)]
         exs = [b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r) for r in recs]
         self.assertTrue(recs[0].first.wait(5))
@@ -994,14 +944,20 @@ class StreamTests(Both, unittest.TestCase):
         self.assertEqual(call(self.b, 'POST', '/__bridge/stream/start', {**self.key, 'Content-Type': 'application/octet-stream'}, b'{}').status, 404)
         self.assertEqual(self.get('/__bridge/stream/start').status, 404)
 
-    def test_top_script_no_polling(self):
+    def test_top_script(self):
         s = self.b.top_script()
         self.assertIn(self.b.key, s)
-        self.assertIn('POLL = false', s)
-        out = run_node(s, self.b.origin, self.b.key, 0)
+        out = run_node(s, 'https://lastbook.test', self.b.key)
         self.assertTrue(out['top_patched'])
         self.assertFalse(out['frame_patched'])
         self.assertFalse(out['sandboxed_top_patched'])
+        by = {(c['method'], c['url'].replace('https://lastbook.test', '')): c for c in out['calls']}
+        self.assertEqual(by[('GET', '/api/health')]['key'], self.b.key)       # the top frame's own /api/ reads: see LANES
+        self.assertIsNone(by[('GET', '/ui/app.css')]['key'])
+        self.assertIsNone(by[('GET', 'https://elsewhere.example/y')]['key'])
+        self.assertEqual(by[('POST', '/api/tool/x')]['key'], self.b.key)
+        self.assertEqual(by[('POST', '/api/chat')]['key'], self.b.key)
+        self.assertIsNone(by[('POST', 'https://elsewhere.example/x')]['key'])
 
     def test_real_chat_with_no_model_is_plain(self):
         assistant.model_status, assistant.chat = REAL_STATUS, REAL_CHAT
@@ -1015,312 +971,16 @@ class StreamTests(Both, unittest.TestCase):
         OBSERVED['chat with no model'] = r.body.decode().strip()
 
 
-class BufferTests(Both, unittest.TestCase):
-    mode = 'buffer'
-
-    def chat_count(self):
-        return len(STUB['runs'])
-
-    def poll(self, op, body=b'', b=None):
-        b = b or self.b
-        return call(b, 'POST', '/__bridge/stream' + op, {'X-Lastbook-Key': b.key, 'Content-Type': 'application/octet-stream', 'Origin': b.origin}, body)
-
-    def test_whole_file_is_handed_over_by_name(self):
-        r = self.get('/documents/mid.bin')
-        self.assertEqual(r.status, 200)
-        self.assertTrue(r.path.endswith('mid.bin'))
-        self.assertEqual(self.b.lanes['large'].budget.peak, 0)
-        self.assertEqual(self.b.lanes['large'].budget.used, 0)
-
-    def test_big_ticketed_file_copies_nothing(self):
-        self.b.give_ticket(self.b.origin + '/documents/big.bin')
-        r = self.get('/documents/big.bin', is_document=True)
-        self.assertTrue(r.path.endswith('big.bin'))
-        self.assertEqual(self.b.lanes['large'].budget.peak, 0)
-
-    def test_whole_max(self):
-        b = B.Bridge(MOD, 'buffer', B.ORIGIN_WINDOWS, tmpdir=str(TMP), whole_max=35 * MiB)
-        b.give_ticket(b.origin + '/documents/big.bin')
-        self.assertEqual(call(b, 'GET', '/documents/big.bin', is_document=True).status, 413)
-        self.assertEqual(B.WHOLE_MAX, 256 * MiB)
-        self.assertEqual(self.b.whole_max, 256 * MiB)
-
-    def test_big_generated_body_spills_and_is_cleaned_up(self):
-        before = tmp_files()
-        ev, box = threading.Event(), []
-        self.b.give_ticket(self.b.origin + '/documents/t/nolen?mb=20')
-        self.b.fetch('GET', self.b.origin + '/documents/t/nolen?mb=20', {}, None, lambda r: (box.append(r), ev.set()))
-        self.assertTrue(ev.wait(30))
-        resp = box[0]
-        self.assertTrue(resp.path and resp.delete)
-        self.assertEqual(os.path.getsize(resp.path), 20 * MiB)
-        self.assertEqual(self.b.lanes['large'].budget.used, 0)
-        os.unlink(resp.path)
-        self.assertEqual(tmp_files(), before)
-
-    def test_cancelled_spill_is_removed(self):
-        before = tmp_files()
-        ev = threading.Event()
-        ex = self.b.fetch('GET', self.b.origin + '/documents/t/nolen?mb=30&ms=50', {}, None, lambda r: ev.set())
-        self.assertTrue(wait_until(lambda: tmp_files() != before, 10))
-        ex.cancel()
-        self.assertTrue(wait_until(lambda: tmp_files() == before, 10))
-        self.assertFalse(ev.is_set())
-
-    def test_budget_blocks_and_never_deadlocks(self):
-        cap = 6 * MiB
-        lanes = {**B.LANES, 'large': (6, 100, cap)}
-        b = B.Bridge(MOD, 'buffer', B.ORIGIN_WINDOWS, tmpdir=str(TMP), lanes=lanes)
-        before = tmp_files()
-        results, lock = [], threading.Lock()
-        n = 24
-        ev = threading.Event()
-
-        def done(resp):
-            data = resp.body
-            if resp.path:
-                with open(resp.path, 'rb') as f:
-                    data = f.read()
-                os.unlink(resp.path)
-            time.sleep(0.02)
-            resp.release()
-            with lock:
-                results.append((resp.status, hashlib.sha256(data).digest()))
-                if len(results) == n:
-                    ev.set()
-        for _ in range(n):
-            b.fetch('GET', b.origin + A, {'Range': 'bytes=0-'}, None, done)
-        self.assertTrue(ev.wait(60), b.stats())
-        want = hashlib.sha256(pat(0, 4 * MiB)).digest()
-        self.assertTrue(all(s == 206 and d == want for s, d in results))
-        lane = b.lanes['large']
-        OBSERVED['buffer, 24 pieces through a 6 MiB budget'] = f"peak {lane.budget.peak / MiB:.0f} MiB, {b.counts.get('spilled', 0)} spilled to disk, all bytes right"
-        self.assertLessEqual(lane.budget.peak, cap)
-        self.assertEqual(lane.budget.used, 0)
-        self.assertEqual(tmp_files(), before)
-
-    def test_small_during_large_flood(self):
-        TestHandler.slow_started.clear()
-        ev = threading.Event()
-        count = [0]
-
-        def done(resp):
-            resp.release()
-            count[0] += 1
-            if count[0] == 106:
-                ev.set()
-        for _ in range(106):
-            self.b.fetch('GET', self.b.origin + '/documents/t/slow?ms=400', {}, None, done)
-        lane = self.b.lanes['large']
-        self.assertTrue(wait_until(lambda: lane.active == 6))
-        times = []
-        for _ in range(100):
-            t = time.perf_counter()
-            self.assertEqual(call(self.b, 'GET', '/api/health').status, 200)
-            times.append(time.perf_counter() - t)
-        OBSERVED['buffer, small during large flood (106 slow requests)'] = f'/api/health median {statistics.median(times) * 1000:.2f} ms, max {max(times) * 1000:.2f} ms over 100; large lane active {lane.active}, waiting {len(lane.waiting)}'
-        self.assertLess(max(times), 0.3)
-        self.assertEqual(lane.peak_active, 6)
-        self.assertTrue(ev.wait(30))
-
-    def test_renders_do_not_take_small_workers(self):
-        for _ in range(20):
-            self.b.fetch('GET', self.b.origin + '/api/page/t/1.png?ms=400', {}, None, lambda r: r.release())
-        lane = self.b.lanes['render']
-        self.assertTrue(wait_until(lambda: lane.active == 2))
-        t = time.perf_counter()
-        self.assertEqual(call(self.b, 'GET', '/api/health').status, 200)
-        self.assertLess(time.perf_counter() - t, 0.2)
-        self.assertEqual(lane.peak_active, 2)
-        self.assertEqual(self.b.lanes['small'].active, 0)
-
-    def keyed_health_ms(self):
-        t = time.perf_counter()
-        self.assertEqual(call(self.b, 'GET', '/api/health', headers={B.KEY_HEADER: self.b.key}).status, 200)
-        return (time.perf_counter() - t) * 1000
-
-    def test_slow_api_with_no_key_never_holds_up_the_top_frame(self):
-        """No key: a saved page. It has its own lane, however much of it it fills."""
-        for _ in range(64):
-            self.b.fetch('GET', self.b.origin + '/api/t/slow?ms=1000', {}, None, lambda r: r.release())
-        guest = self.b.lanes['guest']
-        self.assertTrue(wait_until(lambda: guest.active >= 8))
-        self.assertEqual(self.b.lanes['small'].active, 0)
-        ms = self.keyed_health_ms()
-        OBSERVED['/api/health with the key, behind 64 slow requests with none'] = f'{ms:.0f} ms'
-        self.assertLess(ms, 200)
-
-    def test_slow_api_with_the_key_makes_the_lane_grow(self):
-        """The top frame's own slow requests add workers instead of holding up its quick ones."""
-        for i in range(20):
-            self.b.fetch('GET', self.b.origin + '/api/t/slow?ms=3000', {B.KEY_HEADER: self.b.key}, None, lambda r: r.release())
-        small = self.b.lanes['small']
-        self.assertTrue(wait_until(lambda: small.active >= 8))
-        ms = self.keyed_health_ms()
-        OBSERVED['/api/health behind 20 slow requests of 3 s in the same lane'] = f'{ms:.0f} ms'
-        self.assertLess(ms, 500)
-        self.assertLessEqual(small.peak_threads, B.GROW_TO['small'])
-
-    def test_a_wrong_key_is_no_key(self):
-        before = self.b.lanes['guest'].done
-        self.assertEqual(call(self.b, 'GET', '/api/health', headers={B.KEY_HEADER: 'x' * 43}).status, 200)
-        self.assertTrue(wait_until(lambda: self.b.lanes['guest'].done == before + 1))
-
-    def test_added_workers_go_away(self):
-        for i in range(20):
-            self.b.fetch('GET', self.b.origin + '/api/t/slow?ms=100', {}, None, lambda r: r.release())
-        guest = self.b.lanes['guest']
-        self.assertTrue(wait_until(lambda: guest.threads > 8))
-        real = B.SHRINK_AFTER
-        self.assertTrue(wait_until(lambda: guest.threads == 8, real + 3))
-
-    def test_redirect_passes_through(self):
-        r = self.get('/documents/t/redirect')
-        self.assertEqual(r.status, 302)
-        self.assertEqual(r.hs['location'], '/documents/plain.txt?a="<b>')
-
-    # ---- chat by polling
-    def run_poll_to_end(self, sid):
-        got, polls = b'', 0
-        while True:
-            r = self.poll(f'/{sid}/next')
-            polls += 1
-            self.assertEqual(r.status, 200)
-            got += r.body
-            if r.hs.get('x-bridge-end'):
-                return got, polls
-
-    def test_poll_chat(self):
-        STUB.update(pieces=6, delay=0.1)
-        s = self.poll('/start', b'{"messages":[{"role":"user","content":"hi"}]}')
-        self.assertEqual(s.status, 200)
-        self.assertEqual(s.hs['x-bridge-status'], '200')
-        self.assertEqual(dict(json.loads(s.hs['x-bridge-headers']))['Content-Type'], 'text/event-stream')
-        got, polls = self.run_poll_to_end(s.hs['x-bridge-stream'])
-        OBSERVED['poll chat'] = f'{polls} polls'
-        self.assertIn(b'"done"', got)
-        self.assertGreater(polls, 2)
-        self.assertEqual(self.poll(f"/{s.hs['x-bridge-stream']}/next").status, 404)
-
-    def test_poll_cancel_reaches_the_model_side(self):
-        STUB.update(pieces=200, delay=0.05)
-        before = len(STUB['stopped'])
-        s = self.poll('/start', b'{}')
-        sid = s.hs['x-bridge-stream']
-        self.poll(f'/{sid}/next')
-        self.assertEqual(self.poll(f'/{sid}/cancel').status, 200)
-        self.assertTrue(wait_until(lambda: len(STUB['stopped']) > before, 5))
-        self.assertEqual(self.poll(f'/{sid}/next').status, 404)
-
-    def test_poll_refusals(self):
-        before = self.chat_count()
-        oct_ = {'Content-Type': 'application/octet-stream'}
-        self.assertEqual(call(self.b, 'POST', '/__bridge/stream/start', {**oct_, 'Origin': self.b.origin}, b'{}').status, 403)
-        self.assertEqual(call(self.b, 'POST', '/__bridge/stream/start', {**oct_, 'Origin': 'null', 'X-Lastbook-Key': self.b.key}, b'{}').status, 403)
-        self.assertEqual(call(self.b, 'POST', '/__bridge/stream/start', {'Content-Type': 'application/json', 'X-Lastbook-Key': self.b.key}, b'{}').status, 403)
-        self.assertEqual(self.get('/__bridge/stream/start').status, 403)
-        self.assertEqual(self.poll('/' + 'a' * 32 + '/next').status, 404)
-        self.assertEqual(self.poll('/nonsense').status, 404)
-        self.assertEqual(call(self.b, 'POST', '/__bridge/other', {'X-Lastbook-Key': self.b.key, 'Content-Type': 'application/octet-stream'}, b'').status, 404)
-        self.assertEqual(self.chat_count(), before)
-
-    def test_poll_cap_and_idle_reap(self):
-        STUB.update(pieces=2000, delay=0.05)
-        ids = []
-        for _ in range(B.MAX_STREAMS):
-            s = self.poll('/start', b'{}')
-            self.assertEqual(s.status, 200)
-            ids.append(s.hs['x-bridge-stream'])
-        self.assertEqual(self.poll('/start', b'{}').status, 429)
-        before = len(STUB['stopped'])
-        for s in self.b.streams.values():
-            s['seen'] -= B.STREAM_IDLE + 1
-        s = self.poll('/start', b'{}')
-        self.assertEqual(s.status, 200)
-        self.assertTrue(wait_until(lambda: len(STUB['stopped']) >= before + B.MAX_STREAMS, 5))
-        self.poll(f"/{s.hs['x-bridge-stream']}/cancel")
-
-    def test_poll_empty_next_keeps_waiting(self):
-        b = B.Bridge(MOD, 'buffer', B.ORIGIN_WINDOWS, tmpdir=str(TMP), poll_wait=0.05)
-        STUB.update(pieces=2, delay=0.3)
-        s = self.poll('/start', b'{}', b)
-        sid = s.hs['x-bridge-stream']
-        empties = 0
-        while True:
-            r = self.poll(f'/{sid}/next', b=b)
-            empties += not r.body
-            if r.hs.get('x-bridge-end'):
-                break
-        self.assertGreater(empties, 0)
-
-    def test_top_script_polling(self):
-        s = self.b.top_script()
-        self.assertIn('POLL = true', s)
-        out = run_node(s, self.b.origin, self.b.key, 1)
-        self.assertTrue(out['top_patched'])
-        self.assertFalse(out['frame_patched'])
-        self.assertFalse(out['sandboxed_top_patched'])
-        by = {(c['method'], c['url'].replace(self.b.origin, '')): c for c in out['calls']}
-        self.assertEqual(by[('GET', '/api/health')]['key'], self.b.key)       # the top frame's own /api/ reads: see LANES
-        self.assertIsNone(by[('GET', '/ui/app.css')]['key'])
-        self.assertIsNone(by[('GET', 'https://elsewhere.example/y')]['key'])
-        self.assertEqual(by[('POST', '/api/tool/x')]['key'], self.b.key)
-        self.assertIsNone(by[('POST', 'https://elsewhere.example/x')]['key'])
-        self.assertEqual(by[('POST', '/__bridge/stream/start')]['key'], self.b.key)
-        self.assertEqual(out['chat_status'], 200)
-        self.assertIn('data: hi', out['chat_text'])
-        self.assertNotIn(('POST', '/api/chat'), by)
-
-
-def _windows_sockets(pid):
-    """This process's rows in `netstat -ano` (TCP and UDP, listening or connected). netstat ships with Windows."""
-    r = subprocess.run(['netstat', '-ano'], capture_output=True, encoding='oem', errors='replace')   # netstat writes the OEM code page
-    if r.returncode or 'TCP' not in r.stdout:
-        raise RuntimeError(f'netstat gave no usable output: {r.returncode} {r.stderr}')
-    return '\n'.join(line for line in r.stdout.splitlines()
-                     if line.split()[:1] in (['TCP'], ['UDP']) and line.split()[-1] == pid)
-
-
-def _windows_modules():
-    """Every DLL and the exe loaded into this process, as lower-case paths, from EnumProcessModulesEx (psapi)."""
-    import ctypes
-    from ctypes import wintypes
-    psapi, kernel32 = ctypes.WinDLL('psapi'), ctypes.WinDLL('kernel32')
-    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-    psapi.EnumProcessModulesEx.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.HMODULE), wintypes.DWORD,
-                                           ctypes.POINTER(wintypes.DWORD), wintypes.DWORD]
-    psapi.GetModuleFileNameExW.argtypes = [wintypes.HANDLE, wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
-    proc = kernel32.GetCurrentProcess()
-    needed, size = wintypes.DWORD(), 1024
-    while True:   # grow the array until every module fits: a module past the end would be dropped without a word
-        mods = (wintypes.HMODULE * size)()
-        if not psapi.EnumProcessModulesEx(proc, mods, ctypes.sizeof(mods), ctypes.byref(needed), 3):   # 3 = LIST_MODULES_ALL
-            raise ctypes.WinError()
-        if needed.value <= ctypes.sizeof(mods):
-            break
-        size = needed.value // ctypes.sizeof(wintypes.HMODULE)
-    name, paths = ctypes.create_unicode_buffer(1024), []
-    for m in mods[:needed.value // ctypes.sizeof(wintypes.HMODULE)]:
-        if psapi.GetModuleFileNameExW(proc, wintypes.HMODULE(m), name, len(name)):
-            paths.append(name.value)
-    return '\n'.join(paths).lower().replace('\\', '/')
-
-
 class WholeProcess(unittest.TestCase):
     def test_no_listening_socket_and_no_model(self):
         self.assertEqual(LISTENS, [])
         pid = str(os.getpid())
-        lsof = '/usr/sbin/lsof' if os.path.exists('/usr/sbin/lsof') else shutil.which('lsof')   # the system lsof first on a Mac
-        if lsof:
-            out = subprocess.run([lsof, '-nP', '-a', '-p', pid, '-i'], capture_output=True, text=True).stdout
-            files = subprocess.run([lsof, '-nP', '-p', pid], capture_output=True, text=True).stdout.lower()
-            how = 'lsof -i'
-        elif sys.platform == 'win32':
-            # No lsof on Windows. netstat covers the sockets; the loaded-module list covers the model runtime (onnxruntime.dll).
-            # A model file opened as plain data is not checked here; without the runtime loaded, nothing can use it.
-            out, files, how = _windows_sockets(pid), _windows_modules(), 'netstat -ano'
-        else:
-            self.skipTest('no lsof on this system, and not Windows: the process-level socket and file check cannot run here')
+        lsof = shutil.which('lsof')
+        if not lsof:
+            self.skipTest('no lsof on this system: the process-level socket and file check cannot run here')
+        out = subprocess.run([lsof, '-nP', '-a', '-p', pid, '-i'], capture_output=True, text=True).stdout
+        files = subprocess.run([lsof, '-nP', '-p', pid], capture_output=True, text=True).stdout.lower()
+        how = 'lsof -i'
         self.assertIn('python', files, 'the process file/module listing came back empty, so this check proved nothing')
         self.assertEqual(out.strip(), '', out)
         for word in ('onnx', 'bge-small', 'derived/models'):
@@ -1340,18 +1000,19 @@ class WholeProcess(unittest.TestCase):
 
     def test_budgets_add_up(self):
         self.assertEqual(B.TOTAL_INFLIGHT, 128 * MiB)
-        for mode in ('stream', 'buffer'):
-            self.assertGreater(B.VIDEO_PIECE[mode], 2.38e6)
-            self.assertGreaterEqual(B.VIDEO_PIECE[mode], 4 * MiB)
-            self.assertLessEqual(B.VIDEO_PIECE[mode], 8 * MiB)
+        self.assertGreater(B.VIDEO_PIECE, 2.38e6)     # the largest request seen from a player
+        self.assertGreaterEqual(B.VIDEO_PIECE, 4 * MiB)
+        self.assertLessEqual(B.VIDEO_PIECE, 8 * MiB)
 
 
-def run_node(script, origin, key, poll):
-    node = shutil.which('node') or '/Users/you/.local/bin/node'
+def run_node(script, origin, key):
+    node = shutil.which('node')
+    if not node:
+        raise unittest.SkipTest('no node on this system')
     p = DATA / 'tmp-top-script.js'
     p.write_text(script)
     try:
-        r = subprocess.run([node, str(HERE / 'top_script_test.mjs'), str(p), origin, key, str(poll)], capture_output=True, text=True, timeout=30)
+        r = subprocess.run([node, str(HERE / 'top_script_test.mjs'), str(p), origin, key], capture_output=True, text=True, timeout=30)
     finally:
         os.unlink(p)
     if r.returncode:

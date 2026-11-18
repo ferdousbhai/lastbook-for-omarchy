@@ -32,45 +32,6 @@ class Refused(Exception):
         self.code, self.message = code, message
 
 
-def _my_sid():
-    """This account's SID, from Windows' own whoami (a name can fail to map, for example under a service or ssh)."""
-    import subprocess
-    whoami = Path(os.environ.get('SystemRoot') or 'C:\\Windows') / 'System32' / 'whoami.exe'
-    out = subprocess.run([str(whoami), '/user', '/fo', 'csv', '/nh'], capture_output=True, timeout=30, creationflags=0x08000000)
-    m = re.search(r'"(S-1-[0-9-]+)"', out.stdout.decode('utf-8', 'replace'))
-    if not m:
-        raise OSError('no SID for this account')
-    return m.group(1)
-
-
-def private_folder(path):
-    """Makes the folder if it is not there and returns True if this user can save in it. On Windows a folder it makes is closed to
-    other accounts, or not used: a folder at the top of a drive otherwise lets every signed-in user change what is inside. The rights
-    are set with Windows' own icacls to this account, SYSTEM and Administrators, by SID. No admin rights needed."""
-    import subprocess
-    import tempfile
-    p = Path(path)
-    try:
-        made = not p.exists()
-        p.mkdir(parents=True, exist_ok=True)
-        if made and os.name == 'nt':
-            icacls = Path(os.environ.get('SystemRoot') or 'C:\\Windows') / 'System32' / 'icacls.exe'
-            try:
-                r = subprocess.run([str(icacls), str(p), '/inheritance:r', '/grant:r', f'*{_my_sid()}:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F',
-                                    '*S-1-5-32-544:(OI)(CI)F'], capture_output=True, timeout=30, creationflags=0x08000000)
-                closed = r.returncode == 0
-            except (OSError, subprocess.SubprocessError):
-                closed, r = False, None
-            if not closed:
-                print('setup: could not close the folder to other accounts, so it is not used:', r and r.stdout[-300:], flush=True)
-                p.rmdir()
-                return False
-        with tempfile.TemporaryFile(dir=p):
-            return True
-    except (OSError, ValueError):
-        return False
-
-
 def is_library(folder):
     try:
         return (Path(folder) / CATALOG).is_file()
@@ -126,7 +87,7 @@ def check_zip(path, installed_bytes=None, allowed=None):
             parts = _member_parts(info, top_optional=allowed is not None)
             if allowed and not allowed('/'.join(parts[1:]), info.is_dir()):
                 raise Refused('unpack', f'The map holds a file that is not part of a map ({info.filename[:80]!r}).')
-            key = '/'.join(parts).lower()      # two names that differ only in case would overwrite each other on a Mac or Windows
+            key = '/'.join(parts).lower()      # two names that differ only in case would overwrite each other on a case-insensitive disk (a FAT or exFAT drive)
             if key in seen and not info.is_dir():
                 raise Refused('unpack', f'The pack holds the same file twice ({info.filename[:80]!r}).')
             seen.add(key)
@@ -156,9 +117,7 @@ def unpack(zip_path, into, installed_bytes, control, progress, allowed=None, ver
     into = Path(into)
     into.mkdir(parents=True, exist_ok=True)
     plain = into.resolve()
-    # Windows: written through the \\?\ form, which has no 260-character limit. The unpack folder sits deeper than the library
-    # will (LastbookData.setup\unpack\), and with Windows' long paths off (the default) a pack's longest file could not be made.
-    root = Path('\\\\?\\' + str(plain)) if os.name == 'nt' and not str(plain).startswith('\\\\') else plain
+    root = plain
     done = 0
     with zipfile.ZipFile(zip_path) as z:
         for info, parts in members:

@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://lastbook.org/sitemap.xml

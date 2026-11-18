@@ -2,7 +2,7 @@
 
 Run:  python3 app/tests/setup_stub.py [port]      (default 8925)
 Then open http://127.0.0.1:8925/__stub/<scenario> to reset to a scenario, which redirects to the setup page.
-Scenarios (see SCENARIOS): mac, mac-small (AI does not fit), win, found, low-disk, paused (a restart picked up a job),
+Scenarios (see SCENARIOS): asahi (Apple silicon, one memory), small-ram (AI does not fit), nvidia (a graphics card), found, low-disk, paused (a restart picked up a job),
 network, checksum, unpack, activate (each fails once at that step; Retry then goes through), manage, manage-ai, upgraded.
 The page itself never knows it talks to a stub.
 """
@@ -58,34 +58,32 @@ def _hostile():
 
 HOSTILE = _hostile()
 
-MAC = '/Users/you/Library/Application Support/Lastbook/LastbookData'
-WIN = 'C:\\Users\\you\\Documents\\LastbookData'
+HOME = '/home/you/.local/share/Lastbook/LastbookData'
+BIG = '/run/media/you/Big Disk'
 
 
-def hw(os_='macos', ram=32, free=412, fits=True, gpus=None, why=None):
-    root = '/' if os_ == 'macos' else 'C:\\'
-    disks = [{'path': root, 'name': 'Macintosh HD' if os_ == 'macos' else 'Local Disk (C:)', 'free_bytes': int(free * GB), 'total_bytes': int(994 * GB)}]
-    if os_ == 'windows':
-        disks.append({'path': 'D:\\', 'name': 'Data (D:)', 'free_bytes': int(1800 * GB), 'total_bytes': int(2000 * GB)})
-    return {'os': os_, 'arch': 'arm64' if os_ == 'macos' else 'x64', 'ram_bytes': ram * GiB, 'unified_memory': os_ == 'macos',
-            'gpus': gpus or [], 'disks': disks,
+def hw(unified=True, ram=32, free=412, fits=True, gpus=None, why=None):
+    disks = [{'path': '/home/you/.local/share/Lastbook', 'name': None, 'free_bytes': int(free * GB), 'total_bytes': int(994 * GB)}]
+    gpus = gpus if gpus is not None else ([{'name': 'Apple MacBook Pro (14-inch, M1 Pro, 2021)', 'vram_bytes': 0}] if unified else [])
+    return {'os': 'linux', 'arch': 'arm64' if unified else 'x64', 'ram_bytes': ram * GiB, 'unified_memory': unified,
+            'gpus': gpus, 'disks': disks, 'ai_runtime': 'vulkan',
             'ai': {'fits': fits, 'needs_bytes': 19027384256 + int(2.5 * GiB), 'estimate': True,
                    'why': why or ('This computer has enough memory for the local AI.' if fits else
                                   f'The local AI needs about 20 GB of memory, and this computer has {ram} GB.')}}
 
 
 SCENARIOS = {
-    'mac': dict(hardware=hw(), recommend={'pack': 'medium', 'ai': True, 'why': 'There is plenty of room and memory, so Medium with the local AI fits well.'}),
-    'mac-small': dict(hardware=hw(ram=16, free=120, fits=False), recommend={'pack': 'medium', 'ai': False, 'why': 'Medium fits on this disk; the local AI needs more memory than this Mac has.'}),
-    'win': dict(hardware=hw('windows', ram=32, free=300, gpus=[{'name': 'NVIDIA GeForce RTX 4070', 'vram_bytes': 12 * GiB}]),
+    'asahi': dict(hardware=hw(), recommend={'pack': 'medium', 'ai': True, 'why': 'There is plenty of room and memory, so Medium with the local AI fits well.'}),
+    'small-ram': dict(hardware=hw(ram=16, free=120, fits=False), recommend={'pack': 'medium', 'ai': False, 'why': 'Medium fits on this disk; the local AI needs more memory than this computer has.'}),
+    'nvidia': dict(hardware=hw(False, ram=32, free=300, gpus=[{'name': 'NVIDIA GeForce RTX 4070', 'vram_bytes': 12 * GiB}]),
                 recommend={'pack': 'medium', 'ai': True, 'why': 'The graphics card and memory are enough for the local AI, and Medium fits on this disk.'}),
     'found': dict(hardware=hw(), recommend={'pack': 'small', 'ai': True, 'why': 'You already downloaded Small, so it can be used straight away.'},
-                  found=[{'path': '/Users/you/Downloads/Lastbook-Small.zip', 'kind': 'pack', 'id': 'small', 'name': 'Lastbook-Small.zip', 'size': 8236931672, 'size_ok': True},
-                         {'path': '/Users/you/Downloads/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf', 'kind': 'model', 'id': 'gemma-4-26b-a4b', 'name': 'gemma-4-26B-A4B-it-UD-Q4_K_M.gguf', 'size': 16947541728, 'size_ok': True}]),
+                  found=[{'path': '/home/you/Downloads/Lastbook-Small.zip', 'kind': 'pack', 'id': 'small', 'name': 'Lastbook-Small.zip', 'size': 8236931672, 'size_ok': True},
+                         {'path': '/home/you/Downloads/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf', 'kind': 'model', 'id': 'gemma-4-26b-a4b', 'name': 'gemma-4-26B-A4B-it-UD-Q4_K_M.gguf', 'size': 16947541728, 'size_ok': True}]),
     'found-bad': dict(hardware=hw(), recommend={'pack': 'small', 'ai': False, 'why': 'You already downloaded Small.'}, fault=('verifying', 'found_mismatch'),
-                      found=[{'path': '/Users/you/Downloads/Lastbook-Small.zip', 'kind': 'pack', 'id': 'small', 'name': 'Lastbook-Small.zip', 'size': 8236931672, 'size_ok': True}]),
+                      found=[{'path': '/home/you/Downloads/Lastbook-Small.zip', 'kind': 'pack', 'id': 'small', 'name': 'Lastbook-Small.zip', 'size': 8236931672, 'size_ok': True}]),
     'paused-found': dict(hardware=hw(), recommend={'pack': 'small', 'ai': False, 'why': ''},   # killed while unpacking the person's own zip
-                         found=[{'path': '/Users/you/Downloads/Lastbook-Small.zip', 'kind': 'pack', 'id': 'small', 'name': 'Lastbook-Small.zip', 'size': 8236931672, 'size_ok': True}],
+                         found=[{'path': '/home/you/Downloads/Lastbook-Small.zip', 'kind': 'pack', 'id': 'small', 'name': 'Lastbook-Small.zip', 'size': 8236931672, 'size_ok': True}],
                          job={'pack': 'small', 'ai': False, 'state': 'paused', 'done0': 0, 'source': 'found', 'paused_from': 'unpacking'}),
     'low-disk': dict(hardware=hw(free=30), recommend={'pack': 'small', 'ai': False, 'why': 'This disk has 30 GB free, so only Small fits.'}),
     'paused': dict(hardware=hw(), recommend={'pack': 'medium', 'ai': True, 'why': ''}, job={'pack': 'medium', 'ai': True, 'state': 'paused', 'done0': 0.37}),
@@ -93,19 +91,19 @@ SCENARIOS = {
     'checksum': dict(hardware=hw(), recommend={'pack': 'small', 'ai': False, 'why': 'Small fits.'}, fault=('verifying', 'checksum')),
     'unpack': dict(hardware=hw(), recommend={'pack': 'small', 'ai': False, 'why': 'Small fits.'}, fault=('unpacking', 'unpack')),
     'activate': dict(hardware=hw(), recommend={'pack': 'small', 'ai': False, 'why': 'Small fits.'}, fault=('activating', 'activate')),
-    'manage': dict(mode='manage', hardware=hw(), current={'folder': MAC, 'pack': 'small', 'model': None, 'map': 'base'},
+    'manage': dict(mode='manage', hardware=hw(), current={'folder': HOME, 'pack': 'small', 'model': None, 'map': 'base'},
                    recommend={'pack': 'medium', 'ai': True, 'why': 'There is room for Medium and memory for the local AI.'}),
-    'manage-ai': dict(mode='manage', hardware=hw('windows', ram=32, free=300, gpus=[{'name': 'NVIDIA GeForce RTX 4070', 'vram_bytes': 12 * GiB}]),
-                      current={'folder': WIN, 'pack': 'medium', 'model': 'gemma-4-26b-a4b', 'map': 'CA'},
+    'manage-ai': dict(mode='manage', hardware=hw(False, ram=32, free=300, gpus=[{'name': 'NVIDIA GeForce RTX 4070', 'vram_bytes': 12 * GiB}]),
+                      current={'folder': HOME, 'pack': 'medium', 'model': 'gemma-4-26b-a4b', 'map': 'CA'},
                       recommend={'pack': 'medium', 'ai': True, 'why': 'You have Medium and the local AI.'}),
     # every string the engine or a fetched manifest hands the page carries markup; nothing may come out live (security audit C)
     'hostile': dict(hardware={**hw(gpus=[{'name': X, 'vram_bytes': 8 * GiB}], why=X), 'unified_memory': False},
                     recommend={'pack': 'small', 'ai': True, 'why': X}, manifest='hostile',
-                    found=[{'path': '/Users/you/Downloads/' + X + '.zip', 'kind': 'pack', 'id': 'small', 'name': X, 'size': X, 'size_ok': True},
-                           {'path': '/Users/you/' + X, 'kind': 'library', 'name': X, 'size': 5, 'rejected': True}],
+                    found=[{'path': '/home/you/Downloads/' + X + '.zip', 'kind': 'pack', 'id': 'small', 'name': X, 'size': X, 'size_ok': True},
+                           {'path': '/home/you/' + X, 'kind': 'library', 'name': X, 'size': 5, 'rejected': True}],
                     fault=('downloading', 'hostile')),
-    'upgraded': dict(mode='manage', hardware=hw(), current={'folder': MAC, 'pack': 'medium', 'model': None,
-                     'old': [MAC + '.old-2026-11-12']},
+    'upgraded': dict(mode='manage', hardware=hw(), current={'folder': HOME, 'pack': 'medium', 'model': None,
+                     'old': [HOME + '.old-2026-11-12']},
                      recommend={'pack': 'medium', 'ai': True, 'why': ''}),
 }
 
@@ -125,7 +123,7 @@ class Stub:
         self.job = None
         self.fault = s.get('fault')
         self.found = s.get('found', [])
-        self.folder = (self.current or {}).get('folder') or (WIN if s['hardware']['os'] == 'windows' else MAC)
+        self.folder = (self.current or {}).get('folder') or HOME
         if 'job' in s:
             j = s['job']
             self._make(j['pack'], j['ai'])
@@ -309,7 +307,7 @@ class Stub:
         return j
 
 
-STUB = Stub('mac')
+STUB = Stub('asahi')
 
 
 class H(BaseHTTPRequestHandler):
@@ -377,10 +375,8 @@ class H(BaseHTTPRequestHandler):
         if a == 'pick':      # the real engine: {path} or {path: null}; free_bytes and disk asked for in the contract
             if body.get('library'):
                 return self.send(200, {'path': None, 'cancelled': True})
-            other = 'D:\\LastbookData' if STUB.s['hardware']['os'] == 'windows' else '/Volumes/Big Disk/LastbookData'
-            if STUB.s['hardware']['os'] == 'macos':
-                STUB.s['hardware']['disks'].append({'path': '/Volumes/Big Disk', 'name': 'Big Disk', 'free_bytes': 1800 * GB, 'total_bytes': 2000 * GB})
-            return self.send(200, {'path': other, 'free_bytes': 1800 * GB, 'disk': 'Data (D:)' if STUB.s['hardware']['os'] == 'windows' else 'Big Disk'})
+            STUB.s['hardware']['disks'].append({'path': BIG, 'name': None, 'free_bytes': 1800 * GB, 'total_bytes': 2000 * GB})
+            return self.send(200, {'path': BIG + '/LastbookData', 'free_bytes': 1800 * GB, 'disk': None})
         if a == 'remove-ai':
             if STUB.current:
                 STUB.current['model'] = None
@@ -408,5 +404,5 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8925
-    print(f'setup stub on http://127.0.0.1:{port}/__stub/mac')
+    print(f'setup stub on http://127.0.0.1:{port}/__stub/asahi')
     ThreadingHTTPServer(('127.0.0.1', port), H).serve_forever()

@@ -1,5 +1,5 @@
 """Reads and drives a running Lastbook window on Linux through AT-SPI, from outside. Never packaged.
-The Linux twin of mac_ax.py + mac_ask_check.py. Run it inside the test bench (linux_env.sh run python3 linux_at.py ...).
+Run it inside the test bench (linux_env.sh run python3 linux_at.py ...).
 
   linux_at.py APP read                     the window's text, one node a line
   linux_at.py APP press "words"            press the first link or button holding these words

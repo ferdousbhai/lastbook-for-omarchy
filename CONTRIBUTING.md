@@ -5,21 +5,21 @@ stays correct, and never sends anything anywhere.
 
 ## Set up
 
-1. Clone the repository and make a virtual environment with Python 3.11 or later.
-2. Install the requirements for your platform: `packaging/requirements_macos.txt` (Mac) or
-   `packaging/requirements_app.txt` (Windows).
+1. Clone the repository on Omarchy and make a virtual environment with Python 3.11 or later, with
+   `--system-site-packages` so the system's PyGObject, GTK and WebKitGTK are found.
+2. Install `packaging/requirements.txt`.
 3. Get a data folder: run `python app/main.py` and let setup download the Small pack, or unzip a pack from lastbook.org.
    Point the app at it with `--data` or `LASTBOOK_DATA`.
 
-The README explains the layout and how to build the apps.
+The README explains the layout.
 
 ## Test
 
 ```bash
-python3 -B -m unittest app.tests.test_bridge app.tests.test_setup app.tests.test_data_folder app.tests.test_what_ships app.tests.test_update app.tests.test_address_search app.tests.test_topic_search app.tests.test_validate_topics app.tests.test_libq app.tests.test_shell_macos
+python3 -B -m unittest app.tests.test_bridge app.tests.test_setup app.tests.test_data_folder app.tests.test_what_ships app.tests.test_address_search app.tests.test_topic_search app.tests.test_validate_topics app.tests.test_libq
 ```
 
-Run these before you open a pull request (`test_topic_search` needs Node and is skipped without it; `test_shell_macos` needs a Mac with PyObjC and is skipped elsewhere). If you change the packaging, also run the build for your platform: it ends
+Run these before you open a pull request (`test_topic_search` needs Node and is skipped without it). If you change the packaging, also run the build: it ends
 with a package scan, and that scan must pass. If you change a guide in `content/`, run `tools/validate_topics.py`
 against a library, so every id, page and encyclopedia path it cites still exists:
 
@@ -32,12 +32,11 @@ the page you mean to cite: `python3 tools/libq.py --data /path/to/LastbookData s
 
 ## Rules that keep Lastbook what it is
 
-**No network.** The app opens no port and makes no connection, with two exceptions, both started by the person and both
-through `engine/setup/download.py` to the hosts in `ALLOWED_HOSTS` only: setup's downloads, and the Check for updates
-button (`engine/update.py`, `downloads.lastbook.org` only).
+**No network.** The app opens no port and makes no connection, with one exception, started by the person and made
+through `engine/setup/download.py` to the hosts in `ALLOWED_HOSTS` only: setup's downloads. Updates to the app itself come
+from pacman, never from the app.
 
-- No telemetry, analytics, crash reporting, fonts or scripts from the web, or "phone home" of any kind. The one update check
-  (`engine/update.py`) runs only when the person presses its button, and only says whether a newer version exists.
+- No telemetry, analytics, crash reporting, fonts or scripts from the web, update checks, or "phone home" of any kind.
 - Our own pages (`web/`) contain no web address. The build fails if they do.
 - A new dependency must work fully offline, and must not open a socket or start a server. Say in the pull request what
   it is, its licence, and why it is needed, and add it to `THIRD_PARTY_NOTICES.md`.
@@ -48,7 +47,7 @@ nothing shared may name a real person's home, street, coordinates, machines or a
 
 - Write guides for any reader in any place. Name a region only when the source is about that region.
 - Never commit `web/home-area.json`, a private word list, real coordinates of a home, user or machine names, LAN
-  addresses, keys or tokens. Test paths use placeholders such as `/path/to/lastbook` and `C:\Users\you\app-test`.
+  addresses, keys or tokens. Test paths use placeholders such as `/path/to/lastbook`.
 - To keep your own words out of a build, put them in a local copy of `packaging/ship_edits.json` (`forbidden`) and do not
   commit it.
 
@@ -61,7 +60,7 @@ language.
 ## Pull requests
 
 - Keep each change small and about one thing, and say what you checked and how.
-- Screenshots help for any change you can see, in light and dark mode, on Mac and on Windows if you can.
+- Screenshots help for any change you can see, in light and dark mode.
 - Be ready to explain anything that touches setup, the bridge, the scans or the downloader. These keep people's libraries
   safe and their computers private.
 

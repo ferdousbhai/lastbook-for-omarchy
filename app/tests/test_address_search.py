@@ -1,11 +1,13 @@
 """Offline address lookup must preserve house numbers and geographic qualifiers."""
 import sqlite3
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from engine.address_search import find_addresses, is_address_query, normalize
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from engine.address_search import find_addresses, is_address_query, normalize  # noqa: E402
 
 
 class AddressSearchTests(unittest.TestCase):

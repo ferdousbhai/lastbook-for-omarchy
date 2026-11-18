@@ -5,7 +5,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fileUrl = p => '/' + String(p || '').split('/').map(encodeURIComponent).join('/');
 const main = $('#main');
-const IN_WINDOW = location.protocol === 'lastbook:' || location.hostname === 'lastbook.invalid';   // the desktop app, not a browser over the server
+const IN_WINDOW = location.protocol === 'lastbook:';   // the desktop app, not a browser over the server
 
 /* ---------------------------------------------------------------- icons -- */
 const I = {
@@ -268,7 +268,7 @@ async function route() {
   const nav = v === 'read' && (q.get('from') || '').startsWith('#/about') ? 'about' : NAV_OF[v] || '';   // Sources, opened from About, stays under About
   $$('[data-nav]').forEach(a => nav && (a.dataset.nav === nav || (a.dataset.also || '').split(' ').includes(nav)) ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   const rows = $$('.side a.row-s'); rows.forEach(a => a.tabIndex = a.hasAttribute('aria-current') || (!nav && a === rows[0]) ? 0 : -1);   // the sidebar is one Tab stop; arrows move inside it
-  savedCount(); railTitles();
+  savedCount();
   html.classList.remove('side-open', 'h1-gone'); h1seen.disconnect();
   $('#tbActs').replaceChildren(); $('#tbTitle').textContent = $('#tbSub').textContent = ''; $('#tbTitle').title = $('#tbSub').title = ''; searchLive = null; main.classList.remove('own-title');
   if (leaving) { try { leaving() } catch { } leaving = null }
@@ -297,10 +297,9 @@ async function route() {
   wireRails(); dock(); barState();
   $('#topQ').value = '';
   const big = $('main h1'); if (big) h1seen.observe(big);
-  if (v === 'ask') { bandState(); return }  // the chat manages its own scroll position
+  if (v === 'ask') return;  // the chat manages its own scroll position
   if (y != null && v !== 'wiki') restoreScroll(h, y); else if (v !== 'wiki') requestAnimationFrame(() => { if (!$('.sit.open', main)) scrollTo(0, 0) });
   if (y == null) startHere(cameFromSide);
-  bandState(); alignTitle();
 }
 // Back, Forward or a reload return to the place the page was left. A page still filling in (pictures, results) may not be tall enough yet,
 // so this tries again each frame for a moment (at most 2.5 s), and stops as soon as the person scrolls or the page changes.
@@ -318,76 +317,45 @@ function restoreScroll(h, y, w = window) {
   };
   requestAnimationFrame(tick);
 }
-// On Windows the toolbar's title starts where the page's column does, as in Fluent's reading apps. On the Mac it follows Back and Forward.
-function alignTitle() {
-  const t = $('.tb-title'); if (!t || MAC) return;
-  t.style.marginLeft = '';
-  if (!t.offsetWidth) return;
-  const d = main.getBoundingClientRect().left + parseFloat(getComputedStyle(main).paddingLeft) - t.getBoundingClientRect().left;
-  if (d > 0 && d < 240) t.style.marginLeft = parseFloat(getComputedStyle(t).marginLeft) + d + 'px';
-}
-addEventListener('resize', alignTitle);
 // After a new page: a person moving through the sidebar stays there, as in Finder or Settings, and Tab goes on to the toolbar and the page.
 // Otherwise the next Tab starts at the top of the window (skip link, sidebar, toolbar, page), as after a full load. The marker it starts from
 // is not a control; it carries the page's name, which a screen reader reads when focus lands on it.
 function startHere(fromSide) {
-  if (fromSide && !(MAC && !wide.matches) && document.activeElement && document.activeElement.closest('.side,.tabbar')) return;
+  if (fromSide && wide.matches && document.activeElement && document.activeElement.closest('.side,.tabbar')) return;
   const t = $('#pageTop'), h1 = $('h1', main);
   t.textContent = (h1 && h1.textContent.trim()) || document.title;
   t.focus({ preventScroll: true });
 }
 window.addEventListener('hashchange', route);
-let searchLive = null;   // on the search page, where the pane's field is the page's own (Windows), typing there updates the results
+let searchLive = null;   // on the search page, typing in the toolbar's field updates the results
 $('#topSearch').addEventListener('submit', e => { e.preventDefault(); if (searchLive) { searchLive($('#topQ').value.trim(), true); $('#topQ').blur(); return } location.hash = '#/search?q=' + encodeURIComponent($('#topQ').value.trim()) });
 $('#topQ').addEventListener('input', () => { if (searchLive) searchLive($('#topQ').value.trim(), false, true) });
 
 /* --------------------------------------------------------- the window -- */
-const html = document.documentElement, MAC = html.classList.contains('plat-mac');
+const html = document.documentElement;
 const wide = matchMedia('(min-width:900px)');
 // The toolbar names the page once its large title has scrolled up under the toolbar.
-const h1seen = new IntersectionObserver(es => html.classList.toggle('h1-gone', !es[es.length - 1].isIntersecting), { rootMargin: `-${(parseInt(getComputedStyle(html).getPropertyValue('--top-h')) || 52) + (parseInt(getComputedStyle(html).getPropertyValue('--cap-h')) || 0)}px 0px 0px 0px` });
-// Windows' folded pane shows icons only: each row then carries its name as a tooltip, which is also its name for a screen reader.
-function railTitles() { const icons = html.classList.contains('compact') && !html.classList.contains('side-open'); $$('.side a.row-s').forEach(a => icons ? a.title = $('span', a).textContent : a.removeAttribute('title')) }
-addEventListener('resize', railTitles);
-// The toolbar's field says only 'Search' when it is too narrow for the whole hint, as Windows' and the Mac's own narrow fields do
+const h1seen = new IntersectionObserver(es => html.classList.toggle('h1-gone', !es[es.length - 1].isIntersecting), { rootMargin: `-${(parseInt(getComputedStyle(html).getPropertyValue('--top-h')) || 52)}px 0px 0px 0px` });
+// The toolbar's field says only 'Search' when it is too narrow for the whole hint, as the system's own narrow fields do
 new ResizeObserver(() => { const q = $('#topQ'); if (q.clientWidth) q.placeholder = q.clientWidth < 175 ? 'Search' : 'Search the library' }).observe($('#topQ'));
 // At 900 and wider a page's .dock controls (view switch, Save, Ask) sit in the toolbar; narrower they stay in the page.
-const docks = () => wide.matches || (!MAC && innerWidth >= 640);
+const docks = () => wide.matches;
 function dock() {
   if (docks()) $$('.dock', main).forEach(el => { const mark = document.createElement('i'); mark.className = 'dock-home'; mark.hidden = true; el.before(mark); $('#tbActs').append(el) });
   else $$('#tbActs .dock').forEach(el => { const mark = $('.dock-home', main); if (mark) mark.replaceWith(el); else el.remove() });
 }
-wide.addEventListener('change', () => { html.classList.remove('side-open'); dock(); railTitles(); bandState() });
-matchMedia('(min-width:640px)').addEventListener('change', () => { dock(); bandState() });   // an overlay sidebar left open does not come back open later
+wide.addEventListener('change', () => { html.classList.remove('side-open'); dock() });   // an overlay sidebar left open does not come back open later
+matchMedia('(min-width:640px)').addEventListener('change', () => dock());
 const pageBack = () => $('main a[data-back]');
 function barState() { $('#tbBack').disabled = navAt < 1 && !pageBack(); $('#tbFwd').disabled = navAt >= navEnd }
-function bandState() {
-  if (MAC) return;
-  const s = $('#topSearch'), searchInBand = html.classList.contains('compact') && getComputedStyle(s).visibility !== 'hidden' && getComputedStyle(s).display !== 'none';
-  const was = html.classList.contains('no-bar'), now = !$('#tbActs').children.length && !searchInBand;
-  html.classList.toggle('no-bar', now);
-  if (was !== now && window.onresize) window.onresize();   // a page that measures itself (the map) measures again
-}
-addEventListener('resize', () => requestAnimationFrame(bandState));
 $('#tbBack').onclick = () => { const a = pageBack(); if (navAt > 0) history.back(); else if (a) location.hash = a.getAttribute('href') };
 $('#tbFwd').onclick = () => history.forward();
 function toggleSide() {
-  if (wide.matches) { html.classList.toggle('side-off'); try { localStorage.setItem('sg.side-off', html.classList.contains('side-off') ? '1' : '0') } catch { } window.LB_LAYOUT() }
+  if (wide.matches) { html.classList.toggle('side-off'); try { localStorage.setItem('sg.side-off', html.classList.contains('side-off') ? '1' : '0') } catch { } }
   else html.classList.toggle('side-open');
-  railTitles(); bandState();
 }
 $('#sideBtn').onclick = toggleSide;
-if (!MAC) {
-  $('#sideBtn').before($('#tbBack'));   // drawn first, top left, so reached first
-  // the full pane holds its search field above the rows; the folded rail has it in the command bar
-  const placeSearch = () => {
-    const f = $('#topSearch'), side = $('#side'), inPane = innerWidth >= 640 && !html.classList.contains('compact');
-    if (inPane && f.parentElement !== side) $('.side-nav', side).before(f);
-    else if (!inPane && f.parentElement === side) $('.top-in').append(f);
-  };
-  placeSearch(); new MutationObserver(placeSearch).observe(html, { attributes: true, attributeFilter: ['class'] }); addEventListener('resize', placeSearch);
-}
-document.addEventListener('click', e => { if (html.classList.contains('side-open') && !e.target.closest('.side,#sideBtn')) { html.classList.remove('side-open'); railTitles() } });
+document.addEventListener('click', e => { if (html.classList.contains('side-open') && !e.target.closest('.side,#sideBtn')) html.classList.remove('side-open') });
 function toggleInsp() { html.classList.toggle('insp-off'); const d = $('.about-src', main); if (d && !html.classList.contains('insp-off')) d.open = true; store.set('insp-off', html.classList.contains('insp-off')) }
 if (store.get('insp-off', true)) html.classList.add('insp-off');   // off until asked for: the page keeps the width
 document.addEventListener('click', e => { if (e.target.closest('[data-insp]')) toggleInsp() });
@@ -400,15 +368,15 @@ $('#side').addEventListener('keydown', e => {
 const SECTIONS = ['#/videos', '#/map', '#/ask'];
 const findBox = () => [$('#bigQ'), $('#searchQ'), $('#topQ')].find(x => x && x.offsetParent) || $('#chatIn');
 document.addEventListener('keydown', e => {
-  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName), cmd = MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName), cmd = e.metaKey && !e.ctrlKey;
   const is = c => e.code === 'Key' + c || (!e.code && (e.key || '').toUpperCase() === c);   // some input (assistive and remote tools) sends no key code
   if (e.key === '/' && !typing) { e.preventDefault(); findBox().focus() }
   else if (cmd && !e.altKey && !e.shiftKey && /^[1-3]$/.test(e.key)) { e.preventDefault(); location.hash = SECTIONS[e.key - 1] }
-  else if (cmd && !e.altKey && !e.shiftKey && (is('F') || (!MAC && is('E')))) { e.preventDefault(); const f = findBox(); f.focus(); if (f.select) f.select() }
-  else if (MAC && e.metaKey && e.ctrlKey && is('S')) { e.preventDefault(); toggleSide() }   // Windows apps have no key for this: the ☰ button
-  else if (MAC ? e.metaKey && e.altKey && is('I') : e.ctrlKey && e.shiftKey && is('I')) { e.preventDefault(); if ($('.about-src', main)) toggleInsp() }
+  else if (cmd && !e.altKey && !e.shiftKey && is('F')) { e.preventDefault(); const f = findBox(); f.focus(); if (f.select) f.select() }
+  else if (e.metaKey && e.ctrlKey && is('S')) { e.preventDefault(); toggleSide() }
+  else if (e.metaKey && e.altKey && is('I')) { e.preventDefault(); if ($('.about-src', main)) toggleInsp() }
   else if (e.key === 'Escape') {
-    if (html.classList.contains('side-open')) { html.classList.remove('side-open'); railTitles() }
+    if (html.classList.contains('side-open')) html.classList.remove('side-open');
     else if (document.activeElement === $('#topQ')) { $('#topQ').value = ''; $('#topQ').blur() }
   }
 });
@@ -903,7 +871,7 @@ async function searchPage(q, kind) {
     askOffer(nq); results(nq, kind);
   }
   searchLive = (nq, commit, typing) => { clearTimeout(tmr); if (typing) tmr = setTimeout(() => go(nq, false), 350); else go(nq, commit) };
-  setTimeout(() => { $('#topQ').value = q }, 0);   // after the router clears it: on Windows the pane's field is this page's field
+  setTimeout(() => { $('#topQ').value = q }, 0);   // after the router clears it
   askOffer(q); results(q, kind);
   if (!q) setTimeout(() => findBox().focus(), 50);
 }
@@ -1078,9 +1046,8 @@ async function about() {
   <div class="cards2" style="margin-top:16px">
    <div class="card"><b>What’s in it</b><small>${(s.pdfs || 0).toLocaleString()} PDF manuals (${(s.pdf_pages || 0).toLocaleString()} pages), ${(s.web_pages || 0).toLocaleString()} saved web pages, ${(s.videos || 0).toLocaleString()} downloaded videos and ${s.collections || 0} complete encyclopedias.</small></div>
    ${ch ? `<div class="card"><b>Still arriving</b><small>${ch.pending.toLocaleString()} more videos are queued and ${ch.downloading} downloading. Queued videos are not in the library yet — they appear only once downloaded.</small></div>` : ''}
-   <div class="card"><b>Assistant</b><small>${localAbout(st) || (st.online ? `Local model ${esc(st.model)} — available.` : 'No local model is running, so Chat can’t write answers right now. Guides, search, videos and the map all work without one.')} ${ix.chunks ? `Meaning-based index: ${ix.chunks.toLocaleString()} passages from ${ix.docs.toLocaleString()} documents${ix.pending ? `, ${ix.pending.toLocaleString()} still to index` : ''}.` : ''}</small></div>
+   <div class="card"><b>Assistant</b><small>${localAbout(st) || (st.online ? `Local model ${esc(st.model)} — available.` : 'No local model is running, so Chat can’t write answers right now. Guides, search, videos and the map all work without one.')} ${ix.state === 'waiting for Recall' ? 'Meaning-based search is off: it uses Recall for Omarchy, which isn’t running. Search by words works.' : ix.chunks ? `Meaning-based index (through Recall for Omarchy): ${ix.chunks.toLocaleString()} passages from ${ix.docs.toLocaleString()} documents${ix.pending ? `, ${ix.pending.toLocaleString()} still to index` : ''}.` : ''}</small></div>
    <div class="card"><b>What the assistant can’t see</b><small>${blind(st.coverage)}It also can’t see pictures in videos or raw map data. It reads text${st.vision === false ? '' : ' (and page images when it asks to)'} and says when it finds nothing.${st.coverage && st.coverage.remote_videos ? ` ${st.coverage.remote_videos} videos are stored on a remote drive and play only when that computer is reachable.` : ''}</small></div>
-   ${IN_WINDOW && window.LBUpdate ? LBUpdate.card() : ''}
   </div>
   <h2>How sources are labelled</h2><ul>
    <li><b>International health &amp; humanitarian guidance</b> — WHO, Red Cross / Red Crescent, MSF, UNICEF, Sphere, St John Ambulance.</li>
@@ -1097,7 +1064,6 @@ async function about() {
   ${s.sources ? `<h2>Sources and credits</h2><p><a href="#/read/${encodeURIComponent(s.sources)}?${fromQ()}">Sources and permissions</a>: every publisher in this library, where it came from, and how to ask for something to be removed.</p>` : ''}
   ${IN_WINDOW ? '' : '<h2>Using it on a phone</h2><p>Phones on the same Wi-Fi (no internet needed) can use the guide when this computer starts it with <code>server.py --lan</code>. Phones need the access link shown in the terminal the first time.</p>'}
   ${oldServer ? '<h2>Other ways in</h2><p><a href="/reports/gap-closure-status.html" target="_blank">Gap closure report</a> · <a href="/reports/learning-pathways.html" target="_blank">Learning pathways report</a> · <a href="/reports/survival-tools-cart.html" target="_blank">Supplies planning</a></p>' : ''}`;
-  if (IN_WINDOW && window.LBUpdate) LBUpdate.mount(main);   // Check for updates (web/update.js): only when the person asks
 }
 
 route();
