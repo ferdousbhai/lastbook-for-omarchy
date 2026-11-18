@@ -204,5 +204,39 @@ class Articles(unittest.TestCase):
         self.assertIsNone(encyclopedia.Encyclopedias.split_id('med-123'))
 
 
+class Warm(unittest.TestCase):
+    """llm_local.Local.warm: starts the model ahead of a question and reads the shared prefix, at most once at a time."""
+
+    def local(self, state='stopped', fits=True):
+        import llm_local
+        L = llm_local.Local.__new__(llm_local.Local)
+        L.lock, L.gen_lock, L.warming = threading.RLock(), threading.Lock(), False
+        L.state, L.path, L.fit = state, Path('/m.gguf'), {'fits': fits}
+        L.started, L.read = threading.Event(), []
+        L.ensure_running = lambda *a, **k: (L.started.wait(5), None)[1]
+        L.generate = lambda segs, n, *a: L.read.append((segs, n))
+        return L
+
+    def test_not_set_up(self):
+        for state, fits in (('absent', True), ('too_big', False), ('loading', True), ('stopped', False)):
+            self.assertFalse(self.local(state, fits).warm([['x', False]]))
+
+    def test_once_then_reads_prefix(self):
+        L = self.local()
+        self.assertTrue(L.warm([['<|turn>system\n', True], ['rules', False]]))
+        self.assertFalse(L.warm([['x', False]]), 'a second warm while the first runs does nothing')
+        L.started.set()
+        for _ in range(100):
+            if not L.warming:
+                break
+            threading.Event().wait(0.02)
+        self.assertEqual(L.read, [([['<|turn>system\n', True], ['rules', False]], 1)])
+        self.assertFalse(L.warming)
+
+    def test_ubatch_by_memory(self):
+        import llm_local
+        self.assertIn(llm_local.ubatch(), (512, 1024, 2048))
+
+
 if __name__ == '__main__':
     unittest.main()

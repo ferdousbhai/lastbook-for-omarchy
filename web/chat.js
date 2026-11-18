@@ -89,6 +89,8 @@ const Chat = (() => {
     leaving = () => { document.removeEventListener('keydown', escStop) };
     document.addEventListener('keydown', escStop);
     statusLine();
+    // Chat is open: the local AI starts loading now, so the first question doesn't wait for it (it stops again when unused)
+    fetch('/api/assistant/local', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"action":"warm"}' }).then(statusLine, () => { });
     const initial = q.get('q');
     if (initial && !cur) { history.replaceState(null, '', '#/ask'); send(initial) }
     else if (matchMedia('(hover:hover)').matches) setTimeout(() => ta.focus({ preventScroll: true }), 60);

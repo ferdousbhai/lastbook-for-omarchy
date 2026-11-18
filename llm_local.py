@@ -108,6 +108,7 @@ class Local:
         self.state, self.pct, self.message = 'absent', None, ''
         self.path, self.fit, self.ready_info = None, None, None
         self.proc, self.events, self.last_used = None, None, 0
+        self.warming = False
         self.next_id = 0
         self.failed_loads = 0     # loads in a row that ended before the model was ready
         self.saved = _load()
@@ -233,7 +234,7 @@ class Local:
 
     def _argv(self, extra=()):
         threads = max(4, min(16, (os.cpu_count() or 8) // 2))   # about the number of performance cores; more only contend
-        return [str(self.runner), '--model', str(self.path), '--ctx', str(CTX), '--threads', str(threads), *extra]
+        return [str(self.runner), '--model', str(self.path), '--ctx', str(CTX), '--threads', str(threads), '--ubatch', str(ubatch()), *extra]
 
     # -- running ----------------------------------------------------------------------------------------------------------
     def ensure_running(self, on_wait=None, cancelled=lambda: False):
@@ -348,6 +349,28 @@ class Local:
             with self.lock:
                 self.state, self.message = 'off', ''
 
+    def warm(self, prefix=None):
+        """Start the model in the background before the question comes (Chat was opened, or a question is being searched),
+        then let it read prefix, the start every prompt shares, so the first answer reads only the rest. Does nothing when
+        the model is not set up, already loading or answering."""
+        with self.lock:
+            if self.warming or self.state not in ('stopped', 'ready') or not self.path or not (self.fit or {}).get('fits'):
+                return False
+            self.warming = True
+
+        def run():
+            try:
+                if self.ensure_running() is None and prefix and self.gen_lock.acquire(blocking=False):
+                    self.gen_lock.release()   # free now: read the prefix (a real question arriving meanwhile simply waits for it)
+                    try:
+                        self.generate(prefix, 1, lambda: False, lambda t: None)
+                    except RuntimeError:
+                        pass
+            finally:
+                self.warming = False
+        threading.Thread(target=run, daemon=True, name='local-ai-warm').start()
+        return True
+
     def _idle_watch(self):
         while True:
             time.sleep(min(30, IDLE_STOP / 4))
@@ -403,6 +426,16 @@ class Local:
 
 
 LOCAL = Local()
+
+
+def ubatch():
+    """Tokens the model reads in one pass. Measured on an M1 Max (3,783-token prompt): 512 reads 189 tokens a second, 1024
+    225, 2048 245, for about 1.3 and 2.9 GB more memory. Computers with room get the faster setting; the fit check counts it."""
+    try:
+        total = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
+    except (ValueError, OSError):
+        return 512
+    return 2048 if total >= 48 * 2**30 else 1024 if total >= 32 * 2**30 else 512
 
 
 def unified_memory():

@@ -1,7 +1,9 @@
 // lastbook-llm: runs one local language model for the Lastbook app. It talks only through its standard input and output,
 // one JSON object per line, and never opens a socket, a port or a web address. It reads one file, the model it is given.
 //
-//   lastbook-llm --model FILE [--ctx N] [--threads N] [--cpu-only] [--measure]
+//   lastbook-llm --model FILE [--ctx N] [--threads N] [--ubatch N] [--cpu-only] [--measure]
+//
+// --ubatch: tokens read in one pass (512 to 2048). Larger reads the prompt faster and takes more memory; the fit measures it.
 //
 // On start it fits the model to this computer's memory with llama.cpp's own fitting (common/fit.cpp, the same as llama-server's
 // default --fit), prints {"ev":"fit",...} with what it measured, then loads the model and prints {"ev":"ready",...}.
@@ -350,7 +352,7 @@ int main(int argc, char ** argv) {
     dup2(2, 1);
     g_out = fdopen(proto, "w");
     std::string path;
-    int n_ctx = 16384, threads = 0;
+    int n_ctx = 16384, threads = 0, ubatch = 512;
     bool cpu_only = false, measure = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -360,6 +362,8 @@ int main(int argc, char ** argv) {
             n_ctx = std::atoi(argv[++i]);
         } else if (a == "--threads" && i + 1 < argc) {
             threads = std::atoi(argv[++i]);
+        } else if (a == "--ubatch" && i + 1 < argc) {
+            ubatch = std::max(64, std::min(2048, std::atoi(argv[++i])));
         } else if (a == "--cpu-only") {
             cpu_only = true;
         } else if (a == "--measure") {
@@ -383,7 +387,7 @@ int main(int argc, char ** argv) {
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = n_ctx;
     cp.n_batch = 2048;
-    cp.n_ubatch = 512;
+    cp.n_ubatch = ubatch;
     cp.n_seq_max = 1;
     if (threads > 0) {
         cp.n_threads = cp.n_threads_batch = threads;

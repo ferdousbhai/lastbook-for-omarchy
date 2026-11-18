@@ -1935,8 +1935,10 @@ class Handler(library.Handler):
                 assistant.LOCAL.set_enabled(action == 'on')
             elif action == 'stop':
                 assistant.LOCAL.stop('asked')
+            elif action == 'warm':   # Chat is open: start loading before the question comes
+                assistant.warm_local()
             else:
-                return self.send_json({'error': 'action is rescan, on, off or stop'}, 400)
+                return self.send_json({'error': 'action is rescan, on, off, stop or warm'}, 400)
             return self.send_json(assistant.LOCAL.status())
         if rpath != '/api/chat':
             return self.send_json({'error': 'not found'}, 404)

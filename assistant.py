@@ -434,6 +434,14 @@ SYSTEM_TEXT_ONLY = SYSTEM.replace(', view_page when a diagram or table matters',
 ROUND_TOKENS = 1800
 
 
+def warm_local():
+    """Start the local AI ahead of a question and have it read the instructions every prompt starts with."""
+    if LOCAL is None or not LOCAL.available():
+        return False
+    import llm_local
+    return LOCAL.warm(llm_local.render([{'role': 'system', 'content': SYSTEM_TEXT_ONLY}], None)[:2])
+
+
 def _http_round(msgs, tools, cancelled, wrote, set_state):
     """One model turn from the model server at BASE. (content, {index: call}), 'stopped', or a sentence saying what failed."""
     body = {'model': MODEL, 'messages': msgs, 'stream': True, 'temperature': 0.2, 'max_tokens': ROUND_TOKENS, 'reasoning_effort': REASONING_EFFORT}
@@ -532,6 +540,7 @@ def chat(messages, about, emit, cancelled):
     ctx = context_for(about, sess)
     if ctx:
         msgs.append({'role': 'system', 'content': ctx})
+    warm_local()   # the model loads while the library is searched, not after
     for m in messages[-12:]:
         if m.get('role') in ('user', 'assistant') and isinstance(m.get('content'), str):
             msgs.append({'role': m['role'], 'content': m['content'][:6000]})
