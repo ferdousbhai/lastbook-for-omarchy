@@ -1968,6 +1968,15 @@ class Handler(library.Handler):
                 self.wfile.flush()
             except library.CLIENT_GONE:
                 gone[0] = True  # the person pressed Stop or left; stop calling the model
+        # Just after start the local AI may still be finding, checking or measuring its model file: wait for that to
+        # settle rather than answering "no model" to the first question.
+        waited = 0.0
+        while assistant.LOCAL and waited < 600 and (assistant.LOCAL.state in ('checking', 'measuring')
+                                                     or (assistant.LOCAL.state == 'absent' and waited < 5)):
+            if waited == 0:
+                emit({'type': 'state', 'state': 'starting'})
+            time.sleep(0.5)
+            waited += 0.5
         st = assistant.model_status()
         if not st['online']:
             emit({'type': 'error', 'error': 'model_unavailable', 'text': 'The local assistant model is not running right now.'})

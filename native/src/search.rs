@@ -13,6 +13,7 @@ use gtk::{glib, prelude::*};
 use serde_json::Value;
 
 use crate::{
+    cards::{activate, card, clear, mark_markup, plain_markup, route_of, section, source_meta},
     engine::query,
     pdf,
     ui::{App, Route},
@@ -198,22 +199,10 @@ impl SearchPage {
         let doc = r["doc_id"].as_str().unwrap_or_default().to_owned();
         let kind = r["kind"].as_str().unwrap_or_default();
         let page = r["page"].as_i64().map(|p| p as i32);
-        let mut meta = vec![r["publisher"].as_str().unwrap_or_default().to_owned()];
-        if let Some(y) = r["year"].as_str() {
-            meta.push(y.to_owned());
-        }
-        match (kind, page, r["t"].as_f64(), r["section"].as_str()) {
-            (_, Some(p), _, _) => meta.push(format!("page {p}{}", r["pages"].as_i64().map(|n| format!(" of {n}")).unwrap_or_default())),
-            (_, _, Some(t), _) => meta.push(format!("at {}:{:02}", (t as i64) / 60, (t as i64) % 60)),
-            ("article", _, _, Some(s)) if !s.is_empty() => meta.push(s.to_owned()),
-            _ => {}
-        }
         let title = r["title"].as_str().unwrap_or_default();
-        let card = card(title, &plain_markup(r["excerpt"].as_str().unwrap_or_default(), 320), &meta.join(" · "), r["trust"].as_str());
-        let thumb = self.thumb_slot(&card, kind, &doc, page.unwrap_or(1));
-        let _ = thumb;
-        let target = (kind == "pdf").then(|| Route::Read { doc: doc.clone(), page: page.unwrap_or(1) });
-        self.activate(&card, target);
+        let card = card(title, &plain_markup(r["excerpt"].as_str().unwrap_or_default(), 320), &source_meta(r), r["trust"].as_str());
+        self.thumb_slot(&card, kind, &doc, page.unwrap_or(1));
+        self.activate(&card, route_of(r));
         card.upcast()
     }
 
@@ -235,7 +224,8 @@ impl SearchPage {
         if kind == "pdf" {
             self.queue_thumb(&card, d["path"].as_str().unwrap_or_default(), first_page);
         }
-        self.activate(&card, (kind == "pdf").then(|| Route::Read { doc: id, page: first_page }));
+        let target = if kind == "pdf" { Some(Route::Read { doc: id, page: first_page }) } else { route_of(d) };
+        self.activate(&card, target);
         card.upcast()
     }
 
@@ -298,93 +288,10 @@ impl SearchPage {
     }
 
     fn activate(&self, card: &gtk::Box, target: Option<Route>) {
-        let Some(target) = target else { return };
-        card.set_cursor_from_name(Some("pointer"));
-        card.set_focusable(true);
-        let click = gtk::GestureClick::new();
-        let app = self.app.clone();
-        let t = target.clone();
-        click.connect_released(move |_, _, _, _| {
-            if let Some(app) = app.upgrade() {
-                app.navigate(t.clone());
-            }
-        });
-        card.add_controller(click);
-        let keys = gtk::EventControllerKey::new();
-        let app = self.app.clone();
-        keys.connect_key_pressed(move |_, key, _, _| {
-            if matches!(key, gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter | gtk::gdk::Key::space) {
-                if let Some(app) = app.upgrade() {
-                    app.navigate(target.clone());
-                }
-                return glib::Propagation::Stop;
-            }
-            glib::Propagation::Proceed
-        });
-        card.add_controller(keys);
+        if let Some(target) = target {
+            activate(card, self.app.clone(), target);
+        }
     }
-}
-
-fn card(title: &str, snippet_markup: &str, meta: &str, trust: Option<&str>) -> gtk::Box {
-    let card = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    card.add_css_class("result");
-    let text = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    text.set_hexpand(true);
-    let t = gtk::Label::new(Some(title));
-    t.add_css_class("result-title");
-    t.set_xalign(0.0);
-    t.set_wrap(true);
-    text.append(&t);
-    if !snippet_markup.is_empty() {
-        let s = gtk::Label::new(None);
-        s.set_markup(snippet_markup);
-        s.add_css_class("snippet");
-        s.set_xalign(0.0);
-        s.set_wrap(true);
-        s.set_lines(4);
-        s.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        text.append(&s);
-    }
-    let m = gtk::Label::new(Some(meta));
-    m.add_css_class("meta");
-    m.set_xalign(0.0);
-    m.set_wrap(true);
-    text.append(&m);
-    if let Some(trust) = trust.filter(|t| !t.is_empty()) {
-        let l = gtk::Label::new(Some(trust));
-        l.add_css_class("trust");
-        l.set_xalign(0.0);
-        text.append(&l);
-    }
-    card.append(&text);
-    card
-}
-
-fn section(text: &str) -> gtk::Label {
-    let l = gtk::Label::new(Some(text));
-    l.add_css_class("section-title");
-    l.set_xalign(0.0);
-    l.set_margin_top(10);
-    l
-}
-
-fn clear(b: &gtk::Box) {
-    while let Some(c) = b.first_child() {
-        b.remove(&c);
-    }
-}
-
-/// Plain text as Pango markup, shortened.
-fn plain_markup(s: &str, max: usize) -> String {
-    let short: String = s.chars().take(max).collect();
-    let more = if s.chars().count() > max { "…" } else { "" };
-    glib::markup_escape_text(&(short + more)).to_string()
-}
-
-/// /api/find's snippets are HTML-escaped with <mark> around the matched words: bold in Pango markup.
-fn mark_markup(s: &str) -> String {
-    let m = s.replace("<mark>", "<b>").replace("</mark>", "</b>");
-    if gtk::pango::parse_markup(&m, '\0').is_ok() { m } else { glib::markup_escape_text(s).to_string() }
 }
 
 /// Both futures, run together on the main loop.

@@ -20,6 +20,7 @@ serde_json = "1.0"
 async-channel = "2.3"
 urlencoding = "2.1"
 toml = "1.1"
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [profile.release]
 lto = "thin"

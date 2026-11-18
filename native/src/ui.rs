@@ -10,17 +10,23 @@ use std::{
 
 use gtk::{gdk, glib, prelude::*};
 
-use crate::{engine::Engine, reader::Reader, search::SearchPage};
+use crate::{chat::ChatPage, engine::Engine, guides::Guides, reader::Reader, search::SearchPage};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Route {
     Search { q: String, kind: String },
     Read { doc: String, page: i32 },
+    Chat { id: Option<String>, about: Option<String> },
+    Guide(String),
+    Watch { video: String, t: f64 },
+    Wiki { path: String },
+    MapAt { lat: f64, lon: f64, label: String },
     Section(&'static str),
 }
 
 /// The sidebar's screens: (id, label, icon). Screens not yet native say so and stay reachable in the old window.
 pub const SECTIONS: &[(&str, &str, &str)] = &[
+    ("guides", "Guides", "help-about-symbolic"),
     ("search", "Search", "system-search-symbolic"),
     ("chat", "Chat", "user-available-symbolic"),
     ("videos", "Videos", "video-x-generic-symbolic"),
@@ -42,8 +48,12 @@ pub struct App {
     history: RefCell<Vec<Route>>,
     pos: Cell<usize>,
     syncing: Cell<bool>,
+    /// The sidebar section of the screen shown, so a row re-selected by focus (not by the person) does nothing.
+    section: RefCell<String>,
     pub search: RefCell<Option<Rc<SearchPage>>>,
     pub reader: RefCell<Option<Rc<Reader>>>,
+    pub chat: RefCell<Option<Rc<ChatPage>>>,
+    pub guides: RefCell<Option<Rc<Guides>>>,
 }
 
 fn header_button(icon: &str, tip: &str) -> gtk::Button {
@@ -116,8 +126,11 @@ impl App {
             history: RefCell::new(Vec::new()),
             pos: Cell::new(0),
             syncing: Cell::new(false),
+            section: RefCell::new(String::new()),
             search: RefCell::new(None),
             reader: RefCell::new(None),
+            chat: RefCell::new(None),
+            guides: RefCell::new(None),
         });
 
         let search = SearchPage::build(&app);
@@ -126,8 +139,17 @@ impl App {
         let reader = Reader::build(&app);
         app.stack.add_named(&reader.root, Some("reader"));
         app.reader.replace(Some(reader));
-        for (id, label, icon) in SECTIONS.iter().skip(1) {
-            app.stack.add_named(&placeholder(label, icon), Some(id));
+        let chat = ChatPage::build(&app);
+        app.stack.add_named(&chat.root, Some("chat"));
+        app.chat.replace(Some(chat));
+        let guides = Guides::build(&app);
+        app.stack.add_named(&guides.list_root, Some("guides"));
+        app.stack.add_named(&guides.page_root, Some("guide"));
+        app.guides.replace(Some(guides));
+        for (id, label, icon) in SECTIONS {
+            if app.stack.child_by_name(id).is_none() {
+                app.stack.add_named(&placeholder(label, icon), Some(id));
+            }
         }
 
         let a = app.clone();
@@ -143,9 +165,14 @@ impl App {
             }
             if let Some(row) = row {
                 let id = row.widget_name();
+                if *a.section.borrow() == id.as_str() {
+                    return;
+                }
                 let route = if id == "search" {
                     let s = a.search.borrow().as_ref().map(|s| s.current()).unwrap_or_default();
                     Route::Search { q: s.0, kind: s.1 }
+                } else if id == "chat" {
+                    Route::Chat { id: None, about: None }
                 } else {
                     let id: &'static str = SECTIONS.iter().find(|s| s.0 == id.as_str()).map(|s| s.0).unwrap_or("search");
                     Route::Section(id)
@@ -154,11 +181,18 @@ impl App {
             }
         });
         app.keys();
-        app.navigate(Route::Search { q: String::new(), kind: "any".into() });
+        app.navigate(Route::Section("guides"));
         // LASTBOOK_OPEN opens a screen at start (scripted checks): "search:<words>" or "read:<document id>:<page>".
         if let Ok(open) = std::env::var("LASTBOOK_OPEN") {
             match open.split_once(':') {
                 Some(("search", q)) => app.navigate(Route::Search { q: q.to_owned(), kind: "any".into() }),
+                Some(("chat", q)) => {
+                    app.navigate(Route::Chat { id: None, about: None });
+                    if let Some(c) = app.chat.borrow().as_ref() {
+                        c.ask_text(q);
+                    }
+                }
+                Some(("guide", id)) => app.navigate(Route::Guide(id.to_owned())),
                 Some(("read", rest)) => {
                     let (doc, page) = rest.rsplit_once(':').map(|(d, p)| (d, p.parse().unwrap_or(1))).unwrap_or((rest, 1));
                     app.navigate(Route::Read { doc: doc.to_owned(), page });
@@ -250,12 +284,29 @@ impl App {
                 }
                 ("reader", "search", String::new())
             }
+            Route::Chat { id, about } => {
+                if let Some(c) = self.chat.borrow().as_ref() {
+                    c.show(id.as_deref(), about.as_deref());
+                }
+                ("chat", "chat", "Chat".to_owned())
+            }
+            Route::Guide(id) => {
+                let title = self.guides.borrow().as_ref().and_then(|g| g.show(id)).unwrap_or_else(|| "Guides".into());
+                ("guide", "guides", title)
+            }
+            Route::Watch { .. } => ("videos", "videos", "Videos".to_owned()),
+            Route::Wiki { .. } => ("encyclopedias", "encyclopedias", "Encyclopedias".to_owned()),
+            Route::MapAt { .. } => ("map", "map", "Map".to_owned()),
             Route::Section(id) => (*id, *id, SECTIONS.iter().find(|s| s.0 == *id).map(|s| s.1).unwrap_or("").to_owned()),
         };
         self.stack.set_visible_child_name(page);
+        if std::env::var_os("LASTBOOK_DEBUG").is_some() {
+            eprintln!("route {route:?} -> page {page} visible {:?}", self.stack.visible_child_name());
+        }
         if !title.is_empty() {
             self.set_title(&title);
         }
+        self.section.replace(section.to_owned());
         self.syncing.set(true);
         let mut i = 0;
         while let Some(row) = self.sidebar.row_at_index(i) {
@@ -268,6 +319,14 @@ impl App {
         let len = self.history.borrow().len();
         self.back.set_sensitive(self.pos.get() > 0);
         self.forward.set_sensitive(self.pos.get() + 1 < len);
+    }
+
+    /// Replaces the current history entry without showing anything (a new chat getting its id).
+    pub fn replace_route(&self, route: Route) {
+        let pos = self.pos.get();
+        if let Some(r) = self.history.borrow_mut().get_mut(pos) {
+            *r = route;
+        }
     }
 
     pub fn set_title(&self, title: &str) {

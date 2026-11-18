@@ -66,8 +66,10 @@ impl Reader {
         let out = bar_button("zoom-out-symbolic", "Smaller (-)");
         let fit = bar_button("zoom-fit-best-symbolic", "Fit the width (0)");
         let inn = bar_button("zoom-in-symbolic", "Larger (+)");
+        let ask = gtk::Button::with_label("Ask about this page");
+        ask.add_css_class("chip");
         bar.append(&titles);
-        for w in [prev.upcast_ref::<gtk::Widget>(), entry.upcast_ref(), total.upcast_ref(), next.upcast_ref(), out.upcast_ref(), fit.upcast_ref(), inn.upcast_ref()] {
+        for w in [prev.upcast_ref::<gtk::Widget>(), entry.upcast_ref(), total.upcast_ref(), next.upcast_ref(), out.upcast_ref(), fit.upcast_ref(), inn.upcast_ref(), ask.upcast_ref()] {
             bar.append(w);
         }
 
@@ -118,6 +120,14 @@ impl Reader {
         inn.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.set_zoom(r.zoom.get() * 1.2) });
         let r = Rc::downgrade(&reader);
         fit.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.set_zoom(1.0) });
+        let r = Rc::downgrade(&reader);
+        ask.connect_clicked(move |_| {
+            let Some(r) = r.upgrade() else { return };
+            let doc = r.doc.borrow().as_ref().map(|(id, _, _)| id.clone());
+            if let (Some(app), Some(doc)) = (r.app.upgrade(), doc) {
+                app.navigate(crate::ui::Route::Chat { id: None, about: Some(format!("doc:{doc}:{}", r.page.get())) });
+            }
+        });
         let r = Rc::downgrade(&reader);
         reader.entry.connect_activate(move |e| {
             if let (Some(r), Ok(n)) = (r.upgrade(), e.text().trim().parse::<i32>()) {

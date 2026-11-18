@@ -6,7 +6,11 @@
 //! The engine finds the library (--data, LASTBOOK_DATA, the folder chosen last time, or the app's own data folder) and
 //! answers over pipes; this window reads the library's files (PDFs, thumbnails, videos) directly.
 
+mod cards;
+mod chat;
 mod engine;
+mod guides;
+mod md;
 mod pdf;
 mod reader;
 mod search;

@@ -40,9 +40,20 @@ def runner_path():
     return next((p for p in here if p.is_file()), None)
 
 
+def hf_snapshot():
+    """The pinned revision's folder in the standard Hugging Face hub cache, where `hf download` and other local apps (Recall
+    for one) keep models, in the order llama.cpp looks: HF_HUB_CACHE, HUGGINGFACE_HUB_CACHE, HF_HOME/hub, XDG_CACHE_HOME."""
+    env = os.environ
+    hub = (env.get('HF_HUB_CACHE') or env.get('HUGGINGFACE_HUB_CACHE')
+           or (env.get('HF_HOME') and os.path.join(env['HF_HOME'], 'hub'))
+           or os.path.join(env.get('XDG_CACHE_HOME') or os.path.join(os.path.expanduser('~'), '.cache'), 'huggingface', 'hub'))
+    repo, rev = SOURCE.split(',')[0].strip(), SOURCE.rsplit(' ', 1)[-1]
+    return Path(hub) / ('models--' + repo.replace('/', '--')) / 'snapshots' / rev
+
+
 def places():
-    """The selected library and an explicitly configured model folder only."""
-    out = [paths.DATA / 'models', paths.DATA]
+    """The selected library, the Hugging Face cache at the pinned revision, and an explicitly configured model folder."""
+    out = [paths.DATA / 'models', paths.DATA, hf_snapshot()]
     if os.environ.get('LASTBOOK_MODEL_DIR'):
         out.insert(0, Path(os.environ['LASTBOOK_MODEL_DIR']))
     seen, res = set(), []

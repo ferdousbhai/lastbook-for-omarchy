@@ -192,7 +192,12 @@ class Lookup(unittest.TestCase):
                 mock.patch.dict(os.environ, {'LASTBOOK_MODEL_DIR': ''}), \
                 mock.patch.object(llm_local, '_load', return_value={}), \
                 mock.patch.object(Path, 'stat', stat):
-            self.assertEqual(llm_local.places(), [data / 'models', data])
+            # The library, then the Hugging Face cache at the one pinned revision (where other local apps keep models);
+            # never the person's other folders.
+            snap = llm_local.hf_snapshot()
+            self.assertEqual(llm_local.places(), [data / 'models', data, snap])
+            self.assertTrue(str(snap).endswith('/huggingface/hub/models--unsloth--gemma-4-26B-A4B-it-GGUF/snapshots/'
+                                               'c099eb48e663fd284577b04978a94ffccb261841'), snap)
             local = llm_local.Local()
             local.runner = self.tmp / 'runner'
             local.discover()
