@@ -342,25 +342,40 @@ def query_groups(q):
     return content, groups
 
 
-@functools.lru_cache(maxsize=256)
+_fts_tls = threading.local()
+
+
+def fts_rows(groups, limit, marks=('', ''), tokens=40, relax_below=10):
+    """(rows, relaxed) from the keyword index: every idea in groups must match; with fewer than relax_below rows, any idea
+    may (documents with more of them still rank higher). Rows are (doc_id, page, snippet, bm25), best first."""
+    con = getattr(_fts_tls, 'con', None)
+    if con is None:  # one read-only connection per thread, reused
+        con = _fts_tls.con = sqlite3.connect(ro_uri(library.DB), uri=True, check_same_thread=False)
+    sql = (f"SELECT doc_id,page,snippet(pages,6,?,?,' … ',{int(tokens)}),bm25(pages,0,6,1,1,0,0,1) "
+           "FROM pages WHERE pages MATCH ? ORDER BY bm25(pages,0,6,1,1,0,0,1) LIMIT ?")
+    try:
+        rows = con.execute(sql, (*marks, fts_expr(groups), limit)).fetchall()
+        if len(rows) < relax_below and len(groups) > 1:
+            return rows + con.execute(sql, (*marks, ' OR '.join('(' + fts_expr([g]) + ')' for g in groups), limit)).fetchall(), True
+    except sqlite3.OperationalError:
+        return [], False
+    return rows, False
+
+
 def find(q, kind='all', limit=30):
+    catalog()  # the cache below is per catalog version (which includes video exclusions)
+    return _find(q, kind, limit, _cat['mtime'], _excl['mtime'])
+
+
+@functools.lru_cache(maxsize=256)
+def _find(q, kind, limit, _cat_version, _excl_version):
     content, groups = query_groups(q)
     if not groups:
         return {'q': q, 'results': [], 'expanded': []}
-    con = sqlite3.connect(ro_uri(library.DB), uri=True)
-    sql = ("SELECT doc_id,page,snippet(pages,6,'\u0001','\u0002',' … ',28),bm25(pages,0,6,1,1,0,0,1) "
-           "FROM pages WHERE pages MATCH ? ORDER BY bm25(pages,0,6,1,1,0,0,1) LIMIT 600")
-    rows, mode = [], 'all words'
-    try:
-        rows = con.execute(sql, (fts_expr(groups),)).fetchall()
-        if len(rows) < 8 and len(groups) > 1:
-            # relax: any of the ideas, rank documents that have more of them higher
-            mode = 'some words'
-            rows += con.execute(sql, (' OR '.join('(' + fts_expr([g]) + ')' for g in groups),)).fetchall()
-    except sqlite3.OperationalError:
-        rows = []
-    con.close()
-    cat = catalog()['by_id']
+    rows, relaxed = fts_rows(groups, 600, ('\u0001', '\u0002'), 28, relax_below=8)
+    mode = 'some words' if relaxed else 'all words'
+    full = catalog()
+    cat, by_path = full['by_id'], full['by_path']
     docs = {}
     allowed = KIND_FILTERS.get(kind)
     for doc_id, page, snip, score in rows:
@@ -368,7 +383,7 @@ def find(q, kind='all', limit=30):
         if not r or r['kind'] == 'metadata':
             continue
         if r['kind'] == 'transcript':  # show the video itself, with the transcript hit
-            v = catalog()['by_path'].get(r.get('video_path'))
+            v = by_path.get(r.get('video_path'))
             if v:
                 r, page = v, None
         if allowed and r['kind'] not in allowed:
@@ -383,7 +398,6 @@ def find(q, kind='all', limit=30):
             d['score'] = -score
         elif d['n'] <= 4:
             d['score'] += -score * 0.1  # a little credit for a few more matching pages, not for sheer length
-    title_words = set(w for g in groups for w in g)
     out = []
     for d in docs.values():
         r = d['r']
@@ -597,11 +611,19 @@ def prewarm_previews():
 
 # ------------------------------------------------------------- pages/text ----
 def page_texts(r):
+    """The document's text, one string per page. Cached per file version: a chat reads the same few documents many times."""
     p = LIB / (r.get('text_path') or f"text/{r['id']}.txt")  # catalog may be mid-rewrite and miss text_path
-    if not p.is_file():
+    try:
+        st = p.stat()
+    except OSError:
         return []
-    t = p.read_text(encoding='utf-8', errors='replace')
-    return t.split('\n\f\n') if '\n\f\n' in t else t.split('\f')
+    return list(_page_texts(str(p), st.st_mtime_ns, st.st_size))
+
+
+@functools.lru_cache(maxsize=32)
+def _page_texts(path, _mtime_ns, _size):
+    t = Path(path).read_text(encoding='utf-8', errors='replace')
+    return tuple(t.split('\n\f\n') if '\n\f\n' in t else t.split('\f'))
 
 
 def png_bytes(rgb):

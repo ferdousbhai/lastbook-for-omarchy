@@ -408,14 +408,24 @@ class Local:
 LOCAL = Local()
 
 
+def unified_memory():
+    """Is graphics memory the computer's own memory? On Apple Silicon it is, under macOS and under Asahi Linux alike."""
+    if sys.platform == 'darwin':
+        return True
+    try:
+        return b'apple,' in Path('/proc/device-tree/compatible').read_bytes()
+    except OSError:
+        return False
+
+
 def judge(fit):
     """Does the whole of it fit this computer? llama.cpp's fit places the model on the graphics memory it finds and counts
     the rest as the computer's own memory, which it takes to be unlimited. So the computer's own memory is checked here:
-    on a Mac the two are one memory; on Windows the part placed on the graphics card is not in it."""
+    on Apple Silicon (macOS or Asahi Linux) the two are one memory; elsewhere the part placed on the graphics card is not in it."""
     total = fit.get('ram_total') or 0
     dev, host = fit.get('device_bytes') or 0, fit.get('host_bytes') or 0
     devices = [m for m in fit.get('memory') or [] if m.get('kind') == 'device']
-    unified = sys.platform == 'darwin'
+    unified = unified_memory()
     # Windows: weights left in the mapped file (not on a graphics card, not repacked) are outside llama.cpp's count, yet in use
     # while answering. Measured with no GPU: the fit said 9.6 GB, the program held 16.5 to 26 GB.
     mapped = 0 if unified else max(0, SIZE - sum(m.get('model') or 0 for m in fit.get('memory') or []))
