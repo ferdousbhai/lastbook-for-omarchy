@@ -196,8 +196,19 @@ impl Reader {
                 meta.push(t.to_owned());
             }
             me.meta.set_text(&meta.join(" · "));
-            if rec["kind"] != "pdf" {
-                return me.fail("Only PDF documents open here so far; web pages, videos and encyclopedia articles are coming to the native app.");
+            match rec["kind"].as_str() {
+                Some("pdf") => {}
+                Some("video") => {
+                    app.replace_route(crate::ui::Route::Watch { video: id.clone(), t: 0.0 }, true);
+                    return;
+                }
+                _ => {
+                    // Saved web pages and slides open in the web view, as the engine serves them.
+                    let path = format!("/{}", rec["path"].as_str().unwrap_or_default());
+                    app.replace_route(crate::ui::Route::Web { path, meta: meta.join(" · ") }, true);
+                    me.doc.replace(None);
+                    return;
+                }
             }
             let file = app.engine.ready.library.join(rec["path"].as_str().unwrap_or_default());
             let Some(doc) = pdf::document(&file) else {

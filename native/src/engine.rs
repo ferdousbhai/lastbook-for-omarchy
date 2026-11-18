@@ -21,8 +21,9 @@ use serde_json::{Value, json};
 
 #[derive(Debug, Clone)]
 pub enum Piece {
-    Head(u16),
+    Head(u16, String),
     Chunk(String),
+    Bytes(Vec<u8>),
     End(bool),
 }
 
@@ -103,9 +104,12 @@ impl Engine {
                     let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
                     let Some(id) = msg.get("id").and_then(Value::as_u64) else { continue };
                     let piece = if let Some(s) = msg.get("head").and_then(Value::as_u64) {
-                        Piece::Head(s as u16)
+                        Piece::Head(s as u16, msg.get("type").and_then(Value::as_str).unwrap_or_default().to_owned())
                     } else if let Some(c) = msg.get("chunk").and_then(Value::as_str) {
                         Piece::Chunk(c.to_owned())
+                    } else if let Some(b) = msg.get("b64").and_then(Value::as_str) {
+                        use base64::Engine as _;
+                        Piece::Bytes(base64::engine::general_purpose::STANDARD.decode(b).unwrap_or_default())
                     } else if let Some(ok) = msg.get("end").and_then(Value::as_bool) {
                         Piece::End(ok)
                     } else {
@@ -154,8 +158,9 @@ impl Engine {
         let (mut status, mut text) = (0, String::new());
         while let Ok(piece) = rx.recv().await {
             match piece {
-                Piece::Head(s) => status = s,
+                Piece::Head(s, _) => status = s,
                 Piece::Chunk(c) => text.push_str(&c),
+                Piece::Bytes(_) => {}
                 Piece::End(_) => break,
             }
         }
@@ -163,6 +168,23 @@ impl Engine {
             return Err(EngineError(format!("{path}: {status}")));
         }
         serde_json::from_str(&text).map_err(|e| EngineError(format!("{path}: {e}")))
+    }
+}
+
+impl Engine {
+    /// The whole answer to a GET as bytes, with its status and content type (pages and their images, for the web view).
+    pub async fn fetch(&self, path: &str) -> (u16, String, Vec<u8>) {
+        let (_, rx) = self.request("GET", path, None);
+        let (mut status, mut ctype, mut body) = (0, String::new(), Vec::new());
+        while let Ok(piece) = rx.recv().await {
+            match piece {
+                Piece::Head(s, t) => (status, ctype) = (s, t),
+                Piece::Chunk(c) => body.extend_from_slice(c.as_bytes()),
+                Piece::Bytes(b) => body.extend_from_slice(&b),
+                Piece::End(_) => break,
+            }
+        }
+        (status, ctype, body)
     }
 }
 

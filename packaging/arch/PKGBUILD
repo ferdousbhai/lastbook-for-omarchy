@@ -11,10 +11,10 @@ pkgdesc='Offline survival library for Omarchy: manuals, videos, encyclopedias, o
 arch=('x86_64' 'aarch64')
 url='https://github.com/ferdousbhai/lastbook-for-omarchy'
 license=('MIT')
-# The window is the system's GTK 3 and WebKitGTK 4.1 through PyGObject; videos play through GStreamer (H.264/AAC through gst-libav).
+# Videos play through GStreamer: H.264/AAC through gst-libav, VP9 through gst-plugins-good, AV1 through gst-plugin-dav1d.
 # The local AI's runner needs the GCC runtime (OpenMP) and the Vulkan loader (CPU fallback without a driver).
 depends=('python>=3.14' 'python<3.15' 'python-gobject' 'gtk3' 'webkit2gtk-4.1' 'gstreamer'
-  'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'python-numpy' 'python-beautifulsoup4' 'gcc-libs' 'vulkan-icd-loader')
+  'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'gst-plugin-dav1d' 'python-numpy' 'python-beautifulsoup4' 'gcc-libs' 'vulkan-icd-loader')
 optdepends=('recall-for-omarchy: meaning-based search, with the embedding model Recall already runs'
   'vulkan-asahi: the local AI on the graphics card of an Apple Silicon Mac')
 makedepends=('git' 'cmake' 'ninja' 'gcc' 'shaderc' 'vulkan-headers' 'spirv-headers' 'pkgconf' 'python-pillow' 'binutils')

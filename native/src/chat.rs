@@ -486,7 +486,7 @@ impl ChatPage {
                 let title: String = text.chars().take(80).collect();
                 self.chats.borrow_mut().push(Conversation { id: id.clone(), title, updated: now(), about: self.pending_about.borrow().clone(), messages: vec![] });
                 self.current.replace(Some(id.clone()));
-                app.replace_route(Route::Chat { id: Some(id.clone()), about: None });
+                app.replace_route(Route::Chat { id: Some(id.clone()), about: None }, false);
                 self.draw();
                 id
             }
@@ -520,7 +520,8 @@ impl ChatPage {
             while let Ok(piece) = rx.recv().await {
                 let Some(me) = me.upgrade() else { return };
                 match piece {
-                    Piece::Head(s) => status = s,
+                    Piece::Head(s, _) => status = s,
+                    Piece::Bytes(_) => {}
                     Piece::Chunk(c) => {
                         buf.push_str(&c);
                         while let Some(i) = buf.find("\n\n") {

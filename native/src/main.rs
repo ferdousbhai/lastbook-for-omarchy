@@ -10,11 +10,15 @@ mod cards;
 mod chat;
 mod engine;
 mod guides;
+mod library;
+mod map;
 mod md;
 mod pdf;
 mod reader;
 mod search;
 mod theme;
+mod videos;
+mod web;
 mod ui;
 
 use gtk::{gdk, gio, glib, prelude::*};
@@ -40,14 +44,14 @@ fn main() -> glib::ExitCode {
     let app = gtk::Application::builder().application_id(APP_ID).flags(gio::ApplicationFlags::NON_UNIQUE).build();
     app.connect_activate(move |app| {
         let Some(display) = gdk::Display::default() else { return };
-        let _theme = theme::Theme::install(&display);
+        let theme = theme::Theme::install(&display);
         gtk::Window::set_default_icon_name(APP_ID);
         match engine::Engine::start(data.as_deref()) {
             Ok(engine) => {
-                let ui = ui::App::build(app, engine);
+                let ui = ui::App::build(app, engine, theme);
                 ui.window.present();
-                // The theme and the window live as long as the application does.
-                unsafe { app.set_data("lastbook-ui", (ui, _theme)) };
+                // The window (and the theme it holds) lives as long as the application does.
+                unsafe { app.set_data("lastbook-ui", ui) };
             }
             Err(e) => {
                 let w = gtk::ApplicationWindow::builder().application(app).title("Lastbook").default_width(560).default_height(260).build();

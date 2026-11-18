@@ -283,3 +283,18 @@ expander-widget.choice > box > box { padding-left: 12px; }
   padding: 10px 12px;
 }
 image.danger { color: @lb_danger; }
+
+/* ------------------------------------------------------------------------------------------------------- videos -- */
+.video-card { padding: 4px; border-radius: 6px; transition: background-color 160ms ease-out; }
+.video-card:hover { background: alpha(@lb_text, 0.05); }
+.video-thumb { border-radius: 5px; background: @lb_surface; }
+.player { background: black; border-radius: 6px; }
+.transcript {
+  background: @lb_surface;
+  border-left: 1px solid alpha(@lb_border, 0.6);
+}
+.cues { background: transparent; padding: 0 6px 6px 6px; }
+.cues > row { border-radius: 5px; padding: 6px 8px; color: @lb_text; }
+.cues > row:hover { background: alpha(@lb_text, 0.05); }
+.cues > row:selected { background: alpha(@lb_accent, 0.18); }
+.cue-time { color: @lb_accent; font-size: 0.85em; min-width: 44px; }

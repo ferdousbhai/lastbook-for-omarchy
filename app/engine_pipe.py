@@ -11,13 +11,14 @@ Each answer comes back as lines carrying the same id: one head, any number of te
   {"id": 7, "chunk": "{\\"results\\": ..."}
   {"id": 7, "end": true}
 
-Chunks arrive as the engine writes them, so a streamed answer (Chat's server-sent events) reaches the window as it is written.
+Text answers come as "chunk"; anything else (images, fonts, video) as "b64", base64. Chunks arrive as the engine writes them, so a streamed answer (Chat's server-sent events) reaches the window as it is written.
 {"cancel": 8} stops request 8. The first line out is {"ready": {...}} with the data and library folders, which the window reads
 files from directly (thumbnails, PDFs, videos): only answers that need the engine come through here.
 
 Requests run through app/bridge.py's Bridge, the same lanes, limits and engine Handler the web window used, holding its key:
 this process and the window are one program, split so the engine can stay in Python. It leaves when its standard input closes.
 """
+import base64
 import json
 import os
 import sys
@@ -50,16 +51,22 @@ class PipeSink:
 
     def __init__(self, rid):
         self.rid = rid
+        self.text = True
         with _open:
             _open_ids.add(rid)
 
     def head(self, status, reason, headers):
         hs = dict((k.lower(), v) for k, v in (headers.items() if hasattr(headers, 'items') else headers))
-        send({'id': self.rid, 'head': status, 'type': hs.get('content-type', '')})
+        ctype = hs.get('content-type', '')
+        self.text = ctype.startswith('text/') or any(t in ctype for t in ('json', 'javascript', 'xml', 'svg', 'event-stream'))
+        send({'id': self.rid, 'head': status, 'type': ctype})
 
     def data(self, chunk, ack):
         if chunk:
-            send({'id': self.rid, 'chunk': chunk.decode('utf-8', 'replace')})
+            if self.text:
+                send({'id': self.rid, 'chunk': chunk.decode('utf-8', 'replace')})
+            else:
+                send({'id': self.rid, 'b64': base64.b64encode(chunk).decode('ascii')})
         ack()
 
     def finish(self, ok):
