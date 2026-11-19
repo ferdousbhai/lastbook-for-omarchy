@@ -1,12 +1,8 @@
 """/api/setup/*: the engine side of first-run setup and of Library → Library and local AI. Contract: docs/SETUP-API.md.
 
-Two ways in, one module:
-  - setup mode (no library yet): app/engine_pipe.py makes a Bridge around SetupServer, whose Handler serves /api/setup/* here.
-    Nothing else.
-  - normal mode: server.py hands /api/setup/ to handle(). The app's main.py configures it first (configure(...)); a bare
-    server.py gets a manage-mode Setup on first use, with no relaunch (finish then answers restart: true).
-
-Only requests from this computer get an answer (the bridge's, or loopback): a phone the guide is shared with gets 403.
+Two ways in, one module, both set up by app/engine_pipe.py (configure(...)) and reached only through the bridge:
+  - setup mode (no library yet): a Bridge around SetupServer, whose Handler serves /api/setup/* here. Nothing else.
+  - normal mode: server.py hands /api/setup/ to handle().
 """
 import hashlib
 import json
@@ -1198,15 +1194,6 @@ def configure(**kw):
     return SETUP
 
 
-def _default():
-    global SETUP
-    if SETUP is None:
-        from engine import paths
-        settings = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'Lastbook'
-        SETUP = Setup('manage', settings, paths.DATA, current=paths.DATA)
-    return SETUP
-
-
 ROUTES = {
     ('GET', 'state'): lambda s, b: s.state(),
     ('GET', 'job'): lambda s, b: s.public_job(),
@@ -1235,8 +1222,6 @@ def _send_json(h, obj, status=200):
 
 def handle(h, method, path):
     """Answers one /api/setup/ request on a BaseHTTPRequestHandler h."""
-    if h.client_address[0] not in ('127.0.0.1', '::1', '::ffff:127.0.0.1'):
-        return _send_json(h, {'error': 'Setup is only open on this computer.'}, 403)
     name = path[len('/api/setup/'):].strip('/')
     fn = ROUTES.get(('GET' if method == 'HEAD' else method, name))
     if not fn:
@@ -1253,7 +1238,7 @@ def handle(h, method, path):
         except ValueError:
             return _send_json(h, {'error': 'bad request'}, 400)
     try:
-        out = fn(SETUP or _default(), body)
+        out = fn(SETUP, body)
     except Exception as e:
         traceback.print_exc()
         return _send_json(h, {'error': f'Setup stopped on an internal error ({type(e).__name__}).'}, 500)

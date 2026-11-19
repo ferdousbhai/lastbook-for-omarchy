@@ -15,10 +15,10 @@ The README explains the layout.
 ## Test
 
 ```bash
-python3 -B -m unittest app.tests.test_bridge app.tests.test_setup app.tests.test_data_folder app.tests.test_what_ships app.tests.test_address_search app.tests.test_topic_search app.tests.test_validate_topics app.tests.test_libq
+bin/test
 ```
 
-Run these before you open a pull request (`test_topic_search` needs Node and is skipped without it). If you change the packaging, also run the build: it ends
+Run it before you open a pull request. If you change the packaging, also run the build: it ends
 with a package scan, and that scan must pass. If you change a guide in `content/`, run `tools/validate_topics.py`
 against a library, so every id, page and encyclopedia path it cites still exists:
 
@@ -36,7 +36,6 @@ through `engine/setup/download.py` to the hosts in `ALLOWED_HOSTS` only: setup's
 from pacman, never from the app.
 
 - No telemetry, analytics, crash reporting, fonts or scripts from the web, update checks, or "phone home" of any kind.
-- Our own pages (`web/`) contain no web address. The build fails if they do.
 - A new dependency must work fully offline, and must not open a socket or start a server. Say in the pull request what
   it is, its licence, and why it is needed, and add it to `THIRD_PARTY_NOTICES.md`.
 - The local AI runner stays socket-free: no RPC backend, no HTTP server, no download code.
@@ -45,7 +44,7 @@ from pacman, never from the app.
 nothing shared may name a real person's home, street, coordinates, machines or accounts.
 
 - Write guides for any reader in any place. Name a region only when the source is about that region.
-- Never commit `web/home-area.json`, a private word list, real coordinates of a home, user or machine names, LAN
+- Never commit a private word list, real coordinates of a home, user or machine names, LAN
   addresses, keys or tokens. Test paths use placeholders such as `/path/to/lastbook`.
 - To keep your own words out of a build, put them in a local copy of `packaging/ship_edits.json` (`forbidden`) and do not
   commit it.

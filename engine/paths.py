@@ -1,9 +1,9 @@
 """Where things live.
 
-APP   read-only program files (web/, content/). This folder's parent: the source tree, or the installed package's own folder.
+APP   read-only program files (content/). This folder's parent: the source tree, or the installed package's own folder.
 INSTALLED  true in the installed package, which alone has a lib/ folder (its Python packages).
-DATA  the writable data folder holding library-data/ and derived/. Set with LASTBOOK_DATA (or server.py --data).
-With LASTBOOK_DATA unset, DATA == APP: the same folder layout as running server.py from the source tree.
+DATA  the writable data folder holding library-data/ and derived/. Set with LASTBOOK_DATA (app/engine_pipe.py does, from --data or the library it finds).
+With LASTBOOK_DATA unset, DATA == APP.
 """
 import fcntl
 import os

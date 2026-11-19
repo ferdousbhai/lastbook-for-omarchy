@@ -168,8 +168,8 @@ def article(data):
 
 # How an encyclopedia article looks inside the app: its title, text and links in the window's own font, text colours and accent,
 # its left edge on the page's, and the window's colour behind it. The file stays as it came; this is added as the article is served.
-# The page that shows the article sets the --lb-* values (web/app.js, lookOf); what is here is what shows before it does, and in a page
-# opened on its own. Tables, infoboxes and pictures keep the skin's own look, which already follows light and dark.
+# The window's own style sheet (native/src/web.rs, apply_style) then sets the theme's colours over it. Tables, infoboxes and pictures keep
+# the skin's own look, which already follows light and dark.
 ARTICLE_LOOK = b"""<style id="lb-article">
 :root{--lb-ink:#1d1d1f;--lb-ink2:#55555a;--lb-line:#e6e6e9;--lb-link:#10805c;--lb-font:-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;--lb-display:-apple-system,BlinkMacSystemFont,"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif}
 @media (prefers-color-scheme:dark){:root{--lb-ink:#f2f2f3;--lb-ink2:#c2c2c7;--lb-line:#313134;--lb-link:#3cc690}}
@@ -198,16 +198,9 @@ li.gallerybox,li.gallerybox .thumb,li.gallerybox .gallerytextwrapper{max-width:1
 .smooth-pie{overflow:hidden}
 .mw-parser-output{overflow-wrap:break-word}
 .references,.reflist,.reference-text{overflow-wrap:anywhere}
-/* a table or picture group wider than the column scrolls inside its own box, so the article never scrolls sideways. A table keeps its
-   table layout: web/app.js (tidyArticle) puts it in a .lb-wide box, which fades at an edge that has more to scroll to */
-.lb-wide{max-width:100%;overflow-x:auto;overflow-y:hidden;position:relative}
 div.navbox{position:relative}   /* a screen-reader label placed absolutely inside stays inside the box, and does not widen the page */
-@media (max-width:639px){html[data-lb-tidy] table{display:table}}   /* the skin makes every table a block on a narrow page, which fixes its width; the box scrolls it instead */
 /* a narrow page: a formula set on one line may break at its spaces, and a box set to a share of the width counts its padding in it, so neither runs past the column */
 @media (max-width:639px){.mw-parser-output .chemf,.mw-parser-output .texhtml{white-space:normal!important}.mw-parser-output div[style*="width"][style*="%"]{box-sizing:border-box}}
-.lb-wide.lb-r{-webkit-mask-image:linear-gradient(to left,transparent,#000 36px);mask-image:linear-gradient(to left,transparent,#000 36px)}
-.lb-wide.lb-l{-webkit-mask-image:linear-gradient(to right,transparent,#000 36px);mask-image:linear-gradient(to right,transparent,#000 36px)}
-.lb-wide.lb-l.lb-r{-webkit-mask-image:linear-gradient(to right,transparent,#000 36px,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(to right,transparent,#000 36px,#000 calc(100% - 36px),transparent)}
 /* the web page's editing links do nothing offline: [edit], and a template's view / talk / edit row */
 .mw-editsection,.mw-editsection-like,.mw-parser-output .navbar,.mw-parser-output .sidebar-navbar{display:none!important}
 .mw-parser-output img:is([src*="OOjs_UI_icon_edit"],[src$="Red_Pencil_Icon.png"],[src$="Blue_pencil.svg.png"]){display:none!important}   /* the pencil that edited an infobox or taxobox */

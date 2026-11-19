@@ -19,7 +19,7 @@ from pathlib import Path
 
 BAD_SEGMENTS = {'test', 'tests', 'testing', 'pytest', 'unittest', 'doctest', 'remote_storage', 'webview', 'bottle', 'proxy_tools', 'onnxruntime',
                 'tokenizers', 'shell_windows', 'shell_macos', 'clr', 'clr_loader', 'pythonnet', 'lastbook_launcher', 'tkinter', 'PyInstaller',
-                'objc', 'AppKit', 'Foundation', 'PyObjCTools', 'vendor-macos', 'fixture', 'real_data_check', 'http_regression', 'cdp', 'f2py', 'pypdfium2_cli',
+                'objc', 'AppKit', 'Foundation', 'PyObjCTools', 'vendor-macos', 'fixture', 'real_data_check', 'cdp', 'f2py', 'pypdfium2_cli',
                 'shell_linux', 'lastbooksrc', 'libgstlastbooksrc', 'gst'}
 BAD_FILE = re.compile(r'(^|/)(test_[^/]*|[^/]*_test\.(py|pyc|so)|[^/]*_tests[^/]*\.so|[^/]*\.onnx|[^/]*\.gguf|mac_[^/]*|win_[^/]*)$', re.I)
 TEST_MARKERS = [b'TEST-STUB', b'mac_offscreen', b'stub_chat', b'stub-chat']
@@ -27,14 +27,14 @@ P = 'usr/lib/lastbook-for-omarchy/'
 ALLOWED_REMOTE = {P + 'engine/library.py'}     # names remote_storage in the code that skips it when packaged
 USER_PATH = re.compile(rb'/Users/[A-Za-z0-9._-]+|/home/(?!runner\b|user\b)[a-z_][a-z0-9_.-]*')   # one-letter names too
 OUR_PY = re.compile(r'^usr/lib/lastbook-for-omarchy/(server|retrieval|encyclopedia|assistant|llm_local)\.py$|^usr/lib/lastbook-for-omarchy/(app|engine)/.*\.py$')
-FIRST_PARTY = re.compile(r'^usr/lib/lastbook-for-omarchy/(web|content|app|engine|setup)/|^usr/lib/lastbook-for-omarchy/[^/]+\.py$')
+FIRST_PARTY = re.compile(r'^usr/lib/lastbook-for-omarchy/(content|app|engine|setup)/|^usr/lib/lastbook-for-omarchy/[^/]+\.py$')
 NET_MODULES = {'socket', 'ssl', 'http.client', 'urllib.request', 'http.server', 'socketserver', 'asyncio', 'ftplib', 'smtplib', 'xmlrpc', 'requests', 'urllib3'}
 NET_ALLOWED = {
     P + 'engine/setup/download.py',   # setup's downloader: HTTPS to the allowlist, roots.pem only
-    P + 'server.py',                  # the engine's request handler; the app runs it through bridge.py and never opens its port
+    P + 'server.py',                  # the engine's request handler, run through bridge.py over in-memory streams: it has no port to open
     P + 'engine/setup/api.py',        # BaseHTTPRequestHandler for setup's routes, run the same way
     P + 'engine/library.py',          # http.server's handler base, the same
-    P + 'assistant.py',               # the server version's chat model; the app's chat is llm_local over pipes
+    P + 'assistant.py',               # a chat model on this computer's loopback, when one is set; the app's own is llm_local over pipes
     P + 'retrieval.py',               # Recall's owner-only Unix socket (checked below: AF_UNIX only)
 }
 ARCH = {'x86_64': 'X86-64', 'aarch64': 'AArch64'}
@@ -147,8 +147,6 @@ def main():
                 problems.append(f'missing from the package: {need}')
         if WINDOW in packaged and (root / WINDOW).read_bytes()[:4] != b'\x7fELF':
             problems.append(f'{WINDOW} is not the native window (not an ELF program)')
-        if any(r.startswith(P + 'web/') for r in packaged):
-            problems.append('web/ is packaged: it belongs to the browser library server (server.py), not the app')
         llm = P + 'llm/lastbook-llm' in packaged
     print(f'files {n_files}, native binaries {n_elf}, local AI runner: {"included" if llm else "not included"}')
     print(f'network modules in our Python (allowed there): {net_report or "none"}')

@@ -15,7 +15,7 @@ jobs:
       - name: Install Arch packages
         run: |
           pacman -Syu --noconfirm --needed git curl base-devel rust pkgconf gtk4 webkitgtk-6.0 poppler-glib sqlite \
-            gstreamer gst-plugins-base python python-numpy python-beautifulsoup4 nodejs lsof
+            gstreamer gst-plugins-base python python-numpy python-beautifulsoup4 lsof
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
         with:

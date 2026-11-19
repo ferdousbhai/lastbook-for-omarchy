@@ -2,7 +2,7 @@
 
 The native window (native/, Rust and GTK 4) starts this as a child process and sends one request a line:
 
-  {"id": 7, "method": "GET", "path": "/api/search?q=water"}
+  {"id": 7, "method": "GET", "path": "/api/find?q=water"}
   {"id": 8, "method": "POST", "path": "/api/chat", "body": {...}}
 
 Each answer comes back as lines carrying the same id: one head, any number of text chunks, one end:

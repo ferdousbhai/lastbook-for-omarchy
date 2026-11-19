@@ -1,44 +1,32 @@
 #!/usr/bin/env python3
-"""Survival Guide — a task-first front end for the offline Survival & Rebuilding Library.
+"""The engine's request handler: the answers the native window asks for, over engine/library.py's file, ZIM and video serving.
 
-  python3 server.py                 # http://127.0.0.1:8890
-  python3 server.py --lan           # also reachable from phones on the same Wi-Fi (no internet needed)
-  python3 server.py --data <folder> # data folder holding library-data/ and derived/ (or set LASTBOOK_DATA)
-
-It builds on engine/library.py for every original file, the full-text index, ZIM encyclopedias and video Range
-requests, and adds a few read-only endpoints:
+Nothing here opens a port. app/engine_pipe.py calls init() and runs Handler through app/bridge.py, one request at a time,
+over in-memory streams. The routes the window uses:
 
   /api/topics                 curated needs and learning routes, with source details resolved from catalog.json
   /api/find?q=&kind=          plain-language search (synonyms, grouping by document, trusted-source ranking)
+  /api/retrieve?q=&k=&kind=   the passages Chat would cite (keyword, meaning-based and encyclopedia lists, fused)
   /api/doc/<id>               one catalog record (+ linked video/transcript)
-  /api/page/<id>/<n>          text of one page;  /api/page/<id>/<n>.png  rendered page image (cached)
   /api/transcript/<video id>  timed transcript cues
-  /api/shelves, /api/shelf/<id>   browse the whole collection by plain-language shelf
-  /api/map/tile/<z>/<x>/<y>   offline street map vector tile (SoCal OpenStreetMap)
-  /api/map/near?lat=&lon=     nearest help points (hospital, pharmacy, water, fire station...)
-  /api/places?q=              place finder (ZIP codes, towns, named places)
+  /api/videos, /api/videos/<row>   the Videos screen's rows, and one row or a search of all
+  /api/shelves, /api/shelf/<id>    browse the whole collection by plain-language shelf
+  /api/places?q=              place finder (addresses, ZIP codes, towns, named places; the world's towns from GeoNames)
+  /api/library, /api/assistant/status, POST /api/assistant/local, POST /api/chat, /api/setup/*
 
+The assistant's tools call the helpers here directly (places, near, page_texts, render_page, transcript).
 Nothing in library-data is written. Caches go to derived/cache.
 """
-import argparse, functools, html, io, ipaddress, json, math, os, re, sqlite3, struct, sys, threading, time, traceback, urllib.parse, zlib
-from array import array
+import functools, html, io, json, math, os, re, sqlite3, struct, sys, threading, time, traceback, urllib.parse, zlib
 from pathlib import Path
-
-if __name__ == '__main__':  # --data must be known before the paths below are worked out
-    _pre = argparse.ArgumentParser(add_help=False)
-    _pre.add_argument('--data')
-    _data = _pre.parse_known_args()[0].data
-    if _data:
-        os.environ['LASTBOOK_DATA'] = _data
 
 import engine.paths as lastbook_paths  # noqa: E402  (data folder and program folder can differ in the packaged app)
 from engine.paths import ro_uri  # noqa: E402
 from engine import saved_pages, address_search  # noqa: E402
 from engine.setup import api as setup_api  # noqa: E402  (the one module that may download: only when the person asks)
 HERE = lastbook_paths.DATA  # holds derived/
-APP = lastbook_paths.APP  # holds web/ and content/
+APP = lastbook_paths.APP  # holds content/
 LIB = lastbook_paths.LIB
-WEB = APP / 'web'
 CACHE = HERE / 'derived' / 'cache'
 MAPDB = HERE / 'derived' / 'geo' / 'map.sqlite'
 PLACEDB = HERE / 'derived' / 'geo' / 'places.sqlite'
@@ -46,11 +34,8 @@ WORLD_PLACEDB = HERE / 'derived' / 'geo' / 'world-places.sqlite'   # GeoNames: c
 os.environ.setdefault('SURVIVAL_DISABLE_INDEX_WATCH', '1')
 import engine.library as library  # noqa: E402  (provides Handler, search DB path, ZIM reader)
 import retrieval, assistant  # noqa: E402
-import secrets  # noqa: E402
 remote_records = library.remote_records  # videos moved to remote drives by the library's workers; none in the packaged app
-INDEX = None  # retrieval.Index, created in main()
-LAN_KEY = None
-SERVER = None  # the running HTTP server, so the packaged app's launcher can stop it
+INDEX = None  # retrieval.Index, created in init()
 
 _pdf_lock = threading.Lock()  # PDFium is not thread-safe
 
@@ -143,7 +128,7 @@ def year_of(r):
 
 
 def public(r, full=False):
-    """The fields the front end needs, with friendly labels. Never includes local auth or worker state."""
+    """The fields the window needs, with friendly labels. Never includes local auth or worker state."""
     if not r:
         return None
     t, _ = trust(r)
@@ -484,12 +469,6 @@ def shelf(sid, kind='all', q='', offset=0, limit=40):
     return {'total': len(rs), 'collections': items[offset:offset + limit], 'more': len(items) > offset + limit}
 
 
-def collection_items(name, offset=0, limit=60):
-    rs = sorted([r for r in catalog()['by_id'].values() if r.get('collection') == name and r['kind'] not in ('metadata',)],
-                key=lambda r: r['title'])
-    return {'total': len(rs), 'items': [public(r) for r in rs[offset:offset + limit]], 'more': len(rs) > offset + limit}
-
-
 # ------------------------------------------------------------------ videos ----
 VROWS = [  # (id, title, exact catalog categories) — practical first, hobby channels and courses after
     ('health', 'First aid & health', 'first-aid medical care-continuity'),
@@ -581,33 +560,6 @@ def videos_list(row, q='', length='', sort='', offset=0, limit=48):
     title = dict((v[0], v[1]) for v in VROWS).get(row, 'Picked for the guides' if row == 'guides' else 'All videos')
     return {'title': title, 'note': VROW_NOTE.get(row), 'total': len(rs), 'items': [vcard(r) for r in rs[offset:offset + limit]],
             'more': len(rs) > offset + limit}
-
-
-def videos_related(vid, limit=12):
-    v = catalog()['by_id'].get(vid)
-    if not v:
-        return []
-    row = vrow_of(v)
-    same_pub = [r for r in catalog()['by_id'].values() if r['kind'] == 'video' and r['id'] != vid and r.get('publisher') == v.get('publisher')]
-    same_row = [r for r in catalog()['by_id'].values() if r['kind'] == 'video' and r['id'] != vid and vrow_of(r) == row and r.get('publisher') != v.get('publisher')]
-    words = set(w for w in re.findall(r'[a-z]{4,}', v['title'].lower()))
-    score = lambda r: -len(words & set(re.findall(r'[a-z]{4,}', r['title'].lower())))
-    out = sorted(same_row, key=lambda r: (score(r), vsort(r)))[:limit // 2] + sorted(same_pub, key=lambda r: (score(r), r['title']))[:limit]
-    return [vcard(r) for r in out[:limit]]
-
-
-def prewarm_previews():
-    """Render small previews of every curated page in the background so guide pages show them instantly."""
-    time.sleep(5)
-    for t in topics():
-        items = [i for c in t.get('choices', []) for i in c.get('read', [])] + [i for st in t.get('route', []) for i in st.get('read', [])] + t.get('prepare', []) + t.get('learn', [])
-        for i in items:
-            r = catalog()['by_id'].get(i.get('doc') or '')
-            if r and r['kind'] == 'pdf':
-                try:
-                    render_page(r, i.get('page') or 1, 360)
-                except Exception:
-                    pass
 
 
 # ------------------------------------------------------------- pages/text ----
@@ -708,7 +660,9 @@ def transcript(video_id):
     return {'source': None, 'cues': []}
 
 
-# ------------------------------------------------------------------- map ----
+# ---------------------------------------------- places and nearby help ----
+# Read from the US map files an upstream pack or state map holds (map.sqlite, national.sqlite, water.sqlite, crops.sqlite,
+# places.sqlite) and from world-places.sqlite, which setup builds. The window draws its own map (native/src/map.rs).
 _tls = threading.local()
 
 
@@ -728,14 +682,6 @@ def national_mapdb():
         _tls.national_map = sqlite3.connect(ro_uri(path), uri=True, check_same_thread=False)
         _tls.national_map.execute('PRAGMA query_only=ON')
     return _tls.national_map
-
-
-def national_status():
-    path = HERE / 'derived/geo/national-status.json'
-    try:
-        return json.loads(path.read_text(encoding='utf-8'))
-    except (OSError, ValueError):
-        return {'state':'not-built'}
 
 
 SOCAL_CELL = 0.05
@@ -760,306 +706,6 @@ def socal_cells():
 
 def in_socal(lon, lat):
     return int((lon + 180) / SOCAL_CELL) * 100000 + int((lat + 90) / SOCAL_CELL) in socal_cells()
-
-
-def unpack(blob):
-    a = array('i')
-    a.frombytes(blob)
-    parts, i = [], 1
-    for _ in range(a[0]):
-        n = a[i]; i += 1
-        x = y = 0
-        pts = []
-        for _ in range(n):
-            x += a[i]; y += a[i + 1]; i += 2
-            pts.append((x / 1e6, y / 1e6))
-        parts.append(pts)
-    return parts
-
-
-def tile_bounds(z, x, y):
-    n = 2 ** z
-    lon0, lon1 = x / n * 360 - 180, (x + 1) / n * 360 - 180
-    lat0 = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (y + 1) / n))))
-    lat1 = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / n))))
-    return lon0, lat0, lon1, lat1
-
-
-def clip_ring(pts, x0, y0, x1, y1):
-    """Sutherland-Hodgman clip of a polygon ring (tile pixel space) to a box."""
-    def clip(pts, inside, inter):
-        out = []
-        for i in range(len(pts)):
-            a, b = pts[i - 1], pts[i]
-            if inside(b):
-                if not inside(a):
-                    out.append(inter(a, b))
-                out.append(b)
-            elif inside(a):
-                out.append(inter(a, b))
-        return out
-
-    def ix(xv):
-        return lambda a, b: (xv, a[1] + (b[1] - a[1]) * (xv - a[0]) / ((b[0] - a[0]) or 1e-9))
-
-    def iy(yv):
-        return lambda a, b: (a[0] + (b[0] - a[0]) * (yv - a[1]) / ((b[1] - a[1]) or 1e-9), yv)
-    for inside, inter in ((lambda p: p[0] >= x0, ix(x0)), (lambda p: p[0] <= x1, ix(x1)),
-                          (lambda p: p[1] >= y0, iy(y0)), (lambda p: p[1] <= y1, iy(y1))):
-        pts = clip(pts, inside, inter)
-        if not pts:
-            break
-    return pts
-
-
-EXT = 512
-
-
-TERRAINDB = HERE / 'derived/geo/terrain.sqlite'
-
-
-TERRAIN_DETAIL = HERE / 'derived/geo/terrain-detail.sqlite'
-
-
-def terrain_tile(z, x, y):
-    """Elevation tile (terrain-RGB PNG) or None for open ocean / outside the data: zoom 4-12 nationwide (30 m),
-    zoom 13-17 from 1 m lidar around chosen places (tools/build_terrain_detail.py)."""
-    path, attr = (TERRAIN_DETAIL, 'terrain_detail') if z >= 13 else (TERRAINDB, 'terrain')
-    if not path.exists():
-        return None
-    db = getattr(_tls, attr, None)
-    if db is None:
-        db = sqlite3.connect(ro_uri(path), uri=True, check_same_thread=False)
-        setattr(_tls, attr, db)
-    try:
-        row = db.execute('SELECT png FROM tile WHERE z=? AND x=? AND y=?', (z, x, y)).fetchone()
-    except sqlite3.OperationalError:  # still being created
-        return None
-    return row[0] if row else None
-
-
-def crop_tile(z, x, y):
-    """Orchard / vineyard colour overlay (RGBA PNG) or None."""
-    if not CROPDB.exists():
-        return None
-    db = getattr(_tls, 'crops', None)
-    if db is None:
-        db = _tls.crops = sqlite3.connect(ro_uri(CROPDB), uri=True, check_same_thread=False)
-    try:
-        row = db.execute('SELECT png FROM tile WHERE z=? AND x=? AND y=?', (z, x, y)).fetchone()
-    except sqlite3.OperationalError:  # rebuilding
-        return None
-    return row[0] if row else None
-
-
-def data_version():
-    """Changes whenever map data changes: every 20 s while the national map builds, and when the water inventory is written."""
-    status = national_status()
-    v = f"n{int(time.time() // 20)}" if status.get('state') == 'building' else f"n{status.get('features', 0)}"
-    for f in (WATERDB, WATERDB.with_name(WATERDB.name + '-wal'), CROPDB, TERRAINDB, BLDGDB, BLDGDB.with_name(BLDGDB.name + '-wal')):
-        try:
-            v += f".{int(f.stat().st_mtime) // 60}"
-        except OSError:
-            pass
-    return v
-
-
-def map_tile(z, x, y):
-    version = data_version()
-    if z > 9 or national_status().get('state') != 'complete':
-        return _map_tile(z, x, y, version)
-    # zoomed-out tiles cover huge areas and are slow to assemble: keep them on disk once the data has settled
-    path = HERE / f'derived/geo/tilecache/{version}/{z}/{x}/{y}.json'
-    try:
-        return path.read_bytes()
-    except OSError:
-        data = _map_tile(z, x, y, version)
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(f'.{threading.get_ident()}.tmp')
-            tmp.write_bytes(data)
-            tmp.replace(path)
-        except OSError:
-            pass
-        return data
-
-
-@functools.lru_cache(maxsize=2048)
-def _map_tile(z, x, y, version):
-    db = mapdb()
-    if db is None:
-        return b'{"error":"map not built"}'
-    lon0, lat0, lon1, lat1 = tile_bounds(z, x, y)
-    pad = (lon1 - lon0) * 0.04
-    n = 2 ** z
-
-    def proj(lon, lat):
-        px = ((lon + 180) / 360 * n - x) * EXT
-        s = math.sin(math.radians(max(-85, min(85, lat))))
-        py = ((0.5 - math.log((1 + s) / (1 - s)) / (4 * math.pi)) * n - y) * EXT
-        return px, py
-    rows = db.execute('SELECT f.layer,f.cls,f.name,f.geom FROM feat_idx i JOIN feat f ON f.id=i.id '
-                      'WHERE i.maxx>=? AND i.minx<=? AND i.maxy>=? AND i.miny<=? AND i.minz<=? ORDER BY f.id',
-                      (lon0 - pad, lon1 + pad, lat0 - pad, lat1 + pad, z)).fetchall()
-    national = national_mapdb()
-    if national is not None and z >= 11:
-        c = SOCAL_CELL
-        cells = socal_cells()
-        if all(i * 100000 + j in cells for i in range(int((lon0 + 180) / c), int((lon1 + 180) / c) + 1)
-               for j in range(int((lat0 + 90) / c), int((lat1 + 90) / c) + 1)):
-            national = None  # fully covered by the detailed SoCal map
-    if national is not None:
-        rows += national.execute('SELECT f.layer,f.cls,f.name,f.geom FROM feat_idx i JOIN feat f ON f.id=i.id '
-                      'WHERE i.maxx>=? AND i.minx<=? AND i.maxy>=? AND i.miny<=? AND i.minz<=? ORDER BY f.id',
-                      (lon0 - pad, lon1 + pad, lat0 - pad, lat1 + pad, z)).fetchall()
-    if WATERDB.exists():  # NHD lakes, reservoirs, ponds and marsh outlines
-        wdb = getattr(_tls, 'water', None) or sqlite3.connect(ro_uri(WATERDB), uri=True, check_same_thread=False)
-        _tls.water = wdb
-        rows += wdb.execute('SELECT f.layer,f.cls,f.name,f.geom FROM feat_idx i JOIN feat f ON f.id=i.id '
-                            'WHERE i.maxx>=? AND i.minx<=? AND i.maxy>=? AND i.miny<=? AND i.minz<=?',
-                            (lon0 - pad, lon1 + pad, lat0 - pad, lat1 + pad, z)).fetchall()
-    layers = {}
-    tol = 2.0 if z <= 6 else 1.2 if z <= 9 else 0.7 if z < 15 else 0.4
-    for layer, cls, name, geom in rows:
-        if layer == 'bldg' and z < 15:
-            continue
-        parts = unpack(geom)
-        polygon = layer in ('water', 'wet', 'land', 'beach', 'bldg', 'ocean', 'island')
-        geo = []
-        for p in parts:
-            pts = [proj(lo, la) for lo, la in p]
-            if polygon and len(pts) > 200:
-                pts = clip_ring(pts, -16, -16, EXT + 16, EXT + 16)
-            q, last = [], None
-            for px, py in pts:
-                if last is None or abs(px - last[0]) > tol or abs(py - last[1]) > tol:
-                    q += [round(px, 1), round(py, 1)]
-                    last = (px, py)
-            if polygon and len(q) < 6:
-                continue
-            if not polygon and layer != 'place' and len(q) < 4 and z < 12:
-                continue  # sub-pixel line at this zoom
-            if layer == 'place':
-                q = [round(pts[0][0], 1), round(pts[0][1], 1)]
-            if q:
-                geo.append(q)
-        if geo:
-            layers.setdefault(layer, []).append([cls, name, geo])
-    if z >= 15:
-        ms_buildings(layers, z, x, y, tol, version)
-    # Service symbols are not baked into tiles; /api/map/pins serves them clustered and filterable.
-    return json.dumps({'z': z, 'layers': layers}, separators=(',', ':')).encode()
-
-
-BLDGDB = HERE / 'derived/geo/buildings.sqlite'
-
-
-@functools.lru_cache(maxsize=192)
-def ms_bucket(x14, y14, version):
-    """Microsoft footprints filed under zoom-14 tile x14/y14: [(minX, maxX, minY, maxY, height_dm, pts)].
-    version (data_version()) is only part of the cache key, so a rebuilt database is never served stale."""
-    db = getattr(_tls, 'bldg', None)
-    if db is None:
-        db = _tls.bldg = sqlite3.connect(ro_uri(BLDGDB), uri=True, check_same_thread=False)
-    out = []
-    for (data,) in db.execute('SELECT data FROM bldg WHERE x=? AND y=?', (x14, y14)):
-        a = array('i'); a.frombytes(zlib.decompress(data)); i = 0
-        while i < len(a):
-            n, h, X, Y = a[i], a[i + 1], a[i + 2], a[i + 3]; i += 4
-            pts = [(X, Y)]
-            for _ in range(n - 1):
-                X += a[i]; Y += a[i + 1]; i += 2; pts.append((X, Y))
-            xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
-            out.append((min(xs), max(xs), min(ys), max(ys), h, pts))
-    return out
-
-
-AERIALDB = HERE / 'derived/geo/aerial.sqlite'
-
-
-AERIAL_DETAIL = HERE / 'derived/geo/aerial-detail.sqlite'
-AERIAL_COAST = HERE / 'derived/geo/aerial-coast.sqlite'
-
-
-def aerial_tile(z, x, y):
-    """JPEG/PNG bytes of the aerial photo tile, or None: zoom 0-16 from tools/fetch_aerial.py (national),
-    zoom 17-19 from tools/build_aerial_coast.py (25 cm NOAA coastal photos) where it has them, otherwise
-    tools/fetch_aerial_detail.py (full detail around chosen places)."""
-    for path, attr in ((AERIAL_COAST, 'aerial_coast'), (AERIAL_DETAIL, 'aerial_detail')) if z >= 17 else ((AERIALDB, 'aerial'),):
-        if not path.exists():
-            continue
-        db = getattr(_tls, attr, None)
-        if db is None:
-            db = sqlite3.connect(ro_uri(path), uri=True, check_same_thread=False)
-            setattr(_tls, attr, db)
-        try:
-            r = db.execute('SELECT jpg FROM tile WHERE z=? AND x=? AND y=?', (z, x, y)).fetchone()
-        except sqlite3.Error:
-            continue
-        if r:
-            return r[0]
-    return None
-
-
-def aerial_coast_building():
-    """Is tools/build_aerial_coast.py writing aerial-coast.sqlite right now (no 'built' stamp yet)?"""
-    db = getattr(_tls, 'aerial_coast', None) if AERIAL_COAST.exists() else None
-    try:
-        return db is not None and db.execute("SELECT 1 FROM meta WHERE key='built'").fetchone() is None
-    except sqlite3.Error:
-        return False
-
-
-def bldg3d(x14, y14):
-    """Every footprint (with height) centred in zoom-14 tile x14/y14, for the 3D view, as little-endian int32:
-    [number of Microsoft ints] + Microsoft records [npts, height_dm, X0, Y0, dX1, dY1, ...] (SoCal included)
-    + OpenStreetMap records [npts, height_dm, min_height_dm, is_part, X0, Y0, ...] (tools/build_osm_heights.py)."""
-    if not BLDGDB.exists():
-        return b''
-    db = getattr(_tls, 'bldg', None)
-    if db is None:
-        db = _tls.bldg = sqlite3.connect(ro_uri(BLDGDB), uri=True, check_same_thread=False)
-    def rows(table):
-        try:
-            return [zlib.decompress(d) for (d,) in db.execute(f'SELECT data FROM {table} WHERE x=? AND y=?', (x14, y14))]
-        except sqlite3.OperationalError:  # table not built yet
-            return []
-    ms = b''.join(rows('bldg') + rows('bldg_socal'))
-    return struct.pack('<i', len(ms) // 4) + ms + b''.join(rows('bldg_osm'))
-
-
-def ms_buildings(layers, z, x, y, tol, version):
-    """Add national building footprints (outside the detailed SoCal map) to a z>=15 tile."""
-    if not BLDGDB.exists():
-        return
-    span = 1 << (30 - z); pad = span // 25
-    X0, Y0 = x * span - pad, y * span - pad
-    X1, Y1 = X0 + span + 2 * pad, Y0 + span + 2 * pad
-    k = EXT / span
-    out = layers.setdefault('bldg', [])
-    reach = 1 << 12  # footprints reaching further than ~150 m into another bucket are also filed there (build_buildings.py)
-    seen = set()
-    for bx in range((X0 - reach) >> 16, ((X1 + reach) >> 16) + 1):
-        for by in range((Y0 - reach) >> 16, ((Y1 + reach) >> 16) + 1):
-            try:
-                bucket = ms_bucket(bx, by, version)
-            except sqlite3.Error:
-                return
-            for minx, maxx, miny, maxy, h, pts in bucket:
-                if maxx < X0 or minx > X1 or maxy < Y0 or miny > Y1 or pts[0] in seen:
-                    continue
-                seen.add(pts[0])
-                q, last = [], None
-                for X, Y in pts:
-                    px, py = (X - x * span) * k, (Y - y * span) * k
-                    if last is None or abs(px - last[0]) > tol or abs(py - last[1]) > tol:
-                        q += [round(px, 1), round(py, 1)]; last = (px, py)
-                if len(q) >= 6:
-                    out.append(['building', None, [q]])
-
-
-TILE_POI = {'hospital', 'clinic', 'doctors', 'pharmacy', 'chemist', 'fire_station', 'police', 'drinking_water', 'toilet',
-            'shelter', 'community_centre', 'supermarket', 'doityourself', 'hardware', 'spring'}
 
 
 HELP = {'hospital': 'Hospital', 'clinic': 'Clinic', 'doctors': 'Doctor', 'pharmacy': 'Pharmacy', 'chemist': 'Pharmacy',
@@ -1119,36 +765,6 @@ def resource_near(lat, lon, cls, limit):
     return sorted(out, key=lambda p:p['km'])[:limit]
 
 
-def resource_view(west, south, east, north, zoom, kinds):
-    path = LIB / 'geography/resources/atlas.sqlite'
-    if not path.exists():
-        return {'points': [], 'records': 0}
-    kinds = [k for k in kinds if k in RESOURCE_KINDS]
-    if not kinds:
-        return {'points': [], 'records': 0}
-    west, east = max(-180, west), min(180, east)
-    south, north = max(-85, south), min(85, north)
-    cell = 180 / (2 ** max(3, min(18, zoom)))
-    query = """SELECT r.kind,AVG(r.lat),AVG(r.lon),COUNT(*),r.name,r.detail,r.source,COUNT(DISTINCT CASE WHEN r.kind='fish_stocking' THEN r.name ELSE r.source_id END)
-        FROM spatial s CROSS JOIN resource r ON r.id=s.id
-        WHERE s.minx>=? AND s.maxx<=? AND s.miny>=? AND s.maxy<=?
-        AND r.kind IN (%s)
-        GROUP BY r.kind, CAST((r.lon+180)/? AS INTEGER), CAST((r.lat+90)/? AS INTEGER)
-        ORDER BY COUNT(*) DESC LIMIT 2001""" % ','.join('?' for _ in kinds)
-    db = sqlite3.connect(ro_uri(path), uri=True)
-    try:
-        rows = db.execute(query, (west,east,south,north,*kinds,cell,cell)).fetchall()
-    finally:
-        db.close()
-    points = [{'cls':k,'lat':lat,'lon':lon,'count':sites,'record_count':n,'name':name if sites==1 else f'{sites:,} locations',
-               'label':HELP[k],'detail':json.loads(detail) if sites==1 else {},'source':source}
-              for k,lat,lon,n,name,detail,source,sites in rows[:2000]]
-    return {'points':points, 'records':sum(p['record_count'] for p in points), 'truncated':len(rows)>2000}
-
-
-CLUSTER_PX = 46
-
-
 def _resource_summary(cls, detail):
     keys = {'mineral': ('commod1', 'commod2', 'dev_stat'), 'oil_gas_well': ('WellTypeLabel', 'FieldName', 'API'),
             'fish_stocking': ('FishType', 'Counties'), 'boat_launch': ('Water_Body', 'Facility_Type'),
@@ -1173,91 +789,6 @@ def socal_classes():
     return frozenset(r[0] for r in db.execute('SELECT DISTINCT cls FROM poi')) if db else frozenset()
 
 
-def _poi_sources(west, south, east, north):
-    """(connection, skip-SoCal-duplicates) pairs for service points."""
-    out = []
-    if mapdb() is not None and east >= -121.4 and west <= -114.1 and north >= 32.5 and south <= 35.9:
-        out.append((mapdb(), False))
-    nat = national_mapdb()
-    if nat is not None:
-        dedupe = east >= -121.4 and west <= -114.1 and north >= 32.5 and south <= 35.9 and mapdb() is not None
-        if dedupe and not getattr(_tls, 'socal_fn', False):
-            nat.create_function('socal', 3, lambda cls, lo, la: 1 if cls in socal_classes() and in_socal(lo, la) else 0, deterministic=True)
-            _tls.socal_fn = True
-        out.append((nat, dedupe))
-    return out
-
-
-def pins(west, south, east, north, zoom, kinds):
-    """Clustered service + resource points for the visible area. Clusters mix kinds and carry their bounds."""
-    zoom = round(max(3, min(18, zoom)))
-    cx = 360 / 2 ** zoom * (72 if zoom <= 5 else 58 if zoom <= 8 else CLUSTER_PX) / 256  # coarser groups when a whole region is in view
-    cy = cx * max(0.2, math.cos(math.radians((south + north) / 2)))
-    if zoom >= 17:
-        cx = cy = 1e-6  # only exact duplicates group at street level
-    else:  # snap to the cluster grid so panning reuses cached answers and clusters don't jump
-        cy = round(cy / cx * 8) / 8 * cx
-        west, east = math.floor((west + 180) / cx) * cx - 180, math.ceil((east + 180) / cx) * cx - 180
-        south, north = math.floor((south + 90) / cy) * cy - 90, math.ceil((north + 90) / cy) * cy - 90
-    version = data_version()
-    return _pins(max(-180, west), max(-85, south), min(180, east), min(85, north), cx, cy, tuple(sorted(set(kinds))), version)
-
-
-@functools.lru_cache(maxsize=256)
-def _pins(west, south, east, north, cx, cy, kinds, version):
-    services = [k for k in kinds if k in HELP and k not in RESOURCE_KINDS]
-    resources = [k for k in kinds if k in RESOURCE_KINDS]
-    cells = {}
-
-    def add(kind, n, sites, lat, lon, x0, x1, y0, y1, name, detail, source):
-        key = (int((lon + 180) / cx), int((lat + 90) / cy))
-        c = cells.get(key)
-        if c is None:
-            cells[key] = c = {'kinds': {}, 'count': 0, 'records': 0, 'lat': 0.0, 'lon': 0.0, 'bbox': [x0, y0, x1, y1],
-                              'name': name, 'detail': detail, 'source': source, 'cls': kind}
-        c['lat'] += lat * sites; c['lon'] += lon * sites
-        c['count'] += sites; c['records'] += n
-        c['kinds'][kind] = c['kinds'].get(kind, 0) + sites
-        b = c['bbox']; c['bbox'] = [min(b[0], x0), min(b[1], y0), max(b[2], x1), max(b[3], y1)]
-
-    if services:
-        q = ','.join('?' * len(services))
-        for db, dedupe in _poi_sources(west, south, east, north):
-            sql = (f'SELECT cls,COUNT(*),AVG(lat),AVG(lon),MIN(lon),MAX(lon),MIN(lat),MAX(lat),MIN(name) FROM poi '
-                   f'WHERE cls IN ({q}) AND lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?{" AND socal(cls,lon,lat)=0" if dedupe else ""} '
-                   f'GROUP BY cls, CAST((lon+180)/? AS INT), CAST((lat+90)/? AS INT)')
-            for k, n, la, lo, x0, x1, y0, y1, name in db.execute(sql, (*services, west, east, south, north, cx, cy)):
-                add(k, n, n, la, lo, x0, x1, y0, y1, name or '', {}, '')
-    for path in resource_dbs(resources):
-        rdb = sqlite3.connect(ro_uri(path), uri=True)
-        try:
-            sql = ("SELECT r.kind,COUNT(*),AVG(r.lat),AVG(r.lon),MIN(r.lon),MAX(r.lon),MIN(r.lat),MAX(r.lat),r.name,r.detail,r.source,"
-                   "COUNT(DISTINCT CASE WHEN r.kind='fish_stocking' THEN r.name ELSE r.source_id END) "
-                   "FROM spatial s CROSS JOIN resource r ON r.id=s.id WHERE s.minx>=? AND s.maxx<=? AND s.miny>=? AND s.maxy<=? "
-                   "AND r.kind IN (%s) GROUP BY r.kind, CAST((r.lon+180)/? AS INT), CAST((r.lat+90)/? AS INT)" % ','.join('?' * len(resources)))
-            g = 3 if path == CROPDB and cx > 1e-5 else 1  # farm blocks are dense: group them more coarsely (the colour overlay shows the detail)
-            for k, n, la, lo, x0, x1, y0, y1, name, detail, source, sites in rdb.execute(sql, (west, east, south, north, *resources, cx * g, cy * g)):
-                add(k, n, sites, la, lo, x0, x1, y0, y1, name or '', json.loads(detail or '{}') if sites == 1 else {}, source or '')
-        finally:
-            rdb.close()
-    out = []
-    for c in cells.values():
-        c['lat'] /= c['count']; c['lon'] /= c['count']
-        single = c['count'] == 1
-        if single:
-            c['label'] = HELP.get(c['cls'], c['cls'])
-            c['summary'] = _resource_summary(c['cls'], c['detail'])
-        else:
-            c['cls'] = max(c['kinds'], key=c['kinds'].get)
-            c['name'] = c['detail'] = c['source'] = None
-        # an exact-duplicate group (e.g. one lake stocked many times) still behaves as one place
-        c['spot'] = c['count'] > 1 and c['bbox'][2] - c['bbox'][0] < 1e-4 and c['bbox'][3] - c['bbox'][1] < 1e-4
-        out.append(c)
-    out.sort(key=lambda c: -c['count'])
-    total = sum(c['count'] for c in out)
-    return {'points': out[:2500], 'sites': total, 'truncated': len(out) > 2500, 'cell': [cx, cy]}
-
-
 def dedupe_named(rows):
     """The same shop is often mapped twice (a pharmacy node plus a chemist building): drop same-name points within ~80 m."""
     kept = {}
@@ -1270,36 +801,6 @@ def dedupe_named(rows):
             near_same.append((r['lat'], r['lon']))
         out.append(r)
     return out
-
-
-def members(west, south, east, north, kinds, lat, lon, limit=60):
-    """Individual records inside a cluster's bounds, nearest to its centre first."""
-    services = [k for k in kinds if k in HELP and k not in RESOURCE_KINDS]
-    resources = [k for k in kinds if k in RESOURCE_KINDS]
-    rows = []
-    eps = 1e-4  # the R-tree keeps float32 bounds (~1e-5° error)
-    if services:
-        q = ','.join('?' * len(services))
-        for db, dedupe in _poi_sources(west, south, east, north):
-            rows += [{'cls': c, 'label': HELP.get(c, c), 'name': n or '', 'lon': x, 'lat': y, 'summary': '', 'detail': {}, 'source': ''}
-                     for c, n, x, y in db.execute(f'SELECT cls,name,lon,lat FROM poi WHERE cls IN ({q}) AND lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?'
-                                                  f'{" AND socal(cls,lon,lat)=0" if dedupe else ""} LIMIT 2000',
-                                                  (*services, west - eps, east + eps, south - eps, north + eps))]
-    for path in resource_dbs(resources):
-        with sqlite3.connect(ro_uri(path), uri=True) as rdb:
-            for k, n, y, x, d, src in rdb.execute(
-                    "SELECT r.kind,r.name,r.lat,r.lon,r.detail,r.source FROM spatial s CROSS JOIN resource r ON r.id=s.id "
-                    "WHERE s.minx>=? AND s.maxx<=? AND s.miny>=? AND s.maxy<=? AND r.kind IN (%s) LIMIT 2000" % ','.join('?' * len(resources)),
-                    (west - eps, east + eps, south - eps, north + eps, *resources)):
-                detail = json.loads(d or '{}')
-                rows.append({'cls': k, 'label': HELP[k], 'name': n or '', 'lat': y, 'lon': x, 'detail': detail,
-                             'summary': _resource_summary(k, detail), 'source': src or ''})
-    rows = [r for r in rows if r['cls'] in RESOURCE_KINDS] + dedupe_named([r for r in rows if r['cls'] not in RESOURCE_KINDS])
-    for r in rows:
-        r['km'], r['dir'] = haversine(lat, lon, r['lat'], r['lon'])
-    rows.sort(key=lambda r: str(r['detail'].get('WeekOfPlantStart') or ''), reverse=True)  # newest stocking first at one spot
-    rows.sort(key=lambda r: round(r['km'], 3))
-    return {'items': rows[:limit], 'total': len(rows), 'capped': len(rows) >= 2000}
 
 
 def near(lat, lon, classes, limit=8):
@@ -1452,9 +953,8 @@ def places(q, limit=20, near=None):
                               (r[4] - .08, r[4] + .08, r[3] - .08, r[3] + .08, r[0])).fetchone()
             size[k] = 2 if hit[0] is None else hit[0]
         return size[k]
-    home = near or home_area()
     rows.sort(key=lambda r: (norm(r[0]) != ql, not norm(r[0]).startswith(ql), r[5] > 2 and norm(r[0]) == ql and importance(r),
-                             -round(near_bonus(home, r[3], r[4])), r[5]))
+                             -round(near_bonus(near, r[3], r[4])), r[5]))
     seen, out = set(), []
     for name, kind, detail, lat, lon, rank, src in rows:
         k = (name.lower(), round(lat, 2), round(lon, 2))
@@ -1495,15 +995,6 @@ def coverage():
     return _cov['data']
 
 
-def home_area():
-    """A household's own opening place, from a local file that is never packaged. None everywhere else. [lat, lon] for ranking place names."""
-    try:
-        d = json.loads((WEB / 'home-area.json').read_text(encoding='utf-8'))
-        return float(d['lat']), float(d['lon'])
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-
-
 def pack_info():
     """The open download's own description, or None when this is not a pack. Read once: a pack does not change while it is open."""
     if 'pack' not in _pack:
@@ -1518,179 +1009,21 @@ _pack = {}
 SOURCES_PAGE = 'documents/lastbook/sources-and-permissions.html'   # every pack's own credits page, an ordinary record
 
 
-def has_aerial():
-    return any(p.exists() for p in (AERIALDB, AERIAL_DETAIL, AERIAL_COAST))
-
-
-def _distinct(path, sql):
-    if not Path(path).exists():
-        return []
-    db = sqlite3.connect(ro_uri(path), uri=True)
-    try:
-        return [r[0] for r in db.execute(sql)]
-    except sqlite3.Error:
-        return []
-    finally:
-        db.close()
-
-
-@functools.lru_cache(maxsize=1)
-def map_contents():
-    """What a pack's map really holds, decided from its own files: which pin kinds, and the box they fall in. The rest of the map is the plain base."""
-    kinds, boxes = set(), []
-    for path in (MAPDB, HERE / 'derived/geo/national.sqlite'):
-        kinds |= set(_distinct(path, 'SELECT DISTINCT cls FROM poi'))
-        if Path(path).exists():
-            db = sqlite3.connect(ro_uri(path), uri=True)
-            try:
-                box = db.execute('SELECT MIN(lon),MIN(lat),MAX(lon),MAX(lat) FROM poi').fetchone()
-                if box and box[0] is not None:
-                    boxes.append(box)
-            except sqlite3.Error:
-                pass
-            finally:
-                db.close()
-    for path in (LIB / 'geography/resources/atlas.sqlite', WATERDB, CROPDB):
-        kinds |= set(_distinct(path, 'SELECT DISTINCT kind FROM resource'))
-    contours = any(r for r in _distinct(TERRAINDB, 'SELECT 1 FROM tile WHERE z>=11 LIMIT 1'))
-    bounds = None
-    if boxes:
-        bounds = [min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes)]
-        if bounds[2] - bounds[0] > 90:  # a map of everything: crossing the date line would show the whole world
-            bounds = None
-    return {'layers': sorted(kinds), 'bounds': bounds, 'detail': bool(boxes), 'contours': contours}
-
-
-def map_info():
-    db = mapdb()
-    meta = dict(db.execute('SELECT key,value FROM meta').fetchall()) if db else {}
-    geo = []
-    for rel, label, status in [
-        ('geography/openstreetmap/socal-latest-free.gpkg.zip', 'Southern California streets, buildings, water and places (OpenStreetMap)', 'Shown on this map'),
-        ('geography/openstreetmap/socal-latest.osm.pbf', 'Southern California raw OpenStreetMap data', 'Coastline taken from it for the map; the rest needs conversion'),
-        ('geography/openstreetmap/california-latest.osm.pbf', 'All of California raw OpenStreetMap data', 'Covered by the national map'),
-        ('geography/openstreetmap/us-latest.osm.pbf', 'United States roads, waterways and places (OpenStreetMap)', ('Shown on this map — ' if national_status().get('state') == 'complete' else 'Converting — ') + format(national_status().get('features',0), ',') + ' features (buildings come from Microsoft, below)'),
-        ('geography/openstreetmap/us-virgin-islands-latest.osm.pbf', 'US Virgin Islands raw OpenStreetMap data', 'Raw data — needs conversion before it can be viewed'),
-        ('geography/census-gazetteers/2025_Gaz_zcta_national_.zip', '', ''),
-    ]:
-        p = LIB / rel
-        if p.exists() and label:
-            geo.append({'label': label, 'status': status, 'path': rel, 'bytes': p.stat().st_size})
-    geo.append({'label': 'US place names (USGS GNIS) and Census 2025 ZIP-code and county centres', 'status': 'Used by "Find a place", together with named lakes, reservoirs and dams', 'path': 'geography/geographic-names/'})
-    if WATERDB.exists():
-        try:
-            w = dict(sqlite3.connect(ro_uri(WATERDB), uri=True).execute('SELECT key,value FROM meta').fetchall())
-            nid = json.loads(w.get('nid', '{}'))
-            states = [k[4:] for k in w if k.startswith('nhd:')]
-            if nid:
-                geo.append({'label': 'Dams (US Army Corps of Engineers National Inventory of Dams)', 'status': f"{nid['records']:,} dams · data updated {nid['data_last_updated']}"})
-            geo.append({'label': 'Lakes, reservoirs and ponds (USGS National Hydrography Dataset, final 2023 edition)',
-                        'status': f'{len(states)} of 56 states and territories imported' if states else 'Downloading / importing'})
-        except (sqlite3.Error, ValueError):
-            pass
-    if TERRAINDB.exists():
-        geo.append({'label': 'Elevation: shaded relief, contour lines, spot heights and 3D (USGS 3DEP, 30 m)', 'status': 'Whole US and territories'})
-    if CROPDB.exists():
-        try:
-            c = json.loads(dict(sqlite3.connect(ro_uri(CROPDB), uri=True).execute('SELECT key,value FROM meta').fetchall()).get('built', '{}'))
-            geo.append({'label': f"Orchards, vineyards & berry fields (USDA Cropland Data Layer {c.get('year', '')})",
-                        'status': f"{c.get('cells', 0):,} mapped blocks in {c.get('states', 0)} states (lower 48)"})
-        except (sqlite3.Error, ValueError):
-            pass
-    if BLDGDB.exists():
-        try:
-            m = dict(sqlite3.connect(ro_uri(BLDGDB), uri=True).execute('SELECT key,value FROM meta').fetchall())
-            n, h = m.get('buildings'), m.get('osm_heights')
-            geo.append({'label': 'Building outlines for the whole US, plus heights for 3D (Microsoft Global ML Building Footprints, 2026 release, ODbL; OpenStreetMap is used where its outlines are complete)',
-                        'status': (f"{int(n):,} buildings, shown from street level zoom" + (f" · {int(h):,} OpenStreetMap buildings with measured heights in 3D" if h else '')) if n else 'Converting'})
-        except (sqlite3.Error, ValueError):
-            pass
-    detail = None
-    if AERIAL_DETAIL.exists():
-        try:
-            m = dict(sqlite3.connect(ro_uri(AERIAL_DETAIL), uri=True).execute('SELECT key,value FROM meta').fetchall())
-            detail = [float(v) for v in m['bbox'].split(',')] if m.get('bbox') else None
-            geo.append({'label': 'Full-detail aerial photos, 30-60 cm (USGS NAIP Plus: USDA NAIP and high-resolution orthoimagery)',
-                        'status': m.get('area', '') + ('' if m.get('built') else ' · downloading')})
-        except (sqlite3.Error, ValueError, KeyError):
-            pass
-    rev = None
-    if AERIAL_COAST.exists():
-        try:
-            m = dict(sqlite3.connect(ro_uri(AERIAL_COAST), uri=True).execute('SELECT key,value FROM meta').fetchall())
-            # zoom 17+ photo URLs carry this, so browsers (which keep photo tiles a week) fetch a rebuilt layer afresh
-            rev = (m.get('rev') or '') + ('' if m.get('built') else '.building')
-            geo.append({'label': 'Sharpest aerial photos, 25 cm, 2024-25 (NOAA coastal mapping, public domain)',
-                        'status': m.get('area', '') + ('' if m.get('built') else ' · building')})
-        except (sqlite3.Error, ValueError):
-            pass
-    tdetail = None
-    if TERRAIN_DETAIL.exists():
-        try:
-            m = dict(sqlite3.connect(ro_uri(TERRAIN_DETAIL), uri=True).execute('SELECT key,value FROM meta').fetchall())
-            tdetail = [float(v) for v in m['circle'].split(',')] if m.get('circle') else None
-            geo.append({'label': 'Detailed elevation from 1 m lidar: relief, 5 ft contours, exact heights (USGS 3DEP)',
-                        'status': m.get('area', '') + ('' if m.get('built') else ' · building')})
-        except (sqlite3.Error, ValueError, KeyError):
-            pass
-    if AERIALDB.exists():
-        geo.append({'label': 'Aerial photos, whole US (USGS The National Map: USDA NAIP and other orthoimagery)', 'status': 'Zoom 0-15 nationwide, 16 in California and towns · downloading'})
-    pack = pack_info()
-    extra = {'aerial': has_aerial()}
-    if pack:
-        extra.update(map_contents())
-        geo = pack_datasets(extra)
-    return {**extra, 'meta': meta, 'datasets': geo, 'national': {k: v for k, v in national_status().items() if k not in ('source', 'database')}, 'version': data_version(), 'aerial_detail': detail, 'aerial_rev': rev, 'terrain_circle': tdetail}
-
-
-def pack_datasets(have):
-    """The panel beside a pack's map says only what this pack's map files hold."""
-    area = 'the area this map details' if have['bounds'] else 'the whole US'
-    out = [{'label': 'Main roads, towns and water for the whole US (OpenStreetMap, USGS)', 'status': 'Shown at every zoom level'}]
-    if have['detail']:
-        out.append({'label': f'Streets, places and help points (OpenStreetMap) for {area}', 'status': 'Street detail stops at the edge of this area.' if have['bounds'] else 'Shown when you zoom in'})
-    else:
-        out.append({'label': 'No street detail or help points', 'status': 'This download has only the base map. Hospitals, water taps and side streets are not in it.'})
-    if PLACEDB.exists():
-        out.append({'label': 'Place names (USGS GNIS, Census 2025 ZIP codes and counties)', 'status': 'Used by "Find a town, ZIP or place"'})
-    if TERRAINDB.exists():
-        out.append({'label': 'Elevation (USGS 3DEP)', 'status': 'Shaded relief. Contour lines only where this map has fine detail.' if have['detail'] else 'Shaded relief at broad zoom levels'})
-    if BLDGDB.exists():
-        out.append({'label': 'Building outlines (Microsoft Global ML Building Footprints, ODbL; OpenStreetMap)', 'status': f'For {area}, shown from street level zoom'})
-    if CROPDB.exists():
-        out.append({'label': 'Orchards, vineyards and berry fields (USDA Cropland Data Layer)', 'status': f'For {area}'})
-    return out
-
-
 # --------------------------------------------------------------- handler ----
 class Handler(library.Handler):
-    def send_json(self, obj, status=200, cache=None):
-        data = obj if isinstance(obj, bytes) else json.dumps(obj, separators=(',', ':')).encode()
+    def send_json(self, obj, status=200):
+        data = json.dumps(obj, separators=(',', ':')).encode()
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(data)))
-        if cache:
-            self.send_header('Cache-Control', cache)
         self.end_headers()
         self.wfile.write(data)
 
-    def send_static(self, path):
-        data = path.read_bytes()
-        mime = {'.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml',
-                '.json': 'application/manifest+json', '.png': 'image/png', '.webmanifest': 'application/manifest+json'}.get(path.suffix, 'application/octet-stream')
-        self.send_response(200)
-        self.send_header('Content-Type', mime)
-        self.send_header('Content-Length', str(len(data)))
-        self.send_header('Cache-Control', 'no-cache')
-        self.end_headers()
-        if self.command != 'HEAD':
-            self.wfile.write(data)
-
-    # The only parts of the library anyone gets, this computer included: no worker state, logs, tools, sign-in settings or reports.
-    SERVED_PREFIXES = ('/ui/', '/api/', '/zim/', '/documents/', '/pages/', '/videos/', '/videos-external/', '/transcripts/', '/metadata/videos/', '/courses/', '/collections/', '/assets/')
+    # The only parts of the library the window gets: no worker state, logs, tools, sign-in settings or reports.
+    SERVED_PREFIXES = ('/api/', '/zim/', '/documents/', '/pages/', '/videos/', '/videos-external/', '/transcripts/', '/metadata/videos/', '/courses/', '/collections/', '/assets/')
     SERVED_ONLY = True  # engine/library.py: a file must really sit in one of these folders, whatever links lead there
     LIBRARY_ROUTES = ('/api/health', '/api/download-status', '/api/collection-search', '/api/search')  # answered in engine/library.py
-    LIBRARY_PREFIXES = tuple(p for p in SERVED_PREFIXES if p not in ('/ui/', '/api/', '/zim/'))
+    LIBRARY_PREFIXES = tuple(p for p in SERVED_PREFIXES if p not in ('/api/', '/zim/'))
     # What a browser runs scripts in when it is opened directly. An <img> never runs them and shows it as before.
     ACTIVE_SUFFIXES = ('', '.html', '.htm', '.shtml', '.xhtml', '.xht', '.svg', '.svgz', '.xml', '.xsl', '.xslt', '.rdf', '.mht', '.mhtml')
     # Library content keeps what it says and runs none of its code: saved web pages, and encyclopedia pages too.
@@ -1708,7 +1041,7 @@ class Handler(library.Handler):
             return False
         words = self.requestline.split()
         target = words[1] if len(words) > 1 else ''
-        if not target.startswith('/') or target.startswith('//') or not self.host_valid():
+        if not target.startswith('/') or target.startswith('//'):
             self.close_connection = True
             self.send_error(400)
             return False
@@ -1717,47 +1050,13 @@ class Handler(library.Handler):
     def path_ok(self, path):
         if '\0' in path:
             return False
-        if path in ('/', '/index.html', '/sw.js'):
-            return True
         if path != '/reader.css' and not path.startswith(self.SERVED_PREFIXES):
             return False
         if '/..' in path or path.lower().endswith('.info.json'):  # yt-dlp's .info.json can hold request headers
             return False
         if path.startswith(('/api/', '/zim/')):  # /zim/ file names are checked in engine/library.py
             return True
-        return path.startswith('/ui/') or self.file_ok(self.translate_path(self.path), folders=True)
-
-    HOST_SYNTAX = re.compile(r'(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+)(:\d*)?')
-
-    def host_valid(self):
-        """Not a host name at all, as opposed to some other computer's name, which host_ok refuses."""
-        host = self.headers.get('Host') or ''
-        if not host:
-            return True
-        try:
-            urllib.parse.urlsplit('//' + host)
-        except ValueError:
-            return False
-        return bool(self.HOST_SYNTAX.fullmatch(host))
-
-    def host_ok(self):
-        """Only localhost or a bare IP address. A web page using DNS rebinding arrives under its own domain name and is refused."""
-        host = urllib.parse.urlsplit('//' + (self.headers.get('Host') or 'localhost')).hostname or ''
-        if host == 'localhost':
-            return True
-        try:
-            ipaddress.ip_address(host)
-            return True
-        except ValueError:
-            return False
-
-    def origin_ok(self):
-        """A browser POST from any other page, or from a sandboxed saved page, carries a different or null Origin."""
-        origin = self.headers.get('Origin')
-        try:
-            return not origin or urllib.parse.urlsplit(origin).netloc == self.headers.get('Host')
-        except ValueError:
-            return False
+        return self.file_ok(self.translate_path(self.path), folders=True)
 
     def list_directory(self, path):
         self.send_error(404)
@@ -1817,7 +1116,7 @@ class Handler(library.Handler):
         super().send_data(data, mime, status)
 
     def end_headers(self):
-        sent_type, self.sent_type = getattr(self, 'sent_type', ''), ''
+        sent_type = getattr(self, 'sent_type', '')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.sent_type = ''
         try:
@@ -1840,46 +1139,11 @@ class Handler(library.Handler):
         traceback.print_exc()
         return self.send_json({'error': f'Server error ({sys.exc_info()[0].__name__}).'}, 500)
 
-    def lan_ok(self):
-        """Loopback is always allowed. Other devices need the LAN access key once (then a cookie)."""
-        ip = self.client_address[0]
-        if ip in ('127.0.0.1', '::1') or ip.startswith('::ffff:127.'):
-            return True
-        if not LAN_KEY:
-            return False
-        qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        cookie = self.headers.get('Cookie') or ''
-        if secrets.compare_digest(qs.get('key', [''])[0], LAN_KEY):
-            self.send_response(302)
-            self.send_header('Set-Cookie', f'sg_key={LAN_KEY}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000')
-            self.send_header('Location', '/')
-            self.end_headers()
-            return None
-        m = re.search(r'(?:^|;\s*)sg_key=([^;]+)', cookie)
-        return bool(m and secrets.compare_digest(m.group(1), LAN_KEY))
-
-    def deny(self):
-        body = b'<!doctype html><meta name=viewport content="width=device-width"><title>Lastbook</title><p style="font:18px system-ui;padding:24px">This guide is shared on this network only with an access link. Ask the person running it for the link shown when it started.</p>'
-        self.send_response(403)
-        self.send_header('Content-Type', 'text/html; charset=utf-8')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
     def do_HEAD(self):
         try:
-            if not self.host_ok():
-                return self.send_error(403)
-            ok = self.lan_ok()
-            if ok is None:
-                return
-            if not ok:
-                return self.deny()
             path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
             if not self.path_ok(path):
                 return self.send_error(404)
-            if path in ('/', '/index.html', '/sw.js'):
-                return self.send_static(WEB / ('sw.js' if path == '/sw.js' else 'index.html'))
             return super().do_HEAD()
         except library.CLIENT_GONE:
             return
@@ -1896,33 +1160,9 @@ class Handler(library.Handler):
             return self.internal_error()
 
     def handle_post(self):
-        if not self.host_ok() or not self.origin_ok():
-            return self.send_json({'error': 'not allowed from this page'}, 403)
-        ok = self.lan_ok()
-        if ok is None:
-            return
-        if not ok:
-            return self.deny()
         rpath = urllib.parse.urlsplit(self.path).path
-        if rpath.startswith('/api/setup/'):  # first-run setup and Library and local AI: engine/setup/api.py, this computer only
+        if rpath.startswith('/api/setup/'):  # Library and local AI: engine/setup/api.py
             return setup_api.handle(self, 'POST', rpath)
-        if rpath.startswith('/api/tool/'):  # the assistant's read-only tools, for other local DeepSeek clients
-            name = rpath[10:]
-            if name not in {t['function']['name'] for t in assistant.TOOLS}:
-                return self.send_json({'error': 'unknown tool'}, 404)
-            try:
-                n = int(self.headers.get('Content-Length') or 0)
-                if n < 0:
-                    raise ValueError
-                args = json.loads(self.rfile.read(min(n, 20000)) or b'{}')
-                if not isinstance(args, dict):
-                    raise ValueError
-            except ValueError:
-                return self.send_json({'error': 'arguments must be a JSON object'}, 400)
-            sess, extra = assistant.Session(), []
-            text, summary = assistant.run_tool(name, args, sess, extra)
-            images = [p['image_url']['url'] for m in extra for p in m['content'] if isinstance(p, dict) and p.get('type') == 'image_url']
-            return self.send_json({'text': text, 'summary': summary, 'sources': list(sess.sources.values()), 'images': images})
         if rpath == '/api/assistant/local':   # the optional local AI: look again for the file, turn it on or off, stop it
             if not assistant.LOCAL:
                 return self.send_json({'error': 'no local AI in this version'}, 404)
@@ -1991,13 +1231,6 @@ class Handler(library.Handler):
 
     def do_GET(self):
         try:
-            if not self.host_ok():
-                return self.send_json({'error': 'not allowed from this page'}, 403)
-            ok = self.lan_ok()
-            if ok is None:
-                return
-            if not ok:
-                return self.deny()
             url = urllib.parse.urlsplit(self.path)
             path = urllib.parse.unquote(url.path)
             if not self.path_ok(path):
@@ -2005,15 +1238,6 @@ class Handler(library.Handler):
             qs = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
             if path.startswith('/api/setup/'):
                 return setup_api.handle(self, 'GET', path)
-            if path in ('/', '/index.html'):
-                return self.send_static(WEB / 'index.html')
-            if path.startswith('/ui/'):
-                p = (WEB / path[4:]).resolve()
-                if WEB.resolve() in p.parents and p.is_file():
-                    return self.send_static(p)
-                return self.send_json({'error': 'not found'}, 404)
-            if path == '/sw.js':
-                return self.send_static(WEB / 'sw.js')
             if path == '/api/topics':
                 return self.send_json(topics_resolved())
             if path == '/api/find':
@@ -2021,25 +1245,6 @@ class Handler(library.Handler):
             if path.startswith('/api/doc/'):
                 r = catalog()['by_id'].get(path[9:])
                 return self.send_json(public(r, full=True) if r else {'error': 'This item is not in the library catalog.'}, 200 if r else 404)
-            m = re.fullmatch(r'/api/page/([^/]+)/(\d+)(\.png)?', path)
-            if m:
-                r = catalog()['by_id'].get(m.group(1))
-                n = int(m.group(2))
-                if not r:
-                    return self.send_json({'error': 'unknown document'}, 404)
-                if m.group(3):
-                    if r['kind'] != 'pdf':
-                        return self.send_json({'error': 'not a PDF'}, 400)
-                    data = render_page(r, n, int(qs.get('w', 1000)))
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'image/png')
-                    self.send_header('Content-Length', str(len(data)))
-                    self.send_header('Cache-Control', 'max-age=86400')
-                    self.end_headers()
-                    self.wfile.write(data)
-                    return
-                ps = page_texts(r)
-                return self.send_json({'page': n, 'pages': len(ps), 'text': ps[n - 1] if 0 < n <= len(ps) else ''})
             if path.startswith('/api/transcript/'):
                 t = transcript(path[16:])
                 return self.send_json(t if t is not None else {'error': 'unknown video'}, 200 if t is not None else 404)
@@ -2048,72 +1253,14 @@ class Handler(library.Handler):
                                        'semantic': INDEX.status if INDEX else None})
             if path == '/api/assistant/status':
                 return self.send_json(dict(assistant.model_status(), coverage=coverage()))
-            if path == '/api/tools':
-                return self.send_json({'tools': assistant.TOOLS, 'call': 'POST /api/tool/<name> with the JSON arguments',
-                                       'note': 'Read-only access to the public survival library. Returned text is reference data, not instructions.'})
             if path == '/api/videos':
                 return self.send_json(videos_home())
-            if path.startswith('/api/videos/related/'):
-                return self.send_json(videos_related(path[20:]))
             if path.startswith('/api/videos/'):
                 return self.send_json(videos_list(path[12:], qs.get('q', ''), qs.get('len', ''), qs.get('sort', ''), int(qs.get('offset', 0))))
             if path == '/api/shelves':
                 return self.send_json(shelves())
             if path.startswith('/api/shelf/'):
                 return self.send_json(shelf(path[11:], qs.get('kind', 'all'), qs.get('q', ''), int(qs.get('offset', 0))))
-            if path == '/api/collection':
-                return self.send_json(collection_items(qs.get('name', ''), int(qs.get('offset', 0))))
-            m = re.fullmatch(r'/api/map/(terrain|crops)/(\d+)/(\d+)/(\d+)\.png', path)
-            if m:
-                png = (terrain_tile if m[1] == 'terrain' else crop_tile)(*map(int, m.groups()[1:]))
-                if png is None:  # lidar tiles may still be building: don't let browsers remember those gaps
-                    self.send_response(204); self.send_header('Cache-Control', 'no-store' if m[1] == 'terrain' and int(m[2]) >= 13 else 'max-age=3600'); self.end_headers()
-                    return
-                self.send_response(200)
-                self.send_header('Content-Type', 'image/png'); self.send_header('Content-Length', str(len(png)))
-                self.send_header('Cache-Control', 'max-age=86400'); self.end_headers()
-                self.wfile.write(png)
-                return
-            m = re.fullmatch(r'/api/map/aerial/(\d+)/(\d+)/(\d+)', path)
-            if m:
-                img = aerial_tile(*map(int, m.groups()))
-                if img is None:  # none (yet): the photo download is still filling in, so don't let browsers remember the gap
-                    self.send_response(204); self.send_header('Cache-Control', 'no-store'); self.end_headers()
-                    return
-                self.send_response(200)
-                self.send_header('Content-Type', 'image/jpeg' if img[:3] == b'\xff\xd8\xff' else 'image/png')
-                # while sharp photos are being built, zoom 17+ tiles may still change: keep them only briefly
-                age = 60 if int(m[1]) >= 17 and aerial_coast_building() else 604800
-                self.send_header('Content-Length', str(len(img))); self.send_header('Cache-Control', f'max-age={age}'); self.end_headers()
-                self.wfile.write(img)
-                return
-            m = re.fullmatch(r'/api/map/bldg3d/(\d+)/(\d+)', path)
-            if m:
-                data = bldg3d(int(m[1]), int(m[2]))
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/octet-stream'); self.send_header('Content-Length', str(len(data)))
-                self.send_header('Cache-Control', 'max-age=86400'); self.end_headers()
-                self.wfile.write(data)
-                return
-            m = re.fullmatch(r'/api/map/tile/(\d+)/(\d+)/(\d+)', path)
-            if m:
-                z, x, y = map(int, m.groups())
-                if not 3 <= z <= 18:
-                    return self.send_json({'z': z, 'layers': {}})
-                return self.send_json(map_tile(z, x, y), cache='max-age=86400' if 'v' in qs else 'max-age=60')  # ?v= carries the data version
-            if path == '/api/map/resources':
-                return self.send_json(resource_view(float(qs['west']), float(qs['south']), float(qs['east']), float(qs['north']), float(qs.get('zoom', 10)), qs.get('kinds', ','.join(RESOURCE_KINDS)).split(',')))
-            if path in ('/api/map/pins', '/api/map/members'):
-                box = [float(qs[k]) for k in ('west', 'south', 'east', 'north')]
-                kinds = [k for k in qs.get('kinds', '').split(',') if k in HELP]
-                if path == '/api/map/pins':
-                    return self.send_json(pins(*box, float(qs.get('zoom', 10)), kinds))
-                return self.send_json(members(*box, kinds, float(qs['lat']), float(qs['lon'])))
-            if path == '/api/map/near':
-                cls = [c for c in qs.get('cls', 'hospital,clinic,pharmacy,fire_station,drinking_water').split(',') if c in HELP]
-                return self.send_json(near(float(qs['lat']), float(qs['lon']), cls, int(qs.get('limit', 5))))
-            if path == '/api/map/info':
-                return self.send_json(map_info())
             if path == '/api/places':
                 try:
                     near_pt = tuple(map(float, qs['near'].split(',')))[:2] if qs.get('near') else None
@@ -2124,8 +1271,7 @@ class Handler(library.Handler):
                 s = json.loads((LIB / 'summary.json').read_text(encoding='utf-8'))
                 sources = (catalog()['by_path'].get(SOURCES_PAGE) or {}).get('id')
                 return self.send_json({**{k: s.get(k) for k in ('resources', 'pdfs', 'pdf_pages', 'web_pages', 'videos', 'collections', 'document_bytes')},
-                                       'zims': zim_names(), 'sources': sources, 'pack': bool(pack_info()),
-                                       'pins': bool(map_contents()['layers']) if pack_info() else True})
+                                       'zims': zim_names(), 'sources': sources})
             if path.startswith('/api/') and path not in self.LIBRARY_ROUTES:
                 return self.send_json({'error': 'not found'}, 404)
             return super().do_GET()
@@ -2136,47 +1282,10 @@ class Handler(library.Handler):
 
 
 def init(no_index=False):
-    """Everything the engine needs before it can answer a request. Opens no socket: the desktop app calls only this."""
+    """Everything the engine needs before it can answer a request. Opens no socket."""
     global INDEX
     catalog()
     INDEX = retrieval.Index(catalog, trust, library.DB)
     assistant.init(sys.modules[__name__], INDEX)
     if not no_index:
         threading.Thread(target=INDEX.run_forever, daemon=True).start()
-    threading.Thread(target=prewarm_previews, daemon=True).start()
-
-
-def serve(port, lan=False):
-    """The HTTP server version: binds the port and answers until stopped."""
-    global LAN_KEY, SERVER
-    if lan:
-        kf = HERE / 'derived' / 'lan-key'
-        if not kf.exists():
-            kf.write_text(secrets.token_urlsafe(18))
-            os.chmod(kf, 0o600)
-        LAN_KEY = kf.read_text(encoding='utf-8').strip()
-    srv = SERVER = library.http.server.ThreadingHTTPServer(('0.0.0.0' if lan else '127.0.0.1', port), Handler)
-    print(f'Lastbook: http://127.0.0.1:{port}/', flush=True)
-    if lan:
-        import socket
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(('10.255.255.255', 1)); ip = s.getsockname()[0]; s.close()
-        except OSError:
-            ip = '<this-computer-ip>'
-        print(f'Phones on this network: http://{ip}:{port}/?key={LAN_KEY}  (keep this link private; delete derived/lan-key to change it)', flush=True)
-    srv.serve_forever()
-
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--port', type=int, default=8890)
-    ap.add_argument('--lan', action='store_true', help='also serve phones on the same network; they need the printed access link')
-    ap.add_argument('--no-index', action='store_true', help='do not update the semantic index in the background')
-    ap.add_argument('--data', help='data folder holding library-data/ and derived/ (or set LASTBOOK_DATA); default: beside this program')
-    a = ap.parse_args()
-    init(a.no_index)
-    serve(a.port, a.lan)
-
-
-if __name__ == '__main__':
-    main()

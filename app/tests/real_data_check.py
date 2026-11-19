@@ -80,7 +80,7 @@ print('data', DATA, '| pdf', psize, '| video', vsize, '| zims', zims, flush=True
 
 b = B.Bridge(server)
 piece = B.VIDEO_PIECE
-for t, want in [('/', 200), ('/ui/app.js', 200), ('/ui/words.js', 200), ('/ui/chat.js', 200), ('/api/topics', 200), ('/api/library', 200), ('/api/shelves', 200), ('/api/map/info', 200), ('/api/health', 200), ('/api/nope', 404)]:
+for t, want in [('/', 404), ('/ui/app.js', 404), ('/api/topics', 200), ('/api/library', 200), ('/api/shelves', 200), ('/api/videos', 200), ('/api/places?q=springfield', 200), ('/api/health', 200), ('/api/nope', 404)]:
     s, h, d = call(b, 'GET', t)
     note(f'GET {t}', s == want, f'{s} {len(d)} bytes')
 counts = []
@@ -88,7 +88,7 @@ for word in ('water', 'canning', 'generator'):
     s, h, d = call(b, 'GET', f'/api/find?q={word}')
     counts.append(len(json.loads(d).get('results', [])) if s == 200 else s)
 note('keyword search water, canning, generator', all(isinstance(c, int) and c > 0 for c in counts), str(counts))
-s, h, d = call(b, 'GET', f"/api/page/{cat[small_pdf]['id']}/1.png")
+s, h, d = call(b, 'GET', q(small_pdf) + '?pdf-page=1')
 note('PDF page image', s == 200 and d[:4] == b'\x89PNG', f'{s} {len(d)} bytes')
 s, h, d = call(b, 'GET', q(saved))
 csp = h.get('content-security-policy', '')

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """What a pack's app shows and ships: encyclopedia articles with their scripts taken out, guide items that open nothing hidden,
-and no household area or working name in the web/ and content/ an app build packages.
+and no household area or working name in the content/ a package build ships.
 
   python3 -B app/tests/test_what_ships.py [-v]
 
@@ -100,7 +100,6 @@ class Guides(unittest.TestCase):
 
     def test_not_a_pack_offers_everything(self):
         self.assertIsNone(server.pack_info())
-        self.assertNotIn('layers', server.map_info())
 
 
 class WhatShips(unittest.TestCase):
@@ -116,8 +115,7 @@ class WhatShips(unittest.TestCase):
             self.assertNotIn('"land-', land)
             grow = (Path(out) / 'content/topics/grow.json').read_text(encoding='utf-8')
             self.assertIn('coastal-growing-', grow)
-            web = '\n'.join(p.read_text(encoding='utf-8', errors='replace') for p in files if p.parent.name == 'web' and p.suffix in ('.js', '.html', '.css'))
-            self.assertFalse(re.findall(r'https?://(?!www\.w3\.org/)[^\s"\'`<)]*', web))   # no web address in our own pages
+            self.assertFalse([p for p in files if 'content' not in p.relative_to(out).parts])   # the guides and nothing else
         for word in ('placeholdertown', 'Placeholdertown'):   # with the household's own list in place, check its words and coordinates here
             self.assertTrue(HOUSEHOLD.search(word), word)
         for fine in ('39.0997', 'Southern California', 'Los Angeles County', 'claude_source_id'):

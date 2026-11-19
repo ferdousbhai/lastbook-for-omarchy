@@ -63,7 +63,7 @@ class TestHandler(server.Handler):
     def do_GET(self):
         p, _, q = self.path.partition('?')
         q = dict(x.split('=') for x in q.split('&') if '=' in x)
-        if p in ('/api/t/slow', '/documents/t/slow', '/api/page/t/1.png'):
+        if p in ('/api/t/slow', '/documents/t/slow'):
             TestHandler.slow_started.append(p)
             time.sleep(int(q.get('ms', 500)) / 1000)
             return self.send_json({'slept': True})
@@ -339,7 +339,7 @@ class Both:
                 self.assertGreaterEqual(r.status, 400, f'{m} {t}')
                 self.assertNotIn(fixture.CANARY, r.body, t)
         r = self.get('/?x=../canary-root.txt')
-        self.assertEqual(r.status, 200)
+        self.assertEqual(r.status, 404)
         self.assertNotIn(fixture.CANARY, r.body)
 
     def test_symlink_out_of_the_library_is_refused(self):
@@ -561,23 +561,15 @@ class Both:
         h.path, h.directory = page, str(fixture.LIB)
         return h.saved_page_part(src)
 
-    def test_app_page_may_not_sit_in_a_frame(self):
-        r = self.get('/')
-        self.assertEqual(r.status, 200)
-        self.assertIn('<', r.body.decode()[:50])
-        self.assertEqual(r.hs['content-security-policy'], "frame-ancestors 'none'")
+    def test_no_page_of_the_app_itself(self):
+        for t in ('/', '/index.html', '/sw.js', '/ui/app.js', '/ui/setup.html', '/api/map/info', '/api/tools'):
+            self.assertEqual(self.get(t).status, 404, t)
+        self.assertEqual(call(self.b, 'POST', '/api/tool/search', self.json, b'{}').status, 404)
 
     def test_no_server_or_date_header(self):
         r = self.get('/api/health')
         self.assertNotIn('server', r.hs)
         self.assertNotIn('date', r.hs)
-
-    def test_map_info_has_no_personal_paths(self):
-        r = self.get('/api/map/info')
-        self.assertEqual(r.status, 200)
-        info = json.loads(r.body)
-        self.assertEqual(info['national'], {'state': 'complete', 'features': 7})
-        self.assertNotIn(b'/Users/', r.body)
 
     def test_engine_error_is_an_answer(self):
         r = self.get('/api/t/boom')
@@ -587,7 +579,6 @@ class Both:
 
     def test_ordinary_api(self):
         self.assertEqual(json.loads(self.get('/api/health').body)['offline'], True)
-        self.assertEqual(self.get('/ui/app.js').status, 200)
         self.assertEqual(self.get('/reader.css').status, 200)
         self.assertEqual(self.get('/api/nope').status, 404)
         r = json.loads(self.get('/api/find?q=boil').body)
@@ -746,10 +737,7 @@ class StreamTests(Both, unittest.TestCase):
             t = time.perf_counter()
             self.assertEqual(call(b, 'GET', '/api/health').status, 200)
             times.append(time.perf_counter() - t)
-        t = time.perf_counter()
-        self.assertEqual(call(b, 'GET', '/ui/app.js').status, 200)
-        ui = time.perf_counter() - t
-        OBSERVED['stream, small during large flood (300 videos, the window not reading)'] = f'/api/health median {statistics.median(times) * 1000:.2f} ms, max {max(times) * 1000:.2f} ms over 200; /ui/app.js {ui * 1000:.1f} ms'
+        OBSERVED['stream, small during large flood (300 videos, the window not reading)'] = f'/api/health median {statistics.median(times) * 1000:.2f} ms, max {max(times) * 1000:.2f} ms over 200'
         self.assertLess(max(times), 1.0)
         for e in exs:
             e.cancel()
@@ -810,13 +798,6 @@ class WholeProcess(unittest.TestCase):
             self.assertNotIn(word, files)
         self.assertNotIn('onnxruntime.', ' '.join(k for k, v in sys.modules.items() if v is not None))
         OBSERVED[f'{how} for this process'] = 'no rows' if not out.strip() else out
-
-    def test_map_info_still_gives_what_the_ui_reads(self):
-        info = server.map_info()
-        for k in ('national', 'version', 'aerial_detail', 'aerial_rev', 'terrain_circle', 'datasets'):
-            self.assertIn(k, info)
-        self.assertEqual(info['national']['state'], 'complete')
-        self.assertEqual(server.national_status()['source'], '/Users/someone/library-data/x.pbf')   # the engine itself still sees it
 
     def test_nothing_written_to_the_real_library(self):
         self.assertTrue(str(server.LIB).startswith(str(DATA)))

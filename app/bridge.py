@@ -33,7 +33,7 @@ MAX_POST = 256 * 1024               # the engine's own limit on a chat request i
 
 # name: (workers, most waiting)
 LANES = {
-    'small': (8, 5000),     # the app's own files and /api/
+    'small': (8, 5000),     # /api/
     'render': (2, 500),     # PDF page images: PDFium runs one at a time anyway, so more workers would only sit waiting
     'chat': (8, 32),        # long-lived: must not hold a small worker for the length of an answer
     'large': (6, 1000),     # video, PDF, saved pages, encyclopedia entries
@@ -54,7 +54,6 @@ PDF_MAX_PAGES = 20000               # the most one viewer page lists
 PDF_SIZES_KEPT = 16
 PDF_NOTICE = b'This PDF could not be shown here.'
 BAD_TARGET = re.compile(r'[\x00-\x20\x7f]')
-RENDER = re.compile(r'/api/page/[^/]+/\d+\.png$')
 TOO_LARGE = b'This file is too large to show here.'
 GONE = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
 
@@ -293,7 +292,7 @@ class Exchange:
             self._send(body)
             return
         ctype = (self._header('content-type') or '').lower()
-        if 'html' in ctype and not self._header('content-security-policy'):   # the app's own page may not sit inside a frame
+        if 'html' in ctype and not self._header('content-security-policy'):   # an error page: it may not sit inside a frame
             self.headers.append(('Content-Security-Policy', "frame-ancestors 'none'"))
         self._send_head()
 
@@ -537,8 +536,8 @@ def _lower(headers):
 def _lane_for(method, path, target=''):
     if method == 'POST' and path == '/api/chat':
         return 'chat'
-    if RENDER.match(path) or PDF_PAGE.search(target):
+    if PDF_PAGE.search(target):
         return 'render'
-    if path.startswith(('/api/', '/ui/')) or path in ('/', '/index.html', '/sw.js', '/reader.css'):
+    if path.startswith('/api/') or path == '/reader.css':
         return 'small'
     return 'large'

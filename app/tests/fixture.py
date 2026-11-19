@@ -86,7 +86,6 @@ def ensure():
     con.execute('INSERT INTO pages VALUES (?,?,?,?,?,?,?)', ('pdfsmall', 'pdfsmall', 'Test', 'test', 'documents/s.pdf', 1, 'boil water for one minute'))
     con.commit()
     con.close()
-    (DATA / 'derived' / 'geo' / 'national-status.json').write_text(json.dumps({'state': 'complete', 'features': 7, 'source': '/Users/someone/library-data/x.pbf', 'database': '/Users/someone/derived/geo/national.sqlite'}))
     (DATA / 'ready').write_text('1')
     return DATA
 

@@ -5,8 +5,6 @@ The data folder comes from --data, then LASTBOOK_DATA, then the person's remembe
 folder. Existing libraries elsewhere are opened only when the person chooses them. If no library is available, the engine
 starts in setup (engine/setup/) to download one or choose an existing library.
 Output goes to <data>/derived/logs/lastbook.log, rotated by size, because a packaged app has no console.
-
-Sharing with a phone, a chosen port and running with no window all belong to the server version: python server.py.
 """
 import json
 import os

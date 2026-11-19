@@ -87,7 +87,6 @@ The setup contract, including state maps, is in [docs/SETUP-API.md](docs/SETUP-A
 | `app/` | The engine's side of the app: the pipe the window talks to (`engine_pipe.py`), library lookup and setup hooks (`main.py`), the no-port bridge (`bridge.py`), and tests (`app/tests/`). |
 | `engine/` | Paths and data-folder lookup, library access, saved pages, offline address search (`address_search.py`) and first-run setup (`engine/setup/`). |
 | `server.py`, `assistant.py`, `retrieval.py`, `encyclopedia.py`, `llm_local.py` | The engine: request handler, the assistant and its citation checks, keyword plus meaning-based search (through Recall), encyclopedia articles as passages, and the local AI (model pins, fit check, runner control). |
-| `web/` | The browser interface of the library server (`server.py`), in plain HTML, CSS and JavaScript with no build step and nothing loaded from the web. The desktop app does not use or ship it. |
 | `content/` | The curated guides (`topics/*.json`) and what curators looked for and did not find (`gaps.json`). Format: `content/SCHEMA.md`. |
 | `packaging/` | The Arch package (`arch/`: PKGBUILD, the pack manifest it ships, the package scan), the desktop entry (`linux/`), icons (`icon/`), release manifest, TLS roots tools, and `packaging/llm/` (the local AI runner). |
 | `tools/` | Curator helpers (`libq.py`, `validate_topics.py`), the map area list's maker (`make_region_list.py`), and the retrieval check (`eval/`). |
@@ -110,15 +109,6 @@ LASTBOOK_DEV=1 PYTHONPATH=$PWD/.deps native/target/debug/lastbook --data /path/t
 `PYTHONPATH`. Without `--data`, the engine checks `LASTBOOK_DATA`, the folder chosen last time, and its own data folder.
 Existing libraries elsewhere are accessed when the person chooses them. If no library is available, it opens setup.
 The full order is in `app/main.py`.
-
-The **library server** version runs the same engine in a browser and can share with phones on the same Wi-Fi:
-
-```bash
-LASTBOOK_DATA=/path/to/LastbookData python3 server.py          # then open http://127.0.0.1:8890/
-```
-
-See [docs/LIBRARY-SERVER.md](docs/LIBRARY-SERVER.md). It was written for the household library this project grew out of,
-so some of its paths and ports describe that setup. The desktop app does not use this port; `web/` is there for this mode only.
 
 ## How Chat finds what it cites
 
@@ -173,7 +163,7 @@ built package with `python3 packaging/arch/scan_package.py <package>`. Releases:
   fetches them, and the checksums and pins are here.
 - **Generated data** (`derived/`, builds): indexes, caches and logs the engine makes as it runs, and build output.
 - **Release and signing material**: signing keys, deploy settings and the release folders.
-- **Private data**: the household's own home area (`web/home-area.json`), the private word lists the scans use, machine
+- **Private data**: a household's own home area, the private word lists the scans use, machine
   and user names, keys and internal security-audit notes. The guides here are already in their shipped, general wording.
   To keep your own home-area words out of a build, put them in a local copy of `packaging/ship_edits.json` (`forbidden`)
   and never commit it.
@@ -181,12 +171,12 @@ built package with `python3 packaging/arch/scan_package.py <package>`. Releases:
 ## Tests
 
 ```bash
-python3 -B -m unittest app.tests.test_bridge app.tests.test_setup app.tests.test_data_folder app.tests.test_what_ships app.tests.test_address_search app.tests.test_topic_search app.tests.test_validate_topics app.tests.test_libq app.tests.test_semantic
+bin/test
 ```
 
-`test_bridge` builds its own made-up library; `test_semantic` runs a stand-in Recall; the others run without a library. The window's own tests run with
-`cargo test --manifest-path native/Cargo.toml`. `bin/test` runs both (libzim and pypdfium2 come from the PKGBUILD's pinned
-wheels, `bin/test-deps`); `bin/check` adds the installer test. The `linux_*` helpers in `app/tests/` drive a running window through AT-SPI.
+It runs the window's tests (`cargo test`) and the engine's (`python3 -m unittest`, with libzim and pypdfium2 from the
+PKGBUILD's pinned wheels, `bin/test-deps`). `test_bridge` builds its own made-up library; `test_semantic` runs a stand-in
+Recall; the others run without a library. `bin/check` adds the installer test. The `linux_*` helpers in `app/tests/` drive a running window through AT-SPI.
 
 ## Contributing and licence
 
