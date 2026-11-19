@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    cards::{self, activate, card, column, route_of, section, some_then_all},
+    cards::{self, activate, card, column, route_of, section, some_then_all, text_card},
     engine::{load_json, store_json},
     ui::{App, Route},
 };
@@ -163,6 +163,7 @@ impl Browse {
             let l = gtk::Label::new(Some("Nothing saved yet. Star a page, video or guide to keep it here (Ctrl+D)."));
             l.add_css_class("status-line");
             l.set_xalign(0.0);
+            l.set_wrap(true);
             self.saved.append(&l);
         }
         let mut items = items;
@@ -191,14 +192,13 @@ impl Browse {
             clear(&me.about);   // opened twice before the answers came: one set of cards
             title("About this library", "", &me.about);
             let gb = lib["document_bytes"].as_f64().unwrap_or(0.0) / 1e9;
-            me.about.append(&card(
+            me.about.append(&text_card(
                 "What's in it",
                 &glib::markup_escape_text(&format!(
                     "{} PDF manuals ({} pages), {} saved web pages, {} videos and {} complete encyclopedias; {gb:.1} GB of documents.",
                     lib["pdfs"], lib["pdf_pages"], lib["web_pages"], lib["videos"], lib["collections"]
                 )),
                 "",
-                None,
             ));
             let ix = &st["index"];
             let search = if ix["state"] == "waiting for Recall" {
@@ -226,18 +226,16 @@ impl Browse {
                 (false, true) => format!(" Not readable: scanned PDFs without text ({scanned})."),
                 (false, false) => String::new(),
             };
-            me.about.append(&card("Search and the assistant", &glib::markup_escape_text(&format!("{search} {ai}{unread}")), "", None));
-            me.about.append(&card(
+            me.about.append(&text_card("Search and the assistant", &glib::markup_escape_text(&format!("{search} {ai}{unread}")), ""));
+            me.about.append(&text_card(
                 "Privacy",
                 &glib::markup_escape_text("Lastbook sends nothing anywhere. Only setup downloads, and only when you start it."),
                 "",
-                None,
             ));
-            me.about.append(&card(
+            me.about.append(&text_card(
                 "Credits",
                 &glib::markup_escape_text("Based on Lastbook (lastbook.org), MIT. The look follows Strata (github.com/lgse/strata), MIT; the icons are Lucide's, ISC. Encyclopedias by Kiwix and their contributors. Map data © OpenStreetMap contributors (ODbL), tiles from Protomaps; place names from GeoNames (CC BY 4.0). Each document keeps its own licence: see Sources and permissions in the library."),
                 &format!("Lastbook for Omarchy {}", app_version(&me.app)),
-                None,
             ));
             let m = card("Library and downloads", "", "", None);
             activate(&m, me.app.clone(), Route::Manage);

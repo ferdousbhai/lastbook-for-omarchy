@@ -184,6 +184,7 @@ impl MapPage {
         area.set_hexpand(true);
         area.set_vexpand(true);
         area.set_focusable(true);
+        area.update_property(&[gtk::accessible::Property::Label("Map")]);
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some("Find a place, town or address"));
         search.set_width_chars(22);

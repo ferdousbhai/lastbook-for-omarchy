@@ -260,9 +260,11 @@ impl ChatPage {
         self.draw();
         self.refresh_status();
         self.warm();
-        let input = self.input.clone();
+        let (input, app) = (self.input.clone(), self.app.clone());
         glib::idle_add_local_once(move || {
-            input.grab_focus();
+            if !app.upgrade().is_some_and(|a| a.sidebar_has_focus()) {
+                input.grab_focus();
+            }
         });
     }
 

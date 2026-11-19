@@ -328,8 +328,8 @@ class Downloads(Base):
         self.assertEqual([name for name, _, _ in self.files.log], ['model.gguf'])
 
     def test_a_file_once_matched_is_not_read_through_again(self):
-        """A resume (as while the All pack is unpacked) trusts the record of the earlier match only while the file is the
-        same: any change in size, time or inode, or a record for another checksum, and it is hashed again."""
+        """A resume (as while the All pack is unpacked) trusts this process's earlier match only while the file is the same:
+        any change and it is hashed again. Nothing beside the file can vouch for it (a drive could bring such a record)."""
         p = self.dl('model.gguf').run()
         hashed = []
         real = download._sha256
@@ -345,8 +345,8 @@ class Downloads(Base):
             self.assertEqual(self.dl('model.gguf').run(), p)
             self.assertEqual(self.dl('model.gguf').run(), p)
             self.assertEqual(len(hashed), 1)
-            stamp = json.loads(Path(p + '.verified.json').read_text())
-            Path(p + '.verified.json').write_text(json.dumps({**stamp, 'sha256': '0' * 64}))
+            self.assertEqual(list(Path(p).parent.glob('*.json')), [])     # no record on disk to forge
+            download._VERIFIED.clear()                                       # a new start: read through once more
             self.assertEqual(self.dl('model.gguf').run(), p)
             self.assertEqual(len(hashed), 2)
             Path(p).write_bytes(bytes(len(self.model)))         # other bytes behind a record that now names another time
@@ -1062,6 +1062,19 @@ class Switching(Base):
                 mock.patch.object(app_main, 'data_folder', lambda d: Path(d)), self.assertRaises(OSError):
             engine_pipe.main()
         self.assertEqual(sent, [{'error': 'The engine could not open the library (OSError: no memory).'}])     # the first line: the window shows it
+
+    def test_a_failed_library_that_still_holds_their_model_is_not_listed(self):
+        """A rolled-back library keeps a file carry_over could not bring back (the restored one has a model of that name,
+        a damaged one, say): that folder is not put up for deletion."""
+        kept = []
+        folder = self.lib(self.parent / 'LastbookData.failed', 'x')
+        self.assertFalse(install._holds_theirs(folder))
+        (folder / 'models').mkdir()
+        (folder / 'models' / 'model.gguf.partial').write_bytes(b'cut short')
+        self.assertFalse(install._holds_theirs(folder), 'a copy cut short is not theirs')
+        (folder / 'models' / 'model.gguf').write_bytes(b'good, new')
+        self.assertTrue(install._holds_theirs(folder))
+        self.assertEqual(kept, [])
 
     def test_failed_library_deleted_only_where_roll_back_put_it(self):
         lib = self.lib(self.parent / 'LastbookData', 'open')

@@ -44,6 +44,8 @@ impl Reader {
         entry.add_css_class("page-entry");
         entry.set_width_chars(4);
         entry.set_max_width_chars(5);
+        entry.set_tooltip_text(Some("Page number"));
+        entry.update_property(&[gtk::accessible::Property::Label("Page number")]);
         gtk::prelude::EditableExt::set_alignment(&entry, 1.0);
         let total = gtk::Label::new(None);
         total.add_css_class("meta");

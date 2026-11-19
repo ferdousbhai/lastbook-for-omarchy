@@ -6,6 +6,22 @@ use serde_json::Value;
 
 use crate::ui::Route;
 
+/// A card whose text is read whole (About's), not a snippet cut at four lines.
+pub fn text_card(title: &str, markup: &str, meta: &str) -> gtk::Box {
+    let c = card(title, markup, meta, None);
+    let mut child = c.first_child().and_then(|t| t.first_child());
+    while let Some(w) = child {
+        if w.has_css_class("snippet")
+            && let Some(l) = w.downcast_ref::<gtk::Label>()
+        {
+            l.set_lines(-1);
+            l.set_ellipsize(gtk::pango::EllipsizeMode::None);
+        }
+        child = w.next_sibling();
+    }
+    c
+}
+
 pub fn card(title: &str, snippet_markup: &str, meta: &str, trust: Option<&str>) -> gtk::Box {
     let card = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     card.add_css_class("result");

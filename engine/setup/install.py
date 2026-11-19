@@ -217,6 +217,18 @@ def stage_switch(pend, new_lib, target, model_file=None, kind=None, model_sha256
     return d
 
 
+def _holds_theirs(folder):
+    """Whether `folder` still has anything carry_over would have taken: a model, address index or map of the person's."""
+    folder = Path(folder)
+    models = folder / 'models'
+    if models.is_dir() and any(f.is_file() and not f.name.endswith('.partial') for f in models.iterdir()):
+        return True
+    geo = folder / 'derived' / 'geo'
+    if (geo / 'addresses').is_dir() and any(re.fullmatch(r'[A-Z]{2}\.(sqlite|json)', f.name) for f in (geo / 'addresses').iterdir()):
+        return True
+    return geo.is_dir() and any(f.is_file() and maps.ours(f.name) for f in geo.iterdir())
+
+
 def carry_over(old, new):
     """What belongs to the person, not the pack, goes with them: the model file, address indexes, the world map and its
     regions (engine/setup/maps.py), and the AI's record of having checked the model file."""
@@ -328,7 +340,9 @@ def roll_back(pend, work, kept=None):
     os.replace(old, target)
     try:
         carry_over(broken, target)      # the model, the maps and the address indexes went into the new one: they go back too
-        if kept is not None:
+        # Listed for deletion only if nothing of the person's stayed behind (carry_over leaves a file whose name the
+        # restored library already has: a newly downloaded model beside a damaged one, say).
+        if kept is not None and not _holds_theirs(broken):
             kept.append(str(broken))
     except OSError as e:
         print('setup: not everything came back from', broken.name, type(e).__name__, e, flush=True)

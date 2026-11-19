@@ -241,24 +241,25 @@ def _content_range(v):
 
 
 def remove(path):
-    """Deletes a finished download and the record of its check."""
+    """Deletes a finished download."""
     os.unlink(path)
-    try:
-        os.unlink(str(path) + '.verified.json')
-    except OSError:
-        pass
+
+
+# Files this process has matched against their published SHA-256: (device, inode, size, mtime, ctime) -> sha256.
+_VERIFIED = {}
 
 
 class Download:
     """One file: <dest>.part grows, with <dest>.part.json beside it (url, size, sha256, bytes done, ETag).
     run() returns once the whole file is there and its SHA-256 matches, renamed to <dest>. Raises Stopped, Failed or BadChecksum.
-    <dest>.verified.json then records the file as matched (size, mtime_ns, inode, sha256), so a later run (a resume while it
-    is being unpacked) need not read it through again; any difference and it is hashed again.
+    A file this process has matched is remembered (in memory: a record on disk could be brought along with a file that is
+    not the published one), so a resume while it is being unpacked need not read it through again; any change to the
+    file and it is hashed again.
     progress(done, total, phase) is called as bytes arrive; phase is 'downloading' or 'verifying'."""
 
     def __init__(self, url, dest, size, sha256, control, progress=lambda d, t, p: None, allowed=None, context=None, timeout=TIMEOUT):
         self.url, self.dest, self.size, self.sha256 = url, str(dest), int(size), sha256.lower()
-        self.part, self.meta, self.stamp = self.dest + '.part', self.dest + '.part.json', self.dest + '.verified.json'
+        self.part, self.meta = self.dest + '.part', self.dest + '.part.json'
         self.control, self.progress = control, progress
         self.allowed, self.context, self.timeout = allowed, context, timeout
 
@@ -290,21 +291,20 @@ class Download:
                 self.progress(done, n, 'verifying')
         return h, done
 
-    def _stamp(self):
-        """What identifies the finished file as the one whose SHA-256 was matched: its size, change time and inode."""
+    def _identity(self):
         st = os.stat(self.dest)
-        return {'size': st.st_size, 'mtime_ns': st.st_mtime_ns, 'ino': st.st_ino, 'sha256': self.sha256}
+        return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
     def _write_stamp(self):
         try:
-            _save_meta(self.stamp, self._stamp())
+            _VERIFIED[self._identity()] = self.sha256
         except OSError:
-            pass        # without it the next run reads the file through once more
+            pass
 
     def run(self):
         if os.path.isfile(self.dest) and os.path.getsize(self.dest) == self.size and not os.path.exists(self.part):
             try:
-                if _load_meta(self.stamp) == self._stamp():
+                if _VERIFIED.get(self._identity()) == self.sha256:
                     return self.dest     # matched before a pause or restart and not changed since: not read through again
             except OSError:
                 pass
@@ -313,10 +313,6 @@ class Download:
                 return self.dest     # finished before a restart, and still what it was
             print(f'setup: {os.path.basename(self.dest)} is here at the right size but is not the published file; downloading it again', flush=True)
             os.unlink(self.dest)
-        try:
-            os.unlink(self.stamp)
-        except OSError:
-            pass
         os.makedirs(os.path.dirname(self.dest) or '.', exist_ok=True)
         meta = _load_meta(self.meta)
         if meta and (meta.get('sha256') != self.sha256 or meta.get('size') != self.size):

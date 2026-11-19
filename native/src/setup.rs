@@ -24,6 +24,10 @@ pub struct SetupPage {
     window: RefCell<Option<gtk::Window>>,
     body: gtk::Box,
     job_box: gtk::Box,
+    /// The job's buttons, kept across the once-a-second redraw (a keyboard user's focus stays on them) and made again
+    /// only when what they offer changes (`job_buttons_for`).
+    job_buttons: gtk::Box,
+    job_buttons_for: RefCell<String>,
     status: gtk::Label,
     state: RefCell<Value>,
     /// The library size to download; None keeps the library there is.
@@ -66,6 +70,8 @@ impl SetupPage {
             window: RefCell::new(None),
             body,
             job_box,
+            job_buttons: gtk::Box::new(gtk::Orientation::Horizontal, 8),
+            job_buttons_for: RefCell::new(String::new()),
             status,
             state: RefCell::new(Value::Null),
             pack: RefCell::new(None),
@@ -506,6 +512,10 @@ impl SetupPage {
         if let Some(st) = self.state.borrow_mut().as_object_mut() {
             st.insert("job".into(), job.clone());
         }
+        // Everything but the buttons is drawn again; the buttons stay (detached, then put back) unless they change.
+        if self.job_buttons.parent().is_some() {
+            self.job_box.remove(&self.job_buttons);
+        }
         clear(&self.job_box);
         let Some(items) = job["items"].as_array().filter(|i| !i.is_empty()) else { return };
         self.job_box.append(&crate::cards::section("Progress"));
@@ -538,8 +548,17 @@ impl SetupPage {
             self.job_box.append(&row);
         }
         let state = job["state"].as_str().unwrap_or_default();
-        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let offer = format!("{state}/{}", job["error"]["code"].as_str().unwrap_or_default());
+        let fresh = *self.job_buttons_for.borrow() != offer;
+        if fresh {
+            clear(&self.job_buttons);
+            self.job_buttons_for.replace(offer);
+        }
+        let buttons = self.job_buttons.clone();
         let add = |text: &str, path: &'static str, primary: bool| {
+            if !fresh {
+                return;
+            }
             let b = gtk::Button::with_label(text);
             b.add_css_class(if primary { "suggested-action" } else { "chip" });
             let me = Rc::downgrade(self);

@@ -134,7 +134,9 @@ impl SearchPage {
         self.thumbs.borrow_mut().clear();
         if q.is_empty() {
             self.status.set_text("");
-            self.entry.grab_focus();
+            if !self.app.upgrade().is_some_and(|a| a.sidebar_has_focus()) {
+                self.entry.grab_focus();
+            }
             return;
         }
         self.status.set_text("Searching…");

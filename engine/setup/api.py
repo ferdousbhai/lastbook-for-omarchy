@@ -558,7 +558,7 @@ class Setup:
                     srcs[f['name']] = f['path']
             names = [n for k, e in (('pack', pack), ('model', model), ('map', mp), ('addresses', addresses)) for n in _file_names(k, e)]
             have = set(srcs)
-            need = install.need_bytes(pack, model, have) + _map_need(mp, have) + _map_need(addresses, have) + (WORLD_ESTIMATE if 'world' in osm else 0)
+            need = install.need_bytes(pack, model, have) + _map_need(mp, have) + _map_need(addresses, have) + (int(WORLD_ESTIMATE * maps.DISK_SLACK) + 512 * 2 ** 20 if 'world' in osm else 0)   # as the cut itself will ask (_do_osm)
             preserve_map = bool(pack and cur.get('pack') == pack['id'] and target == self.current and not mp and cur.get('map') not in (None, 'base'))
             if preserve_map:
                 need += cur['map_bytes']

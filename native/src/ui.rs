@@ -516,6 +516,14 @@ impl App {
         };
         self.stack.set_visible_child_name(page);
         let title = if title.is_empty() { route.title_key().and_then(|k| self.titles.borrow().get(&k).cloned()).unwrap_or_default() } else { title };
+        // A page with no <title> of its own is named by its file until (if ever) it says otherwise.
+        let title = match route {
+            Route::Web { path, .. } if title.is_empty() => {
+                let file = path.split(['?', '#']).next().unwrap_or(path).rsplit('/').next().unwrap_or_default();
+                urlencoding::decode(file).map(|f| f.into_owned()).unwrap_or_else(|_| file.to_owned())
+            }
+            _ => title,
+        };
         if !title.is_empty() {
             self.set_title(&title);
         }
@@ -551,6 +559,11 @@ impl App {
     /// or replace the screen they moved to.
     pub fn showing(&self, page: &str) -> bool {
         self.stack.visible_child_name().as_deref() == Some(page)
+    }
+
+    /// Whether the keyboard is in the sidebar: a screen shown by arrowing through it leaves the focus there.
+    pub fn sidebar_has_focus(&self) -> bool {
+        gtk::prelude::GtkWindowExt::focus(&self.window).is_some_and(|f| f.is_ancestor(&self.sidebar) || f == *self.sidebar.upcast_ref::<gtk::Widget>())
     }
 
     /// Whether document `doc` is the screen in the history's current place.

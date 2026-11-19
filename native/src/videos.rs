@@ -84,6 +84,7 @@ impl Videos {
         let meta = gtk::Label::new(None);
         meta.add_css_class("meta");
         meta.set_xalign(0.0);
+        meta.set_wrap(true);
         let left = gtk::Box::new(gtk::Orientation::Vertical, 6);
         left.set_hexpand(true);
         left.set_margin_top(12);

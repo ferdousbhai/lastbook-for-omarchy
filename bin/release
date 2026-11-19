@@ -14,9 +14,12 @@ gh_repo=${url#https://github.com/}
 remote=$(git remote -v | awk -v repo="$gh_repo" '$3 == "(push)" && $2 ~ ("github\\.com[:/]" repo "(\\.git)?$") { print $1; exit }')
 [[ -n $remote ]] || { echo "No git remote points at $gh_repo." >&2; exit 1; }
 git fetch -q "$remote" main --tags
-git merge-base --is-ancestor "$remote/main" HEAD || { echo "HEAD does not contain $remote/main; rebase first." >&2; exit 1; }
+# Resuming at the tag after main moved on is fine as long as main already holds the tag.
+tag_at_head() { [[ $(git rev-parse -q --verify "refs/tags/$tag^{commit}") == $(git rev-parse HEAD) ]]; }
+git merge-base --is-ancestor "$remote/main" HEAD || { tag_at_head && git merge-base --is-ancestor HEAD "$remote/main"; } \
+  || { echo "HEAD does not contain $remote/main; rebase first." >&2; exit 1; }
 # Releases are made from main (or, resuming, from the tag itself): pushing another branch here would move main to it.
-[[ $(git branch --show-current) == main ]] || [[ $(git rev-parse -q --verify "refs/tags/$tag^{commit}") == $(git rev-parse HEAD) ]] \
+[[ $(git branch --show-current) == main ]] || tag_at_head \
   || { echo "Release from main." >&2; exit 1; }
 # This tag's releases on GitHub, one line each: "true" for a draft, "false" for a published one.
 release_states() { gh api "repos/$gh_repo/releases" --paginate --jq ".[] | select(.tag_name == \"$tag\") | .draft"; }
@@ -56,7 +59,11 @@ fi
 source_commit=$(git rev-parse HEAD)
 # workflow_dispatch runs only workflows that exist on the default branch, so main gets the release commit first.
 # Both or neither; when resuming, this changes nothing that is already there.
-git push -q --atomic "$remote" HEAD:main "$tag"
+if git merge-base --is-ancestor HEAD "$remote/main"; then
+  git push -q "$remote" "$tag"                       # main has it already (a resume after main moved on)
+else
+  git push -q --atomic "$remote" HEAD:main "$tag"
+fi
 # This tag and commit's builds, newest first, as the jq filter given picks from them.
 find_run() {
   gh run list --repo "$gh_repo" --workflow packages.yml --event workflow_dispatch \

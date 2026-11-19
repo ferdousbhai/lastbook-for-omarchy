@@ -92,6 +92,7 @@ impl WebPage {
         let (filtered, waiting) = (Rc::new(Cell::new(false)), Rc::new(RefCell::new(None::<String>)));
         let blocked = gtk::Label::new(Some("Pages cannot be shown: Lastbook could not set up its block on the network."));
         blocked.add_css_class("error");
+        blocked.set_wrap(true);
         blocked.set_visible(false);
         let (m, f2, w2, v2, b2) = (manager.clone(), filtered.clone(), waiting.clone(), view.clone(), blocked.clone());
         store.save("lastbook-no-network", &glib::Bytes::from_static(NO_NETWORK.as_bytes()), gio::Cancellable::NONE, move |f| match f {
