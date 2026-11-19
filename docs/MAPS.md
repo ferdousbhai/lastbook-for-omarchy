@@ -43,8 +43,7 @@ already has a plain name for several of them (`HELP` in `server.py`: School, Den
 
 ### Places that are in the data and not shown
 
-The data holds more classes than `web/map.js` has layers for (`tools/build_map.py` lists the ones it keeps as
-`POI_KEEP`). In one state map checked on 15 November 2026 (77,356 pins), these classes had rows and no layer:
+The data holds more classes than `web/map.js` has layers for . In one state map checked on 15 November 2026 (77,356 pins), these classes had rows and no layer:
 
 | Class | Rows |
 |---|---|
@@ -68,30 +67,22 @@ so ask before adding many.
 
 | File | Built by | From |
 |---|---|---|
-| `map.sqlite` | `tools/build_map.py`, then `tools/build_coast.py` for the ocean | An OpenStreetMap regional extract (ODbL) |
-| `water.sqlite` | `tools/build_water.py` (`nid`, then `nhd`) | USACE National Inventory of Dams, USGS National Hydrography Dataset |
-| `crops.sqlite` | `tools/build_crops.py` | USDA Cropland Data Layer |
-| `terrain.sqlite` | `tools/build_terrain.py` | USGS 3DEP elevation |
-| `buildings.sqlite` | `tools/build_buildings.py`, `tools/build_osm_heights.py` | Microsoft building footprints (ODbL), OpenStreetMap heights |
-| `places.sqlite` | `tools/build_places.py` | USGS GNIS, Census gazetteers, named OpenStreetMap places |
-| address indexes | `tools/build_addresses.py`, then `packaging/address_indexes.py` | Overture Maps addresses |
-| a state map | `packaging/build_packs.py map <ST>`, published by `packaging/state_maps.py` | The base map, then every row inside the state's box |
+| `map.sqlite` | Upstream Lastbook | An OpenStreetMap regional extract (ODbL) |
+| `water.sqlite` | Upstream Lastbook | USACE National Inventory of Dams, USGS National Hydrography Dataset |
+| `crops.sqlite` | Upstream Lastbook | USDA Cropland Data Layer |
+| `terrain.sqlite` | Upstream Lastbook | USGS 3DEP elevation |
+| `buildings.sqlite` | Upstream Lastbook | Microsoft building footprints (ODbL), OpenStreetMap heights |
+| `places.sqlite` | Upstream Lastbook | USGS GNIS, Census gazetteers, named OpenStreetMap places |
+| address indexes | Upstream Lastbook | Overture Maps addresses |
 
-Each tool's header says what it reads, what it writes and the licence of its source. Read it before you run one: some
-expect source files that are hundreds of gigabytes.
-
-### Not in this repository
-
-- **The builder for `national.sqlite`.** The pack tools copy from an existing `national.sqlite` and `server.py` reads it,
-  but no tool here makes it from OpenStreetMap data.
-- **The builder for `atlas.sqlite`.**
+These files arrive inside upstream's packs and state maps. The tools that built them are not in this repository.
 
 ## What is tied to the United States
 
 - Every detailed source above is a US dataset, or a worldwide one filtered to the US.
 - `server.py` treats a box around Southern California as the area `map.sqlite` covers (`_poi_sources`, `socal_classes`).
 - Detailed maps are cut and installed one US state at a time (`docs/SETUP-API.md`, "State maps").
-- Address search knows US state names and US street words (`engine/address_search.py`, `tools/build_addresses.py`).
+- Address search knows US state names and US street words (`engine/address_search.py`).
 - The base map of the world is drawn from `web/world-context.json` and `web/geographic-context.json`.
 
 Coverage outside the US needs a decision on each of these first: which open source replaces each federal list, under
@@ -103,7 +94,5 @@ issue before any code.
 ## Checking a map change
 
 - A change to a layer in `web/map.js` is a change you can see: include screenshots in light and dark mode.
-- A change to a pack or map tool: `packaging/test_pack_tools.py` and `packaging/scan_pack.py` check what a map set may
-  hold, and `scan_pack.py` lists the allowed files under `derived/geo/` (`GEO_FILES`).
 - Nothing a contributor adds may make the app open a connection. New data comes in through a build tool and ships as a
   file.

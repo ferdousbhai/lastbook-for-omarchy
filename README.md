@@ -89,9 +89,8 @@ The setup contract, including state maps, is in [docs/SETUP-API.md](docs/SETUP-A
 | `server.py`, `assistant.py`, `retrieval.py`, `encyclopedia.py`, `llm_local.py` | The engine: request handler, the assistant and its citation checks, keyword plus meaning-based search (through Recall), encyclopedia articles as passages, and the local AI (model pins, fit check, runner control). |
 | `web/` | The browser interface of the library server (`server.py`), in plain HTML, CSS and JavaScript with no build step and nothing loaded from the web. The desktop app does not use or ship it. |
 | `content/` | The curated guides (`topics/*.json`) and what curators looked for and did not find (`gaps.json`). Format: `content/SCHEMA.md`. |
-| `packaging/` | The Arch package (`arch/`: PKGBUILD, the pack manifest it ships, the package scan), the desktop entry (`linux/`), icons (`icon/`), pack and state-map builders, release manifest, TLS roots tools, and `packaging/llm/` (the local AI runner). |
-| `derived/packs/pack-spec.json` | What goes into each download pack (Small, Medium, All and add-ons) and each state map. Everything else under `derived/` is generated and not kept here. |
-| `tools/` | Builders for the offline map, addresses and place finder, curator helpers (`libq.py`, `validate_topics.py`), and the retrieval check (`eval/`). |
+| `packaging/` | The Arch package (`arch/`: PKGBUILD, the pack manifest it ships, the package scan), the desktop entry (`linux/`), icons (`icon/`), release manifest, TLS roots tools, and `packaging/llm/` (the local AI runner). |
+| `tools/` | Curator helpers (`libq.py`, `validate_topics.py`), the map area list's maker (`make_region_list.py`), and the retrieval check (`eval/`). |
 | `docs/` | The setup contract (`SETUP-API.md`), how the offline map is put together (`MAPS.md`) and notes on the library server version (`LIBRARY-SERVER.md`). |
 
 ## Run from source
@@ -151,14 +150,12 @@ built package with `python3 packaging/arch/scan_package.py <package>`. Releases:
 
 ## Packs, state maps and the local AI
 
-- **Packs** are data folders: a library plus its catalog, search index and map. `packaging/build_packs.py` builds them
-  from a frozen snapshot of a full library according to `derived/packs/pack-spec.json`, and `packaging/verify_packs.py` and
-  `packaging/scan_pack.py` check them. The published packs are on `downloads.lastbook.org`. Setup downloads the one the
-  person picks and checks it against `setup/manifest-v1.json`, which `packaging/release_manifest.py` writes at build time
-  (a newer copy is fetched from `downloads.lastbook.org` when setup opens and used only if it validates).
-- **State maps** are one US state's detailed map set, built by `packaging/build_packs.py map <ST>` and published by
-  `packaging/state_maps.py`, with per-state address indexes from `packaging/address_indexes.py`. A state map replaces the
-  library's map set; it never merges with it. Medium already holds California and All the whole US.
+- **Packs** are data folders: a library plus its catalog, search index and US map data. They come pre-built from
+  upstream Lastbook, on `downloads.lastbook.org`; nothing here builds them. Setup downloads the one the person picks and
+  checks it against `setup/manifest-v1.json` (`packaging/arch/manifest-v1.json`; a newer copy is fetched from
+  `downloads.lastbook.org` when setup opens and used only if it validates).
+- **State maps** are upstream's detailed map set and address index for one US state. Setup still installs and repairs
+  them where a library has one, and address search uses the index; the window draws its own map of the world instead.
 - **The local AI** is optional: Gemma 4 26B A4B (Unsloth's `gemma-4-26B-A4B-it-UD-Q4_K_M.gguf`, about 17 GB). The file
   name, size, SHA-256 and Hugging Face revision are pinned in `llm_local.py`. Setup offers it only where the measured fit
   says it fits (about 18 GB of memory for model and context, plus a reserve) and says why in plain words when it does not.
@@ -174,7 +171,7 @@ built package with `python3 packaging/arch/scan_package.py <package>`. Releases:
   its own terms. It is distributed as packs, with a Sources and permissions page in each pack.
 - **Models and maps** (GGUF, map data): large, and published by their makers or built from public data. Setup
   fetches them, and the checksums and pins are here.
-- **Generated data** (`derived/`, builds, installers): everything there can be rebuilt with the scripts here.
+- **Generated data** (`derived/`, builds): indexes, caches and logs the engine makes as it runs, and build output.
 - **Release and signing material**: signing keys, deploy settings and the release folders.
 - **Private data**: the household's own home area (`web/home-area.json`), the private word lists the scans use, machine
   and user names, keys and internal security-audit notes. The guides here are already in their shipped, general wording.
@@ -187,8 +184,7 @@ built package with `python3 packaging/arch/scan_package.py <package>`. Releases:
 python3 -B -m unittest app.tests.test_bridge app.tests.test_setup app.tests.test_data_folder app.tests.test_what_ships app.tests.test_address_search app.tests.test_topic_search app.tests.test_validate_topics app.tests.test_libq app.tests.test_semantic
 ```
 
-`test_bridge` builds its own made-up library; `test_semantic` runs a stand-in Recall; the others run without a library. `packaging/test_pack_tools.py SAMPLE
-WORK` checks the pack tools against a pack sample (`build_packs.py build <pack> --sample N`). The window's own tests run with
+`test_bridge` builds its own made-up library; `test_semantic` runs a stand-in Recall; the others run without a library. The window's own tests run with
 `cargo test --manifest-path native/Cargo.toml`. `bin/test` runs both (libzim and pypdfium2 come from the PKGBUILD's pinned
 wheels, `bin/test-deps`); `bin/check` adds the installer test. The `linux_*` helpers in `app/tests/` drive a running window through AT-SPI.
 

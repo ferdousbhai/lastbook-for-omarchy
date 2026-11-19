@@ -133,8 +133,7 @@ is listed under `old` in the app's `setup.json`, so a delete cut short carries o
 ## State maps (added 2026-11-12)
 
 The owner wants setup to offer one US state's detailed map with any library: local streets, buildings, terrain,
-crops and the resource layers (water points, help points, atlas), built by `packaging/build_packs.py map <ST>`
-(rules in `derived/packs/pack-spec.json` → `map_sets.state`). A state map set is self-contained: it is the base map
+crops and the resource layers (water points, help points, atlas), built by upstream Lastbook. A state map set is self-contained: it is the base map
 plus every row inside the state's box, so it **replaces** the library's map set and never merges with it.
 One state per library for now; choosing another state replaces the first.
 

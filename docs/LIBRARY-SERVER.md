@@ -99,18 +99,7 @@ Python 3 with `packaging/requirements.txt` (libzim, numpy, bs4, pypdfium2), the 
 | `content/gaps.json` | What curators looked for and did not find, plus places where sources disagree. Shown on each guide. |
 | `tools/libq.py` | Read-only helper for curators (search, read a page, find titles, encyclopedia lookup). |
 | `tools/validate_topics.py` | Checks every curated id/page/encyclopedia path against a data folder (`--data` or `LASTBOOK_DATA`). Reads the ZIM files directly; no server needed. |
-| `tools/build_map.py`, `tools/build_coast.py`, `tools/build_places.py` | Build the offline map and place finder into `derived/geo/` from library geography files (read only). |
 | `derived/` | Generated data: `geo/map.sqlite` (1.7 GB, SoCal streets/buildings/water/help points), `geo/places.sqlite` (ZIP codes, towns, named places), `geo/socal.gpkg` (extracted copy), `cache/` (rendered PDF pages), `buildenv/` (pyosmium, build-time only). |
-
-## Rebuilding derived data
-
-```bash
-cd /path/to/lastbook
-unzip -o library-data/geography/openstreetmap/socal-latest-free.gpkg.zip -d derived/geo
-python3 tools/build_map.py derived/geo/socal.gpkg derived/geo/map.sqlite
-derived/buildenv/bin/python tools/build_coast.py library-data/geography/openstreetmap/socal-latest.osm.pbf derived/geo/map.sqlite
-python3 tools/build_places.py
-```
 
 ## How it stays correct as the library grows
 

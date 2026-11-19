@@ -1,9 +1,6 @@
 # Source only. The library, models, packs and everything built from them stay out.
 /library-data
-/derived/*
-!/derived/packs/
-/derived/packs/*
-!/derived/packs/pack-spec.json
+/derived
 __pycache__/
 *.pyc
 .DS_Store

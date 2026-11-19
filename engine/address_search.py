@@ -6,7 +6,7 @@ from pathlib import Path
 
 from engine.paths import ro_uri
 
-# Keep normalization compatible with tools/build_addresses.py.
+# The same normalization the installed address indexes were built with (upstream's packs).
 WORDS = {
     'boulevard': 'blvd', 'avenue': 'ave', 'av': 'ave', 'street': 'st',
     'drive': 'dr', 'road': 'rd', 'place': 'pl', 'court': 'ct', 'lane': 'ln',
