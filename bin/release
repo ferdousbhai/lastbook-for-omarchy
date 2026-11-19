@@ -29,7 +29,8 @@ resume=0
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   if [[ $(git rev-parse "$tag^{commit}") != "$(git rev-parse HEAD)" || $(cat VERSION) != "$version" ]]; then
     echo "$tag already exists and is not this commit. Choose a newer version; or, if $tag was never published," >&2
-    echo "delete the tag here and on $remote, then run this again." >&2
+    echo "delete the tag here and on $remote, then run this again. To resume $tag after main moved on:" >&2
+    echo "git checkout $tag && bin/release $version" >&2
     exit 1
   fi
   states=$(release_states)

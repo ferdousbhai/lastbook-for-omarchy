@@ -548,7 +548,12 @@ impl SetupPage {
             self.job_box.append(&row);
         }
         let state = job["state"].as_str().unwrap_or_default();
-        let offer = format!("{state}/{}", job["error"]["code"].as_str().unwrap_or_default());
+        // What the buttons offer, not the job's every phase (downloading, verifying, unpacking… all offer Pause/Cancel).
+        let offer = match state {
+            "done" | "paused" => state.to_owned(),
+            "failed" => format!("failed/{}", job["error"]["code"].as_str().unwrap_or_default() == "cancelled"),
+            _ => "active".to_owned(),
+        };
         let fresh = *self.job_buttons_for.borrow() != offer;
         if fresh {
             clear(&self.job_buttons);

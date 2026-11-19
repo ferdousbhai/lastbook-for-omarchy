@@ -119,6 +119,8 @@ pub struct App {
     history: RefCell<Vec<Route>>,
     pos: Cell<usize>,
     syncing: Cell<bool>,
+    /// The last way into the sidebar was the keyboard (arrows), not a click: see `sidebar_has_focus`.
+    sidebar_keyed: Cell<bool>,
     /// Titles the screens reported after loading: a screen shown again does not load again, so it does not report again.
     titles: RefCell<HashMap<String, String>>,
     /// The sidebar section of the screen shown, so a row re-selected by focus (not by the person) does nothing.
@@ -209,6 +211,7 @@ impl App {
             history: RefCell::new(Vec::new()),
             pos: Cell::new(0),
             syncing: Cell::new(false),
+            sidebar_keyed: Cell::new(false),
             titles: RefCell::new(HashMap::new()),
             section: RefCell::new(String::new()),
             search: RefCell::new(None),
@@ -288,6 +291,20 @@ impl App {
                 a.navigate(route);
             }
         });
+        // How the person moves in the sidebar: keys keep the focus there, a click hands it to the screen.
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let a = app.clone();
+        keys.connect_key_pressed(move |_, _, _, _| {
+            a.sidebar_keyed.set(true);
+            glib::Propagation::Proceed
+        });
+        app.sidebar.add_controller(keys);
+        let click = gtk::GestureClick::new();
+        click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let a = app.clone();
+        click.connect_pressed(move |_, _, _, _| a.sidebar_keyed.set(false));
+        app.sidebar.add_controller(click);
         // A click on the row already selected goes back to that section's first screen (from a guide to the guides).
         let a = app.clone();
         app.sidebar.connect_row_activated(move |_, row| {
@@ -562,8 +579,10 @@ impl App {
     }
 
     /// Whether the keyboard is in the sidebar: a screen shown by arrowing through it leaves the focus there.
+    /// A click on a row means "go there", and the screen takes the keyboard (Chat's composer, the search field).
     pub fn sidebar_has_focus(&self) -> bool {
-        gtk::prelude::GtkWindowExt::focus(&self.window).is_some_and(|f| f.is_ancestor(&self.sidebar) || f == *self.sidebar.upcast_ref::<gtk::Widget>())
+        self.sidebar_keyed.get()
+            && gtk::prelude::GtkWindowExt::focus(&self.window).is_some_and(|f| f.is_ancestor(&self.sidebar) || f == *self.sidebar.upcast_ref::<gtk::Widget>())
     }
 
     /// Whether document `doc` is the screen in the history's current place.
