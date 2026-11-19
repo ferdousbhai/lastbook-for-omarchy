@@ -98,6 +98,8 @@ installed() { grep -E '^(pacman -Syu|omarchy-pkg-add) ' "$PACMAN_LOG" | tail -1 
 count_include() { grep -cxF "Include = /etc/pacman.d/$1.conf" /etc/pacman.conf || true; }
 
 setup
+# Nobody is at a terminal here, so Recall is never offered: the installer says how to add it, unless it is there already.
+export LASTBOOK_RECALL_COMMAND=no-such-recall-command
 bash install.sh >"$work/out" 2>&1
 check "install.sh installs lastbook-for-omarchy" [ "$(installed)" = "lastbook-for-omarchy" ]
 check "the repository config is written" grep -qx 'Server = https://github.com/ferdousbhai/lastbook-for-omarchy/releases/latest/download' /etc/pacman.d/lastbook-for-omarchy.conf
@@ -108,6 +110,8 @@ check "it says how to add Recall, without installing it" grep -q 'ferdousbhai.co
 check "it never installs Recall itself" not grep -q recall "$PACMAN_LOG"
 check "the installer says it is done" grep -q '^Done' "$work/out"
 check "updates come through omarchy update" grep -q 'omarchy update' "$work/out"
+LASTBOOK_RECALL_COMMAND=true bash install.sh >"$work/have-recall.out" 2>&1
+check "with Recall already installed it does not suggest it" not grep -q 'recall/install.sh' "$work/have-recall.out"
 bash install.sh --yes >/dev/null 2>&1
 check "re-running (with --yes) keeps one Include line" [ "$(count_include lastbook-for-omarchy)" = 1 ]
 check "on Omarchy it never runs pacman -Syu (Omarchy's update guard aborts it)" not grep -q '^pacman -Syu' "$PACMAN_LOG"

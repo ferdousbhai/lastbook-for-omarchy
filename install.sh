@@ -11,12 +11,15 @@
 # installs the package (with vulkan-asahi on Apple hardware, for the local
 # AI on the graphics card). There is no per-user step: the first launch
 # opens Lastbook's own setup, which downloads the library you choose.
+# At a terminal it then asks whether to add Recall for Omarchy (optional:
+# search by meaning); `| sudo bash -s -- --yes` asks nothing.
 set -euo pipefail
 
 REPO=lastbook-for-omarchy
 RELEASES=${LASTBOOK_RELEASES:-https://github.com/ferdousbhai/lastbook-for-omarchy/releases/latest/download}
 SIGNING_KEY_FINGERPRINT=52130299581DAD685226900CA89CA1A6A1E74251
 PACKAGE=lastbook-for-omarchy
+RECALL_INSTALLER=https://ferdousbhai.com/recall/install.sh
 
 # --- add_signed_repo (shared) ---
 # Trust a project's package-signing key (checked against the pinned
@@ -100,9 +103,10 @@ add_signed_repo() {
 }
 # --- end add_signed_repo ---
 
+yes=0
 for arg in "$@"; do
   case $arg in
-    -y|--yes) ;; # Never asks; accepted so a habit from other installers works.
+    -y|--yes) yes=1 ;; # No questions: Recall is not offered.
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -150,11 +154,38 @@ else
   fi
 fi
 
-cat <<EOT
+# Recall for Omarchy is optional: with it, Lastbook also searches by meaning.
+# Asked only when someone is at a terminal to answer (`curl … | sudo bash`
+# reads this script from the pipe, so the answer comes from the terminal
+# itself), and never with --yes. Recall's own installer does the work, with
+# its stdin closed so it cannot read the rest of this script from the pipe.
+recall_hint=1
+if PATH="$PATH:/usr/bin" command -v "${LASTBOOK_RECALL_COMMAND:-recall}" >/dev/null; then   # the variable is for the tests
+  recall_hint=0
+elif (( ! yes )) && [[ -t 1 ]] && { : </dev/tty; } 2>/dev/null; then
+  question='Add Recall? Lastbook then also searches by meaning, and Recall searches your own files (about 865 MB of models).'
+  if command -v gum >/dev/null; then
+    gum confirm --default=false "$question" </dev/tty && answer=y || answer=n
+  else
+    printf '%s [y/N] ' "$question" >/dev/tty
+    read -r answer </dev/tty || answer=''
+  fi
+  if [[ $answer == [yY]* ]]; then
+    recall_installer="$(mktemp)"
+    if curl -fsSL "$RECALL_INSTALLER" -o "$recall_installer" && bash "$recall_installer" </dev/null; then
+      recall_hint=0
+    else
+      echo "Recall was not installed; Lastbook works without it." >&2
+    fi
+    rm -f "$recall_installer"
+  fi
+fi
 
-Done. Open Lastbook from the application menu; its first launch sets up the
-library, the map and the optional local AI.
-For meaning-based search, add Recall for Omarchy (optional):
-  curl -fsSL https://ferdousbhai.com/recall/install.sh | sudo bash
-Updates arrive with the rest of the system through: omarchy update
-EOT
+echo
+echo "Done. Open Lastbook from the application menu; its first launch sets up the"
+echo "library, the map and the optional local AI."
+if (( recall_hint )); then
+  echo "For meaning-based search, add Recall for Omarchy (optional):"
+  echo "  curl -fsSL $RECALL_INSTALLER | sudo bash"
+fi
+echo "Updates arrive with the rest of the system through: omarchy update"
