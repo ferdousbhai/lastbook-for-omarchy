@@ -265,8 +265,11 @@ impl Videos {
     pub fn play(self: &Rc<Self>, id: &str, t: f64) {
         self.seek_to.set(t);
         if self.current.borrow().as_deref() == Some(id) {
+            // The same video again: it carries on where it was (Back to it, its card once more), unless asked for a moment.
             if let Some(s) = self.video.media_stream() {
-                s.seek((t * 1e6) as i64);
+                if t > 0.0 {
+                    s.seek((t * 1e6) as i64);
+                }
                 s.play();
             }
             return;
