@@ -164,7 +164,7 @@ pub fn route_of(s: &Value) -> Option<Route> {
             lon: s["lon"].as_f64()?,
             label: s["title"].as_str().or_else(|| s["name"].as_str()).unwrap_or("Place").to_owned(),
         }),
-        "video" => Some(Route::Watch { video: id, t: s["t"].as_f64().unwrap_or(0.0) }),
+        "video" => Some(Route::Watch { video: id, t: s["t"].as_f64().unwrap_or(-1.0) }),   // no moment given: no seek
         "article" => Some(Route::Wiki { path: s["wiki"].as_str()?.to_owned() }),
         "zim" => None,
         "" => s["zim"].as_str().map(|z| Route::Wiki { path: z.trim_start_matches('/').trim_start_matches("zim/").to_owned() }),

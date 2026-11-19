@@ -256,18 +256,20 @@ impl Videos {
             card.append(&overlay);
             card.append(&title);
             card.append(&meta);
-            activate(&card, self.app.clone(), Route::Watch { video: it["id"].as_str().unwrap_or_default().to_owned(), t: 0.0 });
+            activate(&card, self.app.clone(), Route::Watch { video: it["id"].as_str().unwrap_or_default().to_owned(), t: -1.0 });
             grid.insert(&card, -1);
         }
     }
 
-    /// Opens video `id` at `t` seconds.
-    pub fn play(self: &Rc<Self>, id: &str, t: f64) {
-        self.seek_to.set(t);
+    /// Opens video `id` at `t` seconds; a negative `t` is no moment in particular (its card, a document that is a video).
+    /// `revisit`: shown again by Back or Forward.
+    pub fn play(self: &Rc<Self>, id: &str, t: f64, revisit: bool) {
+        self.seek_to.set(t.max(0.0));
         if self.current.borrow().as_deref() == Some(id) {
-            // The same video again: it carries on where it was (Back to it, its card once more), unless asked for a moment.
+            // The same video again carries on where it was (Back to it, its card once more); a link to a moment, 0:00
+            // included, goes there.
             if let Some(s) = self.video.media_stream() {
-                if t > 0.0 {
+                if !revisit && t >= 0.0 {
                     s.seek((t * 1e6) as i64);
                 }
                 s.play();

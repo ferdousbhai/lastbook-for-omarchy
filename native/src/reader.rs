@@ -191,7 +191,7 @@ impl Reader {
             match rec["kind"].as_str() {
                 Some("pdf") => {}
                 Some("video") => {
-                    app.replace_route(crate::ui::Route::Watch { video: id.clone(), t: 0.0 }, true);
+                    app.replace_route(crate::ui::Route::Watch { video: id.clone(), t: -1.0 }, true);
                     return;
                 }
                 _ => {

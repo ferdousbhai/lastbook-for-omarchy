@@ -121,6 +121,8 @@ pub struct App {
     syncing: Cell<bool>,
     /// The last way into the sidebar was the keyboard (arrows), not a click: see `sidebar_has_focus`.
     sidebar_keyed: Cell<bool>,
+    /// The screen being shown is a step back or forward in the history, not a new visit (a video then carries on).
+    revisiting: Cell<bool>,
     /// Titles the screens reported after loading: a screen shown again does not load again, so it does not report again.
     titles: RefCell<HashMap<String, String>>,
     /// The sidebar section of the screen shown, so a row re-selected by focus (not by the person) does nothing.
@@ -212,6 +214,7 @@ impl App {
             pos: Cell::new(0),
             syncing: Cell::new(false),
             sidebar_keyed: Cell::new(false),
+            revisiting: Cell::new(false),
             titles: RefCell::new(HashMap::new()),
             section: RefCell::new(String::new()),
             search: RefCell::new(None),
@@ -434,7 +437,9 @@ impl App {
         }
         self.pos.set(next as usize);
         let route = self.history.borrow()[next as usize].clone();
+        self.revisiting.set(true);
         self.show(&route);
+        self.revisiting.set(false);
     }
 
     fn show(self: &Rc<Self>, route: &Route) {
@@ -468,7 +473,7 @@ impl App {
             }
             Route::Watch { video, t } => {
                 if let Some(v) = self.videos.borrow().as_ref() {
-                    v.play(video, *t);
+                    v.play(video, *t, self.revisiting.get());
                 }
                 ("watch", "videos", String::new())
             }
