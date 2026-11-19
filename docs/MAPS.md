@@ -85,12 +85,6 @@ expect source files that are hundreds of gigabytes.
 - **The builder for `national.sqlite`.** The pack tools copy from an existing `national.sqlite` and `server.py` reads it,
   but no tool here makes it from OpenStreetMap data.
 - **The builder for `atlas.sqlite`.**
-- **A reader for seven place files.** `tools/build_places_civic.py`, `_usgs.py`, `_overture.py`, `_atp.py`, `_fsq.py`,
-  `_fuel.py` and `_snap.py` each write a `derived/geo/places-*.sqlite` and say it is merged by `game/serve.py`. That file
-  is not here, and nothing in this repository reads those seven files, so the extra records they hold are not used by
-  the app directly. This is an unused data source, not a missing kind of place: the map already shows shelters,
-  libraries, community centres and food shops from the data it does read. A class that has records and no layer is the
-  separate case described above.
 
 ## What is tied to the United States
 
