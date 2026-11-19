@@ -84,17 +84,41 @@ pub fn engine_script() -> PathBuf {
     }
 }
 
+/// Python running one of the engine's programs (the file beside engine_pipe.py named `program`).
+pub fn python(program: &str) -> Command {
+    let mut cmd = Command::new("/usr/bin/python3");
+    // -I keeps PYTHON* settings and the user's site-packages out of the packaged engine; a checkout run passes its
+    // own PYTHONPATH (LASTBOOK_DEV=1) for dependencies the system lacks.
+    if std::env::var_os("LASTBOOK_DEV").is_none() {
+        cmd.arg("-I");
+    }
+    cmd.arg("-B").arg(engine_script().with_file_name(program));
+    cmd
+}
+
+/// Reads a JSON file of the person's own (saved items, chats); nothing there or unreadable is the default.
+pub fn load_json<T: serde::de::DeserializeOwned + Default>(path: &std::path::Path) -> T {
+    std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+/// Writes such a file whole or not at all.
+pub fn store_json<T: serde::Serialize + ?Sized>(path: &std::path::Path, value: &T) {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(bytes) = serde_json::to_vec(value) {
+        let tmp = path.with_extension("tmp");
+        if std::fs::write(&tmp, bytes).is_ok() {
+            let _ = std::fs::rename(tmp, path);
+        }
+    }
+}
+
 impl Engine {
     /// Starts the engine and waits for its ready line (it loads the catalog and opens the indexes first).
     pub fn start(data: Option<&str>) -> Result<Arc<Self>, EngineError> {
         let script = engine_script();
-        let mut cmd = Command::new("/usr/bin/python3");
-        // -I keeps PYTHON* settings and the user's site-packages out of the packaged engine; a checkout run passes its
-        // own PYTHONPATH (LASTBOOK_DEV=1) for dependencies the system lacks.
-        if std::env::var_os("LASTBOOK_DEV").is_none() {
-            cmd.arg("-I");
-        }
-        cmd.arg("-B").arg(&script);
+        let mut cmd = python("engine_pipe.py");
         if let Some(d) = data {
             cmd.arg("--data").arg(d);
         }

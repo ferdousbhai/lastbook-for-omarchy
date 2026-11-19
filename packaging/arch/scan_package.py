@@ -1,16 +1,14 @@
 """Looks inside a built lastbook-for-omarchy package and exits 1 if it holds what must not ship.
 
-  python3 packaging/arch/scan_package.py lastbook-for-omarchy-<version>-<arch>.pkg.tar.zst [--terms-file FILE]
+  python3 packaging/arch/scan_package.py lastbook-for-omarchy-<version>-<arch>.pkg.tar.zst
 
-Refused: test code, the old web window (GTK 3, lastbooksrc, the Python launcher), model libraries, the Mac and Windows shells, the remote_storage module, machine names (FILE: private
-words, one per line, kept out of this public script), /Users/... and /home/<name> paths, the household's area and working names in our
-own files (ship_edits.json), native code not built for the package's architecture or that links a library from outside the package and the system
+Refused: test code, the old web window (GTK 3, lastbooksrc, the Python launcher), model libraries, the Mac and Windows shells, the remote_storage module,
+/Users/... and /home/<name> paths, anything in content/ but the guides (gaps.json, topics/*.json), native code not built for the package's architecture or that links a library from outside the package and the system
 (the window, /usr/bin/lastbook, may also link the GTK 4, WebKitGTK, Poppler and GStreamer it depends on), a socket in the local AI's runner, and in our own Python any network module outside the one way out (setup's downloader) and
 the engine's request handler, which the app runs with no port, and retrieval.py's local (AF_UNIX) socket to Recall. roots.pem must be there: without it setup downloads nothing.
 """
 import argparse
 import ast
-import json
 import re
 import subprocess
 import sys
@@ -24,6 +22,7 @@ BAD_SEGMENTS = {'test', 'tests', 'testing', 'pytest', 'unittest', 'doctest', 're
 BAD_FILE = re.compile(r'(^|/)(test_[^/]*|[^/]*_test\.(py|pyc|so)|[^/]*_tests[^/]*\.so|[^/]*\.onnx|[^/]*\.gguf|mac_[^/]*|win_[^/]*)$', re.I)
 TEST_MARKERS = [b'TEST-STUB', b'mac_offscreen', b'stub_chat', b'stub-chat']
 P = 'usr/lib/lastbook-for-omarchy/'
+GUIDES = re.compile(r'^usr/lib/lastbook-for-omarchy/content/(gaps|topics/[^/]+)\.json$')   # all of content/ that ships
 USER_PATH = re.compile(rb'/Users/[A-Za-z0-9._-]+|/home/(?!runner\b|user\b)[a-z_][a-z0-9_.-]*')   # one-letter names too
 OUR_PY = re.compile(r'^usr/lib/lastbook-for-omarchy/(server|retrieval|encyclopedia|assistant|llm_local)\.py$|^usr/lib/lastbook-for-omarchy/(app|engine)/.*\.py$')
 FIRST_PARTY = re.compile(r'^usr/lib/lastbook-for-omarchy/(content|app|engine|setup|skills)/|^usr/lib/lastbook-for-omarchy/[^/]+\.py$')
@@ -64,15 +63,7 @@ def net_imports(source):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('pkg', type=Path)
-    ap.add_argument('--terms-file', type=Path)
     a = ap.parse_args()
-    terms = []
-    if a.terms_file and a.terms_file.is_file():
-        terms = [t.strip().lower().encode() for t in a.terms_file.read_text(encoding='utf-8').splitlines() if t.strip()]
-    print(f'private words checked: {len(terms)}' + ('' if terms else ' (no terms file: machine names NOT checked)'))
-    here = Path(__file__).resolve().parent
-    ship = json.loads((here.parent / 'ship_edits.json').read_text(encoding='utf-8'))
-    household = re.compile('|'.join(ship['forbidden']).encode(), re.I)
     problems, remote_hits, user_paths, net_report = [], {}, {}, {}
     n_files = n_elf = 0
     with tempfile.TemporaryDirectory() as tmp:
@@ -93,13 +84,9 @@ def main():
             if not (rel.startswith((P, 'usr/share/licenses/lastbook-for-omarchy/')) or rel in (WINDOW, f'usr/share/applications/{APP_ID}.desktop')
                     or re.fullmatch(rf'usr/share/icons/hicolor/\d+x\d+/apps/{re.escape(APP_ID)}\.png', rel)):
                 problems.append(f'file outside the places the package owns: {rel}')
-            if bad_name(rel.removeprefix(P)) or BAD_FILE.search(rel) or p.name in ship['never_ship']:
+            if bad_name(rel.removeprefix(P)) or BAD_FILE.search(rel) or (rel.startswith(P + 'content/') and not GUIDES.search(rel)):
                 problems.append(f'file not allowed: {rel}')
             data = p.read_bytes()
-            low = data.lower()
-            for t in terms:
-                if t in low:
-                    problems.append(f'private word #{terms.index(t) + 1} in {rel}')
             for m in TEST_MARKERS:
                 if m in data:
                     problems.append(f'test marker {m.decode()} in {rel}')
@@ -107,10 +94,6 @@ def main():
                 remote_hits[rel] = data.count(b'remote_storage')
             for u in set(USER_PATH.findall(data)):
                 user_paths.setdefault(u.decode('ascii', 'replace'), []).append(rel)
-            if FIRST_PARTY.search(rel):
-                m = household.search(data)
-                if m:
-                    problems.append(f'household or working name in {rel}: {data[max(0, m.start() - 30):m.end() + 30]!r}')
             if OUR_PY.search(rel):
                 mods = net_imports(data.decode('utf-8'))
                 if mods:

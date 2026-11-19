@@ -10,7 +10,7 @@ version=$(cat VERSION)
 
 bin/test
 bash -n install.sh packaging/arch/PKGBUILD bin/arch-run bin/build-packages bin/check bin/collect-packages bin/release \
-  bin/test bin/test-deps bin/verify-release tests/install_test.sh
+  bin/test bin/test-deps bin/verify-release tests/install_test.sh packaging/llm/build_llm_linux.sh native/dev/preview.sh
 tests/install_test.sh
 
 printf '\nAll checks passed.\n'

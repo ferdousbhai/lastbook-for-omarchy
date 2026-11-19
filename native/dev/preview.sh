@@ -154,8 +154,8 @@ else
   hyprctl output create headless "$output" >/dev/null
 fi
 
-# No Recall (a socket that is not there), no local model, and the other model address is a closed port.
-LASTBOOK_OPEN=$route LASTBOOK_DEV=1 PYTHONPATH=$deps LASTBOOK_LOCAL_AI=0 SURVIVAL_MODEL_BASE=http://127.0.0.1:9 \
+# No Recall (a socket that is not there) and no local model.
+LASTBOOK_OPEN=$route LASTBOOK_DEV=1 PYTHONPATH=$deps LASTBOOK_LOCAL_AI=0 \
   LASTBOOK_RECALL_SOCKET=$root/no-recall.sock GDK_BACKEND=wayland \
   "$binary" --data "$root/library" > "$root/window.log" 2>&1 &
 window_pid=$!

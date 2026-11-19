@@ -109,7 +109,6 @@ impl ChatPage {
         column.append(&gtk::ScrolledWindow::builder().child(&list).vexpand(true).hscrollbar_policy(gtk::PolicyType::Never).build());
 
         let convo = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        convo.add_css_class("conversation");
         convo.set_margin_top(24);
         convo.set_margin_bottom(24);
         convo.set_margin_start(32);
@@ -161,7 +160,7 @@ impl ChatPage {
         root.append(&column);
         root.append(&right);
 
-        let chats: Vec<Conversation> = std::fs::read(store_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let chats: Vec<Conversation> = crate::engine::load_json(&store_path());
         let page = Rc::new(Self {
             root: root.upcast(),
             app: Rc::downgrade(app),
@@ -256,9 +255,9 @@ impl ChatPage {
     }
 
     fn describe_about(self: &Rc<Self>, about: &str) {
-        self.about_label.set_text("Asking about the page you were reading");
-        let Some(app) = self.app.upgrade() else { return };
         let (kind, rest) = about.split_once(':').unwrap_or(("", ""));
+        self.about_label.set_text(if kind == "topic" { "Asking about the guide you were reading" } else { "Asking about the page you were reading" });
+        let Some(app) = self.app.upgrade() else { return };
         if kind != "doc" {
             return;
         }
@@ -293,8 +292,6 @@ impl ChatPage {
                 "stopped" => String::new(),
                 "checking" | "measuring" => "Checking the local AI's model file…".into(),
                 "too_big" => format!("The local AI doesn't fit this computer: {}", local["message"].as_str().unwrap_or_default()),
-                "off" => "The local AI is turned off. Questions show the matching pages instead.".into(),
-                _ if s["online"].as_bool().unwrap_or(false) => format!("Local model {} is ready.", s["model"].as_str().unwrap_or_default()),
                 _ => "No local AI on this computer: questions show the matching pages instead.".into(),
             };
             me.status.set_text(&line);
@@ -337,16 +334,7 @@ impl ChatPage {
     }
 
     fn save(&self) {
-        let path = store_path();
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Ok(bytes) = serde_json::to_vec(&*self.chats.borrow()) {
-            let tmp = path.with_extension("tmp");
-            if std::fs::write(&tmp, bytes).is_ok() {
-                let _ = std::fs::rename(&tmp, &path);
-            }
-        }
+        crate::engine::store_json(&store_path(), &*self.chats.borrow());
     }
 
     /// Draws the current conversation from its saved messages.
@@ -438,7 +426,7 @@ impl ChatPage {
         }
     }
 
-    /// Asks `text` in the chat on screen (scripted checks: LASTBOOK_OPEN=chat:<question>).
+    /// Asks `text` in the chat on screen (`lastbook open chat:<question>`).
     pub fn ask_text(self: &Rc<Self>, text: &str) {
         self.input.buffer().set_text(text);
         self.ask();
@@ -644,7 +632,6 @@ fn answer_widget() -> Answer {
     let frame = gtk::Box::new(gtk::Orientation::Vertical, 8);
     frame.add_css_class("answer");
     let steps = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    steps.add_css_class("steps");
     let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let note = gtk::Label::new(None);
     note.add_css_class("meta");
@@ -687,7 +674,6 @@ fn step_text(ev: &Value) -> String {
         "read_article" if r["error"].is_null() => format!("Read the encyclopedia article “{}”", s(&r["title"])),
         "get_timed_transcript" if r["error"].is_null() => format!("Read the transcript of {}", s(&r["title"])),
         "lookup_place" => format!("Looked up “{}” on the offline map", s(&a["query"])),
-        "view_page" => format!("Looked at the picture of {}, page {}", s(&r["title"]), a["page"]),
         name => format!("{name} (nothing found)"),
     }
 }

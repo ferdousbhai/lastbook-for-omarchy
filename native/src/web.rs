@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Pages that are HTML by nature: encyclopedia articles (ZIM) and the library's saved web pages, in WebKitGTK 6.
 //!
-//! Everything a page loads comes through the `lastbook:` scheme, which this module answers from the engine (the same
-//! handler, checks and content-security rules the old window had). Nothing else loads: JavaScript is off, a content
+//! Everything a page loads comes through the `lastbook:` scheme, which this module answers from the engine (its
+//! file handler and the checks on what may be served). Nothing else loads: JavaScript is off, a content
 //! filter blocks every URL that is not lastbook:, and navigation never leaves it. The session is ephemeral, so no
 //! cookies, cache or storage are written. Encyclopedia articles are recoloured to the Omarchy theme.
 

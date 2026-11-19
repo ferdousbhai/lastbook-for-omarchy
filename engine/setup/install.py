@@ -217,7 +217,7 @@ def stage_switch(pend, new_lib, target, model_file=None, kind=None, model_sha256
 
 def carry_over(old, new):
     """What belongs to the person, not the pack, goes with them: the model file, address indexes, the world map and its
-    regions (engine/setup/maps.py), and the AI's on/off setting."""
+    regions (engine/setup/maps.py), and the AI's record of having checked the model file."""
     old, new = Path(old), Path(new)
     moved = []
     src = old / 'models'

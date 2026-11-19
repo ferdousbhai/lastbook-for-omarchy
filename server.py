@@ -449,20 +449,15 @@ def shelves():
         [{'id': 'other', 'title': 'Other references', **counts.get('other', {'read': 0, 'video': 0})}]
 
 
-def shelf(sid, kind='all', q='', offset=0, limit=40):
-    allowed = KIND_FILTERS.get(kind)
-    rs = [r for r in catalog()['by_id'].values()
-          if r['kind'] not in ('metadata', 'transcript', 'zim') and shelf_of(r) == sid
-          and (not allowed or r['kind'] in allowed)
-          and (not q or q.lower() in (r['title'] + ' ' + r.get('collection', '') + ' ' + r.get('publisher', '')).lower())]
+def shelf(sid):
+    rs = [r for r in catalog()['by_id'].values() if r['kind'] not in ('metadata', 'transcript', 'zim') and shelf_of(r) == sid]
     rs.sort(key=lambda r: (-trust(r)[1], r.get('collection', ''), r['title']))
-    # group by collection so a 300-chapter manual shows as one entry
+    # grouped by collection, so a 300-chapter manual is one entry: the window shows a few and offers the rest
     groups = {}
     for r in rs:
         groups.setdefault(r.get('collection') or 'Other', []).append(r)
-    items = [{'collection': c, 'count': len(v), 'trust': trust(v[0])[0], 'items': [public(x) for x in v[:6]]}
-             for c, v in groups.items()]
-    return {'total': len(rs), 'collections': items[offset:offset + limit], 'more': len(items) > offset + limit}
+    return {'total': len(rs), 'collections': [{'collection': c, 'count': len(v), 'trust': trust(v[0])[0], 'items': [public(x) for x in v]}
+                                              for c, v in groups.items()]}
 
 
 # ------------------------------------------------------------------ videos ----
@@ -521,42 +516,21 @@ def videos_home():
         if r['kind'] == 'video':
             rows.setdefault(vrow_of(r), []).append(r)
     picked = guide_videos()
-    res = [{'id': 'guides', 'title': 'Picked for the guides', 'note': 'Chosen to go with the survival guides', 'count': len(picked), 'items': picked[:16]}]
+    res = [{'id': 'guides', 'title': 'Picked for the guides', 'note': 'Chosen to go with the survival guides', 'count': len(picked), 'items': picked}]
     for vid, title, _ in VROWS:
         rs = sorted(rows.get(vid, []), key=vsort)
         if VROW_NOTE.get(vid, '').startswith('Hobbyist'):
             rs.sort(key=lambda r: r.get('upload_date') or '', reverse=True)  # channels: newest first, not A–Z
         if rs:
-            res.append({'id': vid, 'title': title, 'note': VROW_NOTE.get(vid), 'count': len(rs), 'items': [vcard(r) for r in rs[:16]]})
+            res.append({'id': vid, 'title': title, 'note': VROW_NOTE.get(vid), 'count': len(rs), 'items': [vcard(r) for r in rs]})
     return res
 
 
-def videos_list(row, q='', length='', sort='', offset=0, limit=48):
-    if row == 'guides':
-        rs = [catalog()['by_id'][v['id']] for v in guide_videos()]
-    else:
-        rs = [r for r in catalog()['by_id'].values() if r['kind'] == 'video' and (row in ('', 'all') or vrow_of(r) == row)]
-    if q:
-        words = q.lower().split()
-        rs = [r for r in rs if all(w in (r['title'] + ' ' + r.get('publisher', '')).lower() for w in words)]
-    d = lambda r: r.get('duration') or 0
-    if length == 'short':
-        rs = [r for r in rs if d(r) and d(r) < 600]
-    elif length == 'medium':
-        rs = [r for r in rs if 600 <= d(r) < 1800]
-    elif length == 'long':
-        rs = [r for r in rs if d(r) >= 1800]
-    if sort == 'short':
-        rs.sort(key=d)
-    elif sort == 'new':
-        rs.sort(key=lambda r: r.get('upload_date') or '', reverse=True)
-    elif sort == 'az':
-        rs.sort(key=lambda r: r['title'].lower())
-    elif row != 'guides':
-        rs.sort(key=vsort)
-    title = dict((v[0], v[1]) for v in VROWS).get(row, 'Picked for the guides' if row == 'guides' else 'All videos')
-    return {'title': title, 'note': VROW_NOTE.get(row), 'total': len(rs), 'items': [vcard(r) for r in rs[offset:offset + limit]],
-            'more': len(rs) > offset + limit}
+def videos_search(q):
+    words = q.lower().split()
+    rs = sorted((r for r in catalog()['by_id'].values()
+                 if r['kind'] == 'video' and all(w in (r['title'] + ' ' + r.get('publisher', '')).lower() for w in words)), key=vsort)
+    return {'total': len(rs), 'items': [vcard(r) for r in rs]}
 
 
 # ------------------------------------------------------------- pages/text ----
@@ -824,14 +798,6 @@ def haversine(la1, lo1, la2, lo2):
 WATER_WORDS = {'lake', 'lakes', 'reservoir', 'res', 'dam', 'pond', 'ponds'}
 
 
-def near_bonus(near, lat, lon):
-    """0-8: places close to where the person is looking rank higher (strongly within ~60 km, gently out to ~600 km)."""
-    if not near:
-        return 0
-    km = haversine(near[0], near[1], lat, lon)[0]
-    return 6 * math.exp(-km / 60) + 2 * math.exp(-km / 600)
-
-
 def word_sets(words):
     """All the words, then (for longer queries) each set with one word dropped — 'echo park lake' still finds 'Echo Lake'."""
     yield words
@@ -840,7 +806,7 @@ def word_sets(words):
             yield words[:i] + words[i + 1:]
 
 
-def water_places(q, limit=10, near=None):
+def water_places(q, limit=10):
     """Named lakes, reservoirs and dams matching the query (generic words like 'lake' only help ranking)."""
     if not WATERDB.exists():
         return []
@@ -872,22 +838,18 @@ def water_places(q, limit=10, near=None):
         d = json.loads(raw or '{}')
         text = (name + ' ' + (d.get('other_names') or '')).lower()
         score = (sum(w in text for w in words) * 2 + (core[0] in text) + (kind != 'dam') + (name.lower() == q.lower().strip()) * 3
-                 + math.log10(float(d.get('area_acres') or d.get('surface_acres') or 1) + 1) / 3 + near_bonus(near, lat, lon))
+                 + math.log10(float(d.get('area_acres') or d.get('surface_acres') or 1) + 1) / 3)
         where = ', '.join(x for x in (d.get('county') and d['county'] + ' County', d.get('state')) if x)
         extra = f" · also called {d['other_names']}" if d.get('other_names') else ''
-        away = ''
-        if near:
-            km = haversine(near[0], near[1], lat, lon)[0]
-            away = f" · {km / 1.609:,.0f} mi away" if km >= 1.6 else ' · nearby'
         out.append((score, {'name': name, 'kind': {'dam': 'Dam', 'reservoir': 'Reservoir', 'lake': 'Lake'}[kind],
-                            'detail': (where or 'United States') + extra + away, 'lat': lat, 'lon': lon, 'source': 'water', 'onMap': True}))
+                            'detail': (where or 'United States') + extra, 'lat': lat, 'lon': lon, 'source': 'water', 'onMap': True}))
     out.sort(key=lambda t: -t[0])
     return [o for _, o in out[:limit]]
 
 
-def places(q, limit=20, near=None):
+def places(q, limit=20):
     if address_search.is_address_query(q):
-        return address_search.find_addresses(q, HERE / 'derived' / 'geo', limit=min(limit, 8), near=near)
+        return address_search.find_addresses(q, HERE / 'derived' / 'geo', limit=min(limit, 8))
     dbs = [sqlite3.connect(ro_uri(p), uri=True) for p in (PLACEDB, WORLD_PLACEDB) if p.exists()]
     if not dbs:
         return []
@@ -925,8 +887,7 @@ def places(q, limit=20, near=None):
                               (r[4] - .08, r[4] + .08, r[3] - .08, r[3] + .08, r[0])).fetchone()
             size[k] = 2 if hit[0] is None else hit[0]
         return size[k]
-    rows.sort(key=lambda r: (norm(r[0]) != ql, not norm(r[0]).startswith(ql), r[5] > 2 and norm(r[0]) == ql and importance(r),
-                             -round(near_bonus(near, r[3], r[4])), r[5]))
+    rows.sort(key=lambda r: (norm(r[0]) != ql, not norm(r[0]).startswith(ql), r[5] > 2 and norm(r[0]) == ql and importance(r), r[5]))
     seen, out = set(), []
     for name, kind, detail, lat, lon, rank, src in rows:
         k = (name.lower(), round(lat, 2), round(lon, 2))
@@ -937,7 +898,7 @@ def places(q, limit=20, near=None):
                     'onMap': bool(pack_info()) or 32.5 < lat < 35.9 and -121.4 < lon < -114.1})
         if len(out) >= limit:
             break
-    water = water_places(q, near=near)
+    water = water_places(q)
     if water:  # a query that names a water word puts lakes and dams first; otherwise towns lead
         out = (water + out) if set(w.lower() for w in re.findall(r'\w+', q)) & WATER_WORDS else (out[:8] + water + out[8:])
     return out[:limit + len(water)]
@@ -994,30 +955,7 @@ class Handler(library.Handler):
     # The only parts of the library the window gets: no worker state, logs, tools, sign-in settings or reports.
     SERVED_PREFIXES = ('/api/', '/zim/', '/documents/', '/pages/', '/videos/', '/videos-external/', '/transcripts/', '/metadata/videos/', '/courses/', '/collections/', '/assets/')
     SERVED_ONLY = True  # engine/library.py: a file must really sit in one of these folders, whatever links lead there
-    LIBRARY_ROUTES = ('/api/health',)  # answered in engine/library.py
     LIBRARY_PREFIXES = tuple(p for p in SERVED_PREFIXES if p not in ('/api/', '/zim/'))
-    # What a browser runs scripts in when it is opened directly. An <img> never runs them and shows it as before.
-    ACTIVE_SUFFIXES = ('', '.html', '.htm', '.shtml', '.xhtml', '.xht', '.svg', '.svgz', '.xml', '.xsl', '.xslt', '.rdf', '.mht', '.mhtml')
-    # Library content keeps what it says and runs none of its code: saved web pages, and encyclopedia pages too.
-    ACTIVE_TYPES = re.compile(r'(?i)html|xml|xsl|svg|hta|component|rfc822|multipart/related')  # the same, judged by what the browser will be told: the suffix list can't cover what a machine's own type list adds
-    # No allow-popups: the one window opens nothing for a page anyway, so all it gave a page was another way to ask. No allow-downloads, no allow-forms.
-    # It covers what a sandbox does not: <noscript> frames come alive with scripts off, and <form>, <base> and <object> still load things without any.
-    NO_CODE_CSP = ("default-src 'none'; script-src 'none'; connect-src 'none'; worker-src 'none'; object-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'; "
-                   "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; media-src 'self'; frame-src 'self'")
-    SAVED_PAGE_CSP = 'sandbox; ' + NO_CODE_CSP
-    ZIM_CSP = 'sandbox allow-same-origin; ' + NO_CODE_CSP   # same-origin so the reader can follow the entry's title. A page with no scripts can do nothing with it.
-
-    def parse_request(self):
-        """Runs before any GET, HEAD or POST handling. Python rewrites a leading '//' in self.path, so read the target as it was sent."""
-        if not super().parse_request():
-            return False
-        words = self.requestline.split()
-        target = words[1] if len(words) > 1 else ''
-        if not target.startswith('/') or target.startswith('//'):
-            self.close_connection = True
-            self.send_error(400)
-            return False
-        return True
 
     def path_ok(self, path):
         if '\0' in path:
@@ -1032,11 +970,6 @@ class Handler(library.Handler):
 
     def list_directory(self, path):
         self.send_error(404)
-
-    def send_header(self, keyword, value):
-        if keyword.lower() == 'content-type':
-            self.sent_type = value
-        super().send_header(keyword, value)
 
     def send_head(self):
         """Only files get here. /api/ and /zim/ are addresses, never folders, whatever the library folder holds."""
@@ -1087,41 +1020,10 @@ class Handler(library.Handler):
                 data = saved_pages.article_look(data)
         super().send_data(data, mime, status)
 
-    def end_headers(self):
-        sent_type = getattr(self, 'sent_type', '')
-        self.send_header('X-Content-Type-Options', 'nosniff')
-        self.sent_type = ''
-        try:
-            path = urllib.parse.unquote(urllib.parse.urlsplit(getattr(self, 'path', '')).path)  # no self.path yet on a malformed request line
-        except ValueError:
-            path = ''
-        if path.startswith('/zim/'):
-            # Every answer under /zim/: pages, redirects and errors alike.
-            self.send_header('Content-Security-Policy', self.ZIM_CSP)
-            self.send_header('X-DNS-Prefetch-Control', 'off')
-        elif path.startswith(self.LIBRARY_PREFIXES) and (Path(path).suffix.lower() in self.ACTIVE_SUFFIXES or self.ACTIVE_TYPES.search(sent_type)):
-            self.send_header('Content-Security-Policy', self.SAVED_PAGE_CSP)
-            self.send_header('X-DNS-Prefetch-Control', 'off')   # a CSP does not cover the names a browser looks up ahead of a click
-        elif path.startswith(self.LIBRARY_PREFIXES) and Path(path).suffix.lower() in ('.woff2', '.woff', '.ttf', '.otf'):
-            self.send_header('Access-Control-Allow-Origin', 'null')   # the sandbox above leaves a saved page origin null, and fonts always load by CORS
-        super().end_headers()
-
     def internal_error(self):
-        """The details go to the log. What reaches the client names no file path or user."""
+        """The details go to the log. What reaches the window names no file path or user."""
         traceback.print_exc()
         return self.send_json({'error': f'Server error ({sys.exc_info()[0].__name__}).'}, 500)
-
-    def do_HEAD(self):
-        try:
-            path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
-            if not self.path_ok(path):
-                return self.send_error(404)
-            return super().do_HEAD()
-        except library.CLIENT_GONE:
-            return
-        except Exception:
-            traceback.print_exc()
-            return self.send_error(500)
 
     def do_POST(self):
         try:
@@ -1133,9 +1035,9 @@ class Handler(library.Handler):
 
     def handle_post(self):
         rpath = urllib.parse.urlsplit(self.path).path
-        if rpath.startswith('/api/setup/'):  # Library and local AI: engine/setup/api.py
+        if rpath.startswith('/api/setup/'):  # About → Library and downloads: engine/setup/api.py
             return setup_api.handle(self, 'POST', rpath)
-        if rpath == '/api/assistant/local':   # the optional local AI: look again for the file, turn it on or off, stop it
+        if rpath == '/api/assistant/local':   # Chat is open: the local AI starts loading before the question comes
             if not assistant.LOCAL:
                 return self.send_json({'error': 'no local AI in this version'}, 404)
             try:
@@ -1143,16 +1045,9 @@ class Handler(library.Handler):
                 action = json.loads(self.rfile.read(min(max(n, 0), 2000)) or b'{}').get('action')
             except (ValueError, AttributeError):
                 action = None
-            if action == 'rescan':
-                threading.Thread(target=assistant.LOCAL.discover, daemon=True).start()
-            elif action in ('on', 'off'):
-                assistant.LOCAL.set_enabled(action == 'on')
-            elif action == 'stop':
-                assistant.LOCAL.stop('asked')
-            elif action == 'warm':   # Chat is open: start loading before the question comes
-                assistant.warm_local()
-            else:
-                return self.send_json({'error': 'action is rescan, on, off, stop or warm'}, 400)
+            if action != 'warm':
+                return self.send_json({'error': 'action is warm'}, 400)
+            assistant.warm_local()
             return self.send_json(assistant.LOCAL.status())
         if rpath != '/api/chat':
             return self.send_json({'error': 'not found'}, 404)
@@ -1169,8 +1064,6 @@ class Handler(library.Handler):
         about = str(req.get('about') or '')[:200] or None
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
-        self.send_header('Cache-Control', 'no-cache')
-        self.send_header('X-Accel-Buffering', 'no')
         self.end_headers()
         gone = [False]
 
@@ -1182,17 +1075,9 @@ class Handler(library.Handler):
                 self.wfile.flush()
             except library.CLIENT_GONE:
                 gone[0] = True  # the person pressed Stop or left; stop calling the model
-        # Just after start the local AI may still be finding, checking or measuring its model file: wait for that to
-        # settle rather than answering "no model" to the first question.
-        waited = 0.0
-        while assistant.LOCAL and waited < 600 and (assistant.LOCAL.state in ('checking', 'measuring')
-                                                     or (assistant.LOCAL.state == 'absent' and waited < 5)):
-            if waited == 0:
-                emit({'type': 'state', 'state': 'starting'})
-            time.sleep(0.5)
-            waited += 0.5
-        st = assistant.model_status()
-        if not st['online']:
+        if assistant.LOCAL:
+            assistant.LOCAL.settle(lambda: emit({'type': 'state', 'state': 'starting'}))
+        if not assistant.model_status()['online']:
             emit({'type': 'error', 'error': 'model_unavailable', 'text': 'The local assistant model is not running right now.'})
             return
         try:
@@ -1227,24 +1112,20 @@ class Handler(library.Handler):
                 return self.send_json(dict(assistant.model_status(), coverage=coverage()))
             if path == '/api/videos':
                 return self.send_json(videos_home())
-            if path.startswith('/api/videos/'):
-                return self.send_json(videos_list(path[12:], qs.get('q', ''), qs.get('len', ''), qs.get('sort', ''), int(qs.get('offset', 0))))
+            if path == '/api/videos/all':
+                return self.send_json(videos_search(qs.get('q', '')))
             if path == '/api/shelves':
                 return self.send_json(shelves())
             if path.startswith('/api/shelf/'):
-                return self.send_json(shelf(path[11:], qs.get('kind', 'all'), qs.get('q', ''), int(qs.get('offset', 0))))
+                return self.send_json(shelf(path[11:]))
             if path == '/api/places':
-                try:
-                    near_pt = tuple(map(float, qs['near'].split(',')))[:2] if qs.get('near') else None
-                except ValueError:
-                    near_pt = None
-                return self.send_json(places(qs.get('q', '')[:100], near=near_pt))
+                return self.send_json(places(qs.get('q', '')[:100]))
             if path == '/api/library':
                 s = json.loads((LIB / 'summary.json').read_text(encoding='utf-8'))
                 sources = (catalog()['by_path'].get(SOURCES_PAGE) or {}).get('id')
                 return self.send_json({**{k: s.get(k) for k in ('resources', 'pdfs', 'pdf_pages', 'web_pages', 'videos', 'collections', 'document_bytes')},
                                        'zims': zim_names(), 'sources': sources})
-            if path.startswith('/api/') and path not in self.LIBRARY_ROUTES:
+            if path.startswith('/api/'):
                 return self.send_json({'error': 'not found'}, 404)
             return super().do_GET()
         except library.CLIENT_GONE:

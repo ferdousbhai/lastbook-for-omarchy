@@ -24,6 +24,11 @@ DATA_NAME = 'LastbookData'
 CATALOG = os.path.join('library-data', 'catalog.json')
 
 
+def version():
+    v = Path(__file__).resolve().parents[1] / 'VERSION'
+    return v.read_text().strip() if v.exists() else None
+
+
 def app_folders():
     """(settings, this computer's app data): XDG's config and data folders."""
     home = Path.home()
@@ -147,9 +152,10 @@ class RotatingLog:
 
 
 def open_log(data):
+    """The installed app's output goes to the log. Run from source, it stays on the terminal and no log file is made."""
+    if not INSTALLED:
+        return
     logs = data / 'derived' / 'logs'
     logs.mkdir(parents=True, exist_ok=True)
-    log = RotatingLog(logs / 'lastbook.log')
-    if INSTALLED:
-        sys.stdout = sys.stderr = log
+    sys.stdout = sys.stderr = RotatingLog(logs / 'lastbook.log')
 

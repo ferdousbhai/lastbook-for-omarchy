@@ -8,7 +8,6 @@ use std::{
     fs, io,
     os::unix::{fs::symlink, process::CommandExt},
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use serde_json::json;
@@ -73,12 +72,8 @@ pub fn start(args: &[String]) -> Start {
 
 /// Becomes the engine's command line (app/cli.py); returns only if it could not start.
 pub fn run_engine(args: &[String]) -> io::Error {
-    let mut cmd = Command::new("/usr/bin/python3");
-    // As the window starts its engine (engine.rs): -I unless a checkout run brings its own PYTHONPATH.
-    if std::env::var_os("LASTBOOK_DEV").is_none() {
-        cmd.arg("-I");
-    }
-    cmd.arg("-B").arg(crate::engine::engine_script().with_file_name("cli.py")).args(args);
+    let mut cmd = crate::engine::python("cli.py");
+    cmd.args(args);
     if let Ok(exe) = std::env::current_exe() {
         cmd.env("LASTBOOK_BIN", exe); // `open` starts this program again, as a window
     }

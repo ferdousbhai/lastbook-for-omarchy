@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """What a pack's app shows and ships: encyclopedia articles with their scripts taken out, guide items that open nothing hidden,
-and no household area or working name in the content/ a package build ships.
+and the guides as the only part of content/ the package scan lets through.
 
   python3 -B app/tests/test_what_ships.py [-v]
 
 Uses the made-up library in derived/app-build/testdata (no model). Never packaged."""
-import json, os, re, subprocess, sys, tempfile, unittest
+import json, os, sys, unittest
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -15,12 +15,8 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'app'), str(HERE)]
 import fixture  # noqa: E402
 DATA = fixture.ensure()
 os.environ['LASTBOOK_DATA'] = str(DATA)
-os.environ['SURVIVAL_MODEL_BASE'] = 'http://127.0.0.1:9'
 from engine import saved_pages  # noqa: E402
 import server  # noqa: E402
-
-SHIP = json.loads((ROOT / 'packaging' / 'ship_edits.json').read_text(encoding='utf-8'))
-HOUSEHOLD = re.compile('|'.join(SHIP['forbidden']), re.I)
 
 
 class Article(unittest.TestCase):
@@ -101,30 +97,17 @@ class Guides(unittest.TestCase):
 
 
 class WhatShips(unittest.TestCase):
-    def test_ship_folder_has_no_household_and_the_scans_refuse_it(self):
-        with tempfile.TemporaryDirectory() as out:
-            r = subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'packaging' / 'ship_app_files.py'), out], capture_output=True, text=True)
-            self.assertEqual(r.returncode, 0, r.stderr)
-            files = [p for p in Path(out).rglob('*') if p.is_file()]
-            self.assertFalse([p for p in files if p.name in SHIP['never_ship']])
-            for p in files:
-                self.assertIsNone(HOUSEHOLD.search(p.read_text(encoding='utf-8', errors='replace')), p)
-            land = (Path(out) / 'content/topics/land.json').read_text(encoding='utf-8')
-            self.assertNotIn('"land-', land)
-            grow = (Path(out) / 'content/topics/grow.json').read_text(encoding='utf-8')
-            self.assertIn('coastal-growing-', grow)
-            self.assertFalse([p for p in files if 'content' not in p.relative_to(out).parts])   # the guides and nothing else
-        for word in ('placeholdertown', 'Placeholdertown'):   # with the household's own list in place, check its words and coordinates here
-            self.assertTrue(HOUSEHOLD.search(word), word)
-        for fine in ('39.0997', 'Southern California', 'Los Angeles County', 'claude_source_id'):
-            self.assertIsNone(HOUSEHOLD.search(fine), fine)
-        self.assertIn("'ship_edits.json'", (ROOT / 'packaging' / 'arch' / 'scan_package.py').read_text(encoding='utf-8'))
-
-    def test_shipped_code_names_no_household_place(self):
-        for rel in ('server.py', 'assistant.py', 'retrieval.py', 'engine/library.py', 'engine/saved_pages.py', 'engine/paths.py', 'app/main.py', 'app/bridge.py',
-                    'app/engine_pipe.py', 'app/cli.py', 'skills/lastbook/SKILL.md'):
-            self.assertIsNone(HOUSEHOLD.search((ROOT / rel).read_text(encoding='utf-8')), rel)
-        self.assertNotIn('118.4', (ROOT / 'server.py').read_text(encoding='utf-8'))
+    def test_the_package_scan_lets_the_guides_through_and_nothing_else_of_content(self):
+        sys.path.insert(0, str(ROOT / 'packaging' / 'arch'))
+        import scan_package
+        at = scan_package.P + 'content/'
+        guides = ['gaps.json'] + [f'topics/{p.name}' for p in (ROOT / 'content' / 'topics').glob('*.json')]
+        self.assertGreater(len(guides), 1)
+        for rel in guides:
+            json.loads((ROOT / 'content' / rel).read_text(encoding='utf-8'))
+            self.assertTrue(scan_package.GUIDES.search(at + rel), rel)
+        for rel in ('SCHEMA.md', 'home-area.json', 'topics/notes.md', 'topics/deeper/x.json'):
+            self.assertIsNone(scan_package.GUIDES.search(at + rel), rel)
 
 
 if __name__ == '__main__':

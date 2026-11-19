@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! PDF pages drawn by Poppler into textures, the way Strata previews PDFs. Documents are opened once and kept for the
+//! PDF pages drawn by Poppler into textures. Documents are opened once and kept for the
 //! session (small: the library has a few hundred), on the main thread, which is the only one Poppler objects live on.
 
 use std::{cell::RefCell, collections::HashMap, path::Path};

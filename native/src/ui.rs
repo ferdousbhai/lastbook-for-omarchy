@@ -4,6 +4,7 @@
 
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     rc::Rc,
     sync::Arc,
 };
@@ -41,14 +42,24 @@ pub enum Route {
 }
 
 impl Route {
-    /// A short text form for what can be saved (and for LASTBOOK_OPEN): read:<doc>:<page>, wiki:<path>,
-    /// watch:<video>:<t>, guide:<id>, web:<path>.
+    /// A short text form for what can be saved: read:<doc>:<page>, wiki:<path>, watch:<video>:<t>, guide:<id>,
+    /// web:<path>. `from_key` reads these and a few more, for `lastbook open`.
     pub fn key(&self) -> Option<String> {
         Some(match self {
             Route::Read { doc, page } => format!("read:{doc}:{page}"),
             Route::Wiki { path } => format!("wiki:{path}"),
             Route::Watch { video, t } => format!("watch:{video}:{}", *t as i64),
             Route::Guide(id) => format!("guide:{id}"),
+            Route::Web { path, .. } => format!("web:{path}"),
+            _ => return None,
+        })
+    }
+
+    /// What a title is remembered under, for the screens that learn theirs only once they have loaded.
+    fn title_key(&self) -> Option<String> {
+        Some(match self {
+            Route::Read { doc, .. } => format!("read:{doc}"),
+            Route::Watch { video, .. } => format!("watch:{video}"),
             Route::Web { path, .. } => format!("web:{path}"),
             _ => return None,
         })
@@ -108,6 +119,8 @@ pub struct App {
     history: RefCell<Vec<Route>>,
     pos: Cell<usize>,
     syncing: Cell<bool>,
+    /// Titles the screens reported after loading: a screen shown again does not load again, so it does not report again.
+    titles: RefCell<HashMap<String, String>>,
     /// The sidebar section of the screen shown, so a row re-selected by focus (not by the person) does nothing.
     section: RefCell<String>,
     pub search: RefCell<Option<Rc<SearchPage>>>,
@@ -196,6 +209,7 @@ impl App {
             history: RefCell::new(Vec::new()),
             pos: Cell::new(0),
             syncing: Cell::new(false),
+            titles: RefCell::new(HashMap::new()),
             section: RefCell::new(String::new()),
             search: RefCell::new(None),
             reader: RefCell::new(None),
@@ -274,10 +288,17 @@ impl App {
                 a.navigate(route);
             }
         });
+        // A click on the row already selected goes back to that section's first screen (from a guide to the guides).
+        let a = app.clone();
+        app.sidebar.connect_row_activated(move |_, row| {
+            if let Some(s) = SECTIONS.iter().find(|s| s.0 == row.widget_name().as_str() && !matches!(s.0, "search" | "chat")) {
+                a.navigate(Route::Section(s.0));
+            }
+        });
         app.keys();
         app.navigate(Route::Section("guides"));
-        // LASTBOOK_OPEN opens a screen at start, for scripted checks: any saved form (read:, wiki:, watch:, guide:, web:,
-        // search:, shelf:, section:) or chat:<question>.
+        // LASTBOOK_OPEN opens a screen at start: it is how `lastbook open` works (app/cli.py). Any Route::from_key form,
+        // or chat:<question>.
         if let Ok(open) = std::env::var("LASTBOOK_OPEN") {
             if let Some(q) = open.strip_prefix("chat:") {
                 app.navigate(Route::Chat { id: None, about: None });
@@ -487,16 +508,7 @@ impl App {
             }
         };
         self.stack.set_visible_child_name(page);
-        if std::env::var_os("LASTBOOK_DEBUG").is_some() {
-            eprintln!("route {route:?} -> page {page} visible {:?}", self.stack.visible_child_name());
-            // The narrowest the window can be on this screen (Hyprland tiles a half screen at about 840 px).
-            let a = self.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_millis(1500), move || {
-                if let Some(child) = a.window.child() {
-                    eprintln!("min width {:?}: {}", a.stack.visible_child_name(), child.measure(gtk::Orientation::Horizontal, -1).0);
-                }
-            });
-        }
+        let title = if title.is_empty() { route.title_key().and_then(|k| self.titles.borrow().get(&k).cloned()).unwrap_or_default() } else { title };
         if !title.is_empty() {
             self.set_title(&title);
         }
@@ -528,6 +540,9 @@ impl App {
     }
 
     pub fn set_title(&self, title: &str) {
+        if let Some(k) = self.current().and_then(|r| r.title_key()) {
+            self.titles.borrow_mut().insert(k, title.to_owned());
+        }
         self.title.set_text(title);
         self.window.set_title(Some(&format!("{title} — Lastbook")));
     }

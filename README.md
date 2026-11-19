@@ -2,7 +2,8 @@
 
 An offline survival library for Omarchy (Arch Linux with Hyprland, on x86_64 and on aarch64 Apple silicon through Asahi). It puts
 manuals, videos, encyclopedias, an offline map and short practical guides on one computer. After setup, it works offline. The
-desktop sidebar opens Videos, Map and Chat. Chat answers questions from the library, encyclopedias included, and cites its sources.
+desktop sidebar opens Search, Chat, Guides, Library, Videos, Map and Saved, with About in its footer. Search finds encyclopedia
+articles too (it has an Encyclopedias filter). Chat answers questions from the library, encyclopedias included, and cites its sources.
 
 A hard fork of [Lastbook](https://github.com/Immortal-Protocols/lastbook) (<https://lastbook.org>), made Omarchy-only, with one native window: the macOS,
 Windows and iPad apps, the browser interface, the websites, the pack-building tools and the update checker are gone; meaning-based search uses
@@ -64,7 +65,7 @@ window, for scripts and for AI agents working on the computer:
 ```bash
 lastbook search "treat a burn" --limit 5          # passages by meaning and by words: doc_id, title, page, excerpt, trust
 lastbook read med-443ae5cfaa6ecc68 --pages 37,38  # the text of PDF pages; of an encyclopedia article (zim:…); of a saved page
-lastbook page med-443ae5cfaa6ecc68 38             # one PDF page as a PNG (in ~/.cache/lastbook/pages, or --out FILE)
+lastbook page med-443ae5cfaa6ecc68 38             # one PDF page as a PNG (in ~/.cache/Lastbook/pages, or --out FILE)
 lastbook transcript VIDEO_ID --query "tinder"     # a video's timed lines
 lastbook place "Denpasar" --nearby hospital       # the offline gazetteer, and help points near the first match
 lastbook guides; lastbook guide hurt              # the situation guides and the pages they point to
@@ -95,8 +96,8 @@ The agent skill (`skills/lastbook/SKILL.md`) tells an agent when and how to use 
   download hosts for the AI model; Protomaps' build hosts for the map; `download.geonames.org` for place names), no proxy
   from the system, and a redirect is followed only to another allowed host.
 - **Pinned trust.** The downloader trusts only the root certificates in `engine/setup/roots.pem` (11 roots from Mozilla's
-  bundle), never the system's trust store. `python3 -I -B packaging/check_tls_roots.py` checks by hand that those roots
-  still cover the allowed hosts; run it before a release.
+  bundle), never the system's trust store. `python3 -I -B packaging/check_tls_roots.py` checks that those roots
+  still cover the allowed hosts; it needs the network, so `bin/release` runs it and `bin/check` does not.
 - **Checked files.** Every download is checked against the SHA-256 in the manifest before it is used. Zips are checked
   for unsafe paths, links and sizes before anything is written.
 - **Nothing else.** The window blocks all web loads, there is no telemetry, no account, and nothing runs on a timer or at
@@ -193,10 +194,9 @@ built package with `python3 packaging/arch/scan_package.py <package>`. Releases:
   fetches the model (its checksum and pin are here) and makes the map on the person's computer.
 - **Generated data** (`derived/`, builds): indexes, caches and logs the engine makes as it runs, and build output.
 - **Release and signing material**: signing keys, deploy settings and the release folders.
-- **Private data**: a household's own home area, the private word lists the scans use, machine
-  and user names, keys and internal security-audit notes. The guides here are already in their shipped, general wording.
-  To keep your own home-area words out of a build, put them in a local copy of `packaging/ship_edits.json` (`forbidden`)
-  and never commit it.
+- **Private data**: a household's own home area, machine and user names, keys and internal security-audit notes. The
+  guides here are in general wording and ship as they are. Contributors must not commit personal details; the package
+  scan checks for home-folder paths.
 
 ## Tests
 
@@ -206,7 +206,7 @@ bin/test
 
 It runs the window's tests (`cargo test`) and the engine's (`python3 -m unittest`, with libzim and pypdfium2 from the
 PKGBUILD's pinned wheels, `bin/test-deps`). `test_bridge` builds its own made-up library, which `test_cli` runs the commands against; `test_semantic` runs a stand-in
-Recall; the others run without a library. `bin/check` adds the installer test. The `linux_*` helpers in `app/tests/` drive a running window through AT-SPI.
+Recall; the others run without a library. `bin/check` adds the installer test.
 
 ## Contributing and licence
 

@@ -163,12 +163,13 @@ impl SearchPage {
                 query("/api/retrieve", &[("q", &q), ("k", "8"), ("kind", if split { "library" } else { &kind })]),
                 query("/api/find", &[("q", &q), ("kind", find_kind)]),
             );
-            let (relevant, docs) = futures_join(async move { e1.get(&p1).await }, async move { e2.get(&p2).await }).await;
+            let by_title = kind != "encyclopedia";   // articles have no place in the catalog's titles
+            let (relevant, docs) = futures_join(async move { e1.get(&p1).await }, async move { if by_title { e2.get(&p2).await.ok() } else { None } }).await;
             let Some(page) = page.upgrade() else { return };
             if page.generation.get() != generation {
                 return;   // a newer search replaced this one
             }
-            let slot = page.show_results(relevant.ok(), if kind == "encyclopedia" { None } else { docs.ok() });
+            let slot = page.show_results(relevant.ok(), docs);
             drop(page);
             if let Some(articles) = articles
                 && let Ok((found, page)) = articles.await
@@ -243,7 +244,7 @@ impl SearchPage {
         let kind = d["kind"].as_str().unwrap_or_default();
         let hits = d["hits"].as_array().cloned().unwrap_or_default();
         let first_page = hits.iter().find_map(|h| h["page"].as_i64()).unwrap_or(1) as i32;
-        let snippet = hits.first().and_then(|h| h["snippet"].as_str()).map(|s| mark_markup(s)).unwrap_or_default();
+        let snippet = hits.first().and_then(|h| h["snippet"].as_str()).map(mark_markup).unwrap_or_default();
         let mut meta = vec![d["kindLabel"].as_str().unwrap_or(kind).to_owned(), d["publisher"].as_str().unwrap_or_default().to_owned()];
         if let Some(y) = d["year"].as_str() {
             meta.push(y.to_owned());

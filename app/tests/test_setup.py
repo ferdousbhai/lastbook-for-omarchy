@@ -282,7 +282,7 @@ class Allowlist(unittest.TestCase):
             m._fetch()
         self.assertEqual(m.source, 'fetched')
         self.assertEqual([p['id'] for p in m.current['packs']], ['medium', 'small'])
-        self.assertEqual(m.pack('small')['title'], 'small')             # in both: the bundled entry is pinned (audit E1)
+        self.assertEqual(m.pack('small')['title'], 'small')             # in both: the bundled entry is pinned
         self.assertEqual(m.pack('small')['files'][0]['sha256'], '0' * 64)
         self.assertEqual(m.model()['id'], 'gemma')                        # fetched had none: the bundled one stays
 
@@ -908,15 +908,6 @@ class Manage(Base):
         (lib / 'library-data' / 'catalog.json').write_text('{}')
         self.assertEqual(self.setup('manage', current=lib).start(repair=True)['code'], 'unavailable')
         self.assertEqual(self.setup().start(repair=True)['code'], 'nothing')
-
-    def test_remove_ai(self):
-        lib = self.installed_library()
-        s = self.setup('manage', current=lib)
-        self.assertEqual(s.remove_ai()['freed_bytes'], len(self.model))
-        self.assertFalse((lib / 'models' / 'model.gguf').exists())
-        self.assertTrue((lib / 'library-data' / 'catalog.json').exists())
-        self.assertEqual(s.remove_ai()['code'], 'nothing')
-        self.assertEqual(self.setup().remove_ai()['code'], 'nothing')
 
 
 def make_map(path, state='CA', extra=None):

@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    cards::{self, activate, card, column, route_of, section},
+    cards::{self, activate, card, column, route_of, section, some_then_all},
+    engine::{load_json, store_json},
     ui::{App, Route},
 };
 
@@ -53,20 +54,11 @@ fn saved_path() -> PathBuf {
 }
 
 pub fn load_saved() -> Vec<Saved> {
-    std::fs::read(saved_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    load_json(&saved_path())
 }
 
 pub fn store_saved(items: &[Saved]) {
-    let p = saved_path();
-    if let Some(d) = p.parent() {
-        let _ = std::fs::create_dir_all(d);
-    }
-    if let Ok(b) = serde_json::to_vec_pretty(items) {
-        let tmp = p.with_extension("tmp");
-        if std::fs::write(&tmp, b).is_ok() {
-            let _ = std::fs::rename(tmp, p);
-        }
-    }
+    store_json(&saved_path(), items);
 }
 
 pub struct Browse {
@@ -87,7 +79,7 @@ impl Browse {
         let (ss, shelf) = column(12);
         let (sv, saved) = column(12);
         let (ab, about) = column(12);
-        let b = Rc::new(Self {
+        Rc::new(Self {
             library_root: ls.upcast(),
             shelf_root: ss.upcast(),
             saved_root: sv.upcast(),
@@ -97,8 +89,7 @@ impl Browse {
             shelf,
             saved,
             about,
-        });
-        b
+        })
     }
 
     pub fn show_library(self: &Rc<Self>) {
@@ -152,9 +143,11 @@ impl Browse {
             }
             for col in s["collections"].as_array().into_iter().flatten() {
                 me.shelf.append(&section(&format!("{} ({})", col["collection"].as_str().unwrap_or_default(), col["count"])));
-                for d in col["items"].as_array().into_iter().flatten() {
-                    me.shelf.append(&doc_card(&me.app, d));
-                }
+                let (list, app) = (gtk::Box::new(gtk::Orientation::Vertical, 12), me.app.clone());
+                me.shelf.append(&list);
+                let items = col["items"].as_array().cloned().unwrap_or_default();
+                let l = list.clone();
+                some_then_all(&me.shelf, &items, 6, move |docs| docs.iter().for_each(|d| l.append(&doc_card(&app, d))));
             }
         });
     }

@@ -5,12 +5,11 @@
 
 Setup does not use the system's trust store: a download must not depend on what a computer happens to trust, or on a root
 added to it. So it trusts only the roots that the allowed hosts' chains end in today, plus the sibling roots of those same CAs, so a routine rotation does not break downloads. Taken from Mozilla's
-bundle as certifi ships it. Chains checked 12 Nov 2026:
-  downloads.lastbook.org (Cloudflare)    Google Trust Services, GTS Root R4
-  pub-….r2.dev                           Let's Encrypt, ISRG Root X2 (cross-signed by X1)
+bundle as certifi ships it. The hosts are download.py's ALLOWED_HOSTS and the *.hf.co hosts Hugging Face redirects to. Chains checked 19 Nov 2026:
+  downloads.lastbook.org, build.protomaps.com, build-metadata.protomaps.dev (Cloudflare)   Google Trust Services, GTS Root R4
   huggingface.co, cas-bridge.xethub.hf.co, us.aws.cdn.hf.co, cdn-lfs*.hf.co   Amazon Root CA 1 (cross-signed by Starfield G2)
-  us.gcp.cdn.hf.co                       Let's Encrypt, ISRG Root YR, cross-signed by ISRG Root X1
-No eMudhra or emSign root, ever.
+  us.gcp.cdn.hf.co, download.geonames.org   Let's Encrypt, ISRG Root YR, cross-signed by ISRG Root X1
+No eMudhra or emSign root, ever. packaging/check_tls_roots.py checks every one of these hosts against the built file.
 """
 import base64
 import hashlib

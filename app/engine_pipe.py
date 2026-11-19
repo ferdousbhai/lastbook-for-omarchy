@@ -81,11 +81,6 @@ def options(app_main):
     return dict(app_main.setup_options(), on_finish=finished)
 
 
-def version():
-    v = HERE.parent / 'VERSION'
-    return v.read_text().strip() if v.exists() else None
-
-
 def main():
     import argparse
     ap = argparse.ArgumentParser()
@@ -108,7 +103,7 @@ def main():
         app_main.open_log(work)
         setup_api.configure(mode='first-run', **options(app_main))
         bridge = B.Bridge(setup_api.SetupServer)
-        send({'ready': {'setup': True, 'data': None, 'library': '', 'version': version()}})
+        send({'ready': {'setup': True, 'data': None, 'library': '', 'version': app_main.version()}})
     else:
         data = found
         os.environ['LASTBOOK_DATA'] = str(data)
@@ -120,7 +115,7 @@ def main():
             setup_api.opened(app_main.app_folders()[0], data, note)
         setup_api.configure(mode='manage', current=data, **options(app_main))
         bridge = B.Bridge(server)
-        send({'ready': {'setup': False, 'data': str(data), 'library': str(server.LIB), 'version': version()}})
+        send({'ready': {'setup': False, 'data': str(data), 'library': str(server.LIB), 'version': app_main.version()}})
     running = {}
     for line in sys.stdin:
         try:

@@ -2,8 +2,8 @@
 
 Nothing here opens a socket or reaches past this computer. The model is a file setup downloads from Hugging Face when the
 person asks for it (engine/setup/). Lastbook finds it inside the selected library or an explicitly configured model folder, checks the published file, asks llama.cpp
-whether it fits this computer's memory, and starts it when someone asks a question. It stops after IDLE_STOP seconds unused,
-when turned off, and when the app quits (the program leaves when its standard input closes).
+whether it fits this computer's memory, and starts it when someone asks a question. It stops after IDLE_STOP seconds unused
+and when the app quits (the program leaves when its standard input closes).
 
 assistant.py calls round() for each model turn, with OpenAI-shaped messages. This file turns them into Gemma 4's own prompt
 format, sends that as segments (template markup, where special tokens count, or plain text, where they never do: a document
@@ -27,10 +27,10 @@ NAME = 'Gemma 4 26B A4B (Unsloth 4-bit, UD-Q4_K_M)'
 SOURCE = 'unsloth/gemma-4-26B-A4B-it-GGUF, revision c099eb48e663fd284577b04978a94ffccb261841'
 CTX = 16384               # tokens the model holds: the system prompt, sources, the conversation and the answer
 RESERVE = 2.5 * 2**30     # memory left for the system and the rest of Lastbook beyond what llama.cpp measures for the model
-IDLE_STOP = int(os.environ.get('LASTBOOK_AI_IDLE_S') or 15 * 60)   # seconds without a question before the model is stopped, to give its memory back
+IDLE_STOP = 15 * 60       # seconds without a question before the model is stopped, to give its memory back
 START_WAIT = 600          # longest a question waits for the model to load
 
-STATE_FILE = paths.DATA / 'derived' / 'llm' / 'state.json'   # where the file was found, its check, the on/off setting
+STATE_FILE = paths.DATA / 'derived' / 'llm' / 'state.json'   # the check of the model file as it was found (an older version's "enabled" may be in it, and is ignored)
 
 
 def runner_path():
@@ -95,7 +95,6 @@ def mark_checked(path, sha256):
 # ----------------------------------------------------------------------------------------------------------- the model --
 class Local:
     """One model process at a time. States:
-      off        turned off in the app
       absent     no model file found
       wrong      a file of that name that is not the published one
       checking   reading the file to check it (pct)
@@ -125,16 +124,23 @@ class Local:
         with self.lock:
             fit = self.fit or {}
             return {'name': NAME, 'file': FILE, 'size': SIZE, 'state': self.state, 'pct': self.pct, 'message': self.message,
-                    'found_at': self.path and _folder_name(self.path), 'enabled': self.enabled(), 'runtime': bool(self.runner),
+                    'found_at': self.path and _folder_name(self.path), 'runtime': bool(self.runner),
                     'needs_bytes': fit.get('needs'), 'ram_total': fit.get('ram_total'), 'placement': fit.get('placement'),
                     'load_s': (self.ready_info or {}).get('load_s'), 'places': [_folder_name(p) for p in places()[:6]]}
-
-    def enabled(self):
-        return self.saved.get('enabled', True)
 
     def available(self):
         """True when a question can be answered: running, or ready to start."""
         return self.state in ('ready', 'stopped', 'loading')
+
+    def settle(self, waiting=lambda: None):
+        """Just after start the model file may still be being found, checked or measured: wait for that to settle, rather
+        than answer "no model" to the first question. waiting() is called once if there is anything to wait for."""
+        waited = 0.0
+        while waited < 600 and (self.state in ('checking', 'measuring') or (self.state == 'absent' and waited < 5)):
+            if waited == 0:
+                waiting()
+            time.sleep(0.5)
+            waited += 0.5
 
     # -- finding and checking the file ------------------------------------------------------------------------------------
     def start_background(self):
@@ -147,12 +153,9 @@ class Local:
         threading.Thread(target=self._idle_watch, daemon=True, name='local-ai-idle').start()
 
     def discover(self):
-        """Find the file, check it if it has not been checked as it is now, measure the fit. Safe to call again (Look again)."""
+        """Find the file, check it if it has not been checked as it is now, measure the fit. Safe to call again."""
         with self.lock:
             if self.state in ('checking', 'measuring', 'loading', 'ready'):
-                return
-            if not self.enabled():
-                self.state, self.message = 'off', ''
                 return
             if not self.runner:
                 self.state, self.message = 'error', 'This copy of Lastbook has no local AI runtime.'
@@ -327,7 +330,7 @@ class Local:
                         self.state, self.message = 'stopped', ''
                     else:                      # twice in a row: it would fail the same way again
                         self.state = 'error'
-                        self.message = self.message or 'The local AI could not start. Look again after closing other programs.'
+                        self.message = self.message or 'The local AI could not start. Close other programs and ask again.'
 
     def stop(self, why=''):
         with self.lock:
@@ -343,19 +346,6 @@ class Local:
                 proc.wait(10)
             except (OSError, subprocess.TimeoutExpired, ValueError):
                 proc.kill()
-
-    def set_enabled(self, on):
-        self.saved['enabled'] = bool(on)
-        _save(self.saved)
-        if on:
-            with self.lock:
-                if self.state == 'off':
-                    self.state = 'absent'
-            threading.Thread(target=self.discover, daemon=True).start()
-        else:
-            self.stop('turned off')
-            with self.lock:
-                self.state, self.message = 'off', ''
 
     def warm(self, prefix=None):
         """Start the model in the background before the question comes (Chat was opened, or a question is being searched),

@@ -1,5 +1,4 @@
 """Read-only address lookup using the state indexes installed with offline maps."""
-import math
 import re
 import sqlite3
 from pathlib import Path
@@ -73,7 +72,7 @@ def _parts(query):
     return number, normalize(' '.join(remainder)).split(), state, postcode
 
 
-def find_addresses(query, geo_directory, limit=8, near=None):
+def find_addresses(query, geo_directory, limit=8):
     """Return exact house-number matches from installed indexes, never a guessed house."""
     if not is_address_query(query):
         return []
@@ -120,13 +119,8 @@ def find_addresses(query, geo_directory, limit=8, near=None):
                     except sqlite3.Error:
                         continue
             if rows:
-                def rank(row):
-                    distance = 0
-                    if near:
-                        distance = (row[5] - near[0]) ** 2 + ((row[6] - near[1]) * math.cos(math.radians(near[0]))) ** 2
-                    return len(row[7]), distance, row[3], row[2], row[1]
                 results, seen = [], set()
-                for num, name, city_name, state_code, zip_code, lat, lon, normalized in sorted(rows, key=rank):
+                for num, name, city_name, state_code, zip_code, lat, lon, normalized in sorted(rows, key=lambda row: (len(row[7]), row[3], row[2], row[1])):
                     key = (num, normalized, lat, lon)
                     if key in seen:
                         continue

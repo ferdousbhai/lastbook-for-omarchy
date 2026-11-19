@@ -20,6 +20,8 @@ grep -qF "$tag" packaging/release-notes.md || { echo "Write packaging/release-no
 fingerprint=$(sed -n 's/^SIGNING_KEY_FINGERPRINT=//p' install.sh)
 gpg --batch --list-secret-keys "$fingerprint" >/dev/null
 export GPGKEY=$fingerprint
+# Setup's pinned roots must still cover every download host. It needs the network, so it runs here and not in bin/check.
+python3 -I -B packaging/check_tls_roots.py
 
 echo "$version" > VERSION
 sed -i "0,/^version = .*/s//version = \"$version\"/" native/Cargo.toml

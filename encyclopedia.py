@@ -280,8 +280,8 @@ class Encyclopedias:
                     self._vecs.popitem(last=False)
         return np.stack([self._vecs[(src, k)] for k, _, _ in keys_texts]) if keys_texts else np.zeros((0, 0))
 
-    def search(self, q, words, groups, qv=None, k=DEEP):
-        """Best article passages for q: [{'doc_id', 'record', 'heading', 'text', 'sem'}], best first, one per article."""
+    def search(self, words, groups, qv=None, k=DEEP):
+        """Best article passages for a question's words: [{'doc_id', 'record', 'heading', 'text', 'sem'}], best first, one per article."""
         if not words:
             return []
         overlap = lambda x: sum(any(w in x.lower() for w in g) for g in groups)

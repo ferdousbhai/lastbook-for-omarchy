@@ -18,7 +18,7 @@ depends=('python>=3.14' 'python<3.15' 'python-numpy' 'python-beautifulsoup4' 'gl
   'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'gst-plugin-dav1d' 'sqlite' 'gcc-libs' 'vulkan-icd-loader')
 optdepends=('recall-for-omarchy: meaning-based search, with the embedding model Recall already runs'
   'vulkan-asahi: the local AI on the graphics card of an Apple Silicon Mac')
-makedepends=('git' 'rust' 'cargo' 'cmake' 'ninja' 'gcc' 'shaderc' 'vulkan-headers' 'spirv-headers' 'pkgconf' 'python-pillow' 'binutils')
+makedepends=('git' 'rust' 'cmake' 'ninja' 'gcc' 'shaderc' 'vulkan-headers' 'spirv-headers' 'pkgconf' 'python-pillow' 'binutils')
 options=('!debug' '!lto' '!strip')
 source=("llama.cpp::git+https://github.com/ggml-org/llama.cpp.git#tag=${_llama}")
 sha256sums=('SKIP')
@@ -53,8 +53,6 @@ build() {
   # No build folder or home folder in the program: source paths in panic messages are remapped.
   RUSTFLAGS="$RUSTFLAGS --remap-path-prefix=$srcdir=/build --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo" \
     CARGO_TARGET_DIR="$srcdir/target" cargo build --release --locked --manifest-path native/Cargo.toml
-  # content/ as it ships (general wording for the home area, no working names)
-  python -I -B packaging/ship_app_files.py "$srcdir/ship"
 }
 
 package() {
@@ -68,7 +66,10 @@ package() {
   install -m644 engine/__init__.py engine/paths.py engine/library.py engine/saved_pages.py engine/address_search.py "$lib/engine/"
   install -m644 engine/setup/*.py engine/setup/roots.pem "$lib/engine/setup/"
   install -m644 packaging/arch/manifest-v1.json packaging/arch/map-regions.json "$lib/setup/"
-  cp -R "$srcdir/ship/content" "$lib/"
+  # The guides and nothing else of content/ (scan_package.py checks that).
+  install -d "$lib/content/topics"
+  install -m644 content/gaps.json "$lib/content/"
+  install -m644 content/topics/*.json "$lib/content/topics/"
   install -m755 "$srcdir/llm/bin-linux/lastbook-llm" "$lib/llm/"
   install -m644 "$srcdir"/llm/bin-linux/*.so* "$srcdir"/llm/bin-linux/LICENSE* "$srcdir"/llm/bin-linux/NOTICE* "$lib/llm/"
   local whl

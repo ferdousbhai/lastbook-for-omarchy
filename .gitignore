@@ -3,16 +3,11 @@
 /derived
 __pycache__/
 *.pyc
-.DS_Store
-.vercel/
 .env*
 *.env
 dist/
 build/
 *.gguf
-*.onnx
 *.zim
-*.dmg
-*.exe
 *.zip
 /native/target

@@ -16,7 +16,7 @@ import fixture  # noqa: E402
 DATA = fixture.ensure()
 TMP = Path(tempfile.mkdtemp(prefix='lastbook-cli-'))
 ENV = {**os.environ, 'HOME': str(TMP / 'home'), 'XDG_CONFIG_HOME': str(TMP / 'home/config'), 'XDG_DATA_HOME': str(TMP / 'home/data'),
-       'XDG_CACHE_HOME': str(TMP / 'home/cache'), 'LASTBOOK_RECALL_SOCKET': str(TMP / 'no-recall.sock'), 'SURVIVAL_MODEL_BASE': 'http://127.0.0.1:9'}
+       'XDG_CACHE_HOME': str(TMP / 'home/cache'), 'LASTBOOK_RECALL_SOCKET': str(TMP / 'no-recall.sock')}
 for k in ('LASTBOOK_DATA', 'LASTBOOK_DEV', 'LASTBOOK_LOCAL_AI', 'LASTBOOK_OPEN'):
     ENV.pop(k, None)
 

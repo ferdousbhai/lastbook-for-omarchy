@@ -5,12 +5,11 @@
 
 Each question in questions.json lists title words that a good top 8 should contain (`expect`, any one per entry).
 Prints hits@8 and MRR over those, plus timing, and with --compare the passages that came or went."""
-import argparse, json, os, sys, time
+import argparse, json, sys, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / 'app')]
-os.environ.setdefault('SURVIVAL_MODEL_BASE', 'http://127.0.0.1:9')
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--out')

@@ -1,4 +1,4 @@
-"""/api/setup/*: the engine side of first-run setup and of Library → Library and local AI. Contract: docs/SETUP-API.md.
+"""/api/setup/*: the engine side of first-run setup and of About → Library and downloads. Contract: docs/SETUP-API.md.
 
 Two ways in, one module, both set up by app/engine_pipe.py (configure(...)) and reached only through the bridge:
   - setup mode (no library yet): a Bridge around SetupServer, whose Handler serves /api/setup/* here. Nothing else.
@@ -720,33 +720,6 @@ class Setup:
         threading.Timer(0.4, self.on_finish, [folder]).start()     # after this answer has reached the window
         return {'ok': True, 'folder': folder}
 
-    def remove_ai(self):
-        """Manage mode: the model file goes from the open library. The library itself is not touched."""
-        m = self.manifest.model()
-        if self.mode != 'manage' or not self.current or not m:
-            return {'error': 'There is no local AI in this library to remove.', 'code': 'nothing'}
-        with self.lock:
-            if self.job and self.job['state'] in ACTIVE:
-                return {'error': 'A download is under way. Pause or cancel it first.', 'code': 'busy'}
-        p = self.current / 'models' / m['file']
-        if not p.is_file():
-            return {'error': 'There is no local AI in this library to remove.', 'code': 'nothing'}
-        llm = self.llm()
-        local = getattr(llm, 'LOCAL', None) if llm else None
-        try:
-            if local is not None and hasattr(local, 'stop'):
-                local.stop('removed')
-        except Exception:
-            traceback.print_exc()
-        size = p.stat().st_size
-        try:
-            p.unlink()
-        except OSError as e:
-            return {'error': f'Lastbook could not remove the model file ({type(e).__name__}). Quit anything using it, then try again.', 'code': 'folder'}
-        if local is not None and getattr(local, '_started', False):
-            threading.Thread(target=local.discover, daemon=True).start()
-        return {'ok': True, 'freed_bytes': size}
-
     # ------------------------------------------------------------------------------------------------------ the work --
     def _set(self, it, state, **kw):
         with self.lock:
@@ -1069,7 +1042,7 @@ def _work_for(target):
 
 def _job_file(settings_dir):
     """The job and the pending switch live in the app's own settings folder, never in the work folder beside a library:
-    a LastbookData.setup can arrive with a folder or a drive, and what is in it is not obeyed (audit E3)."""
+    a LastbookData.setup can arrive with a folder or a drive, and what is in it is not obeyed."""
     return Path(settings_dir) / 'setup' / 'job.json'
 
 
@@ -1205,7 +1178,6 @@ ROUTES = {
     ('POST', 'retry'): lambda s, b: s.retry(),
     ('POST', 'use'): lambda s, b: s.use(b.get('path')),
     ('POST', 'finish'): lambda s, b: s.finish(),
-    ('POST', 'remove-ai'): lambda s, b: s.remove_ai(),
 }
 
 
@@ -1214,16 +1186,14 @@ def _send_json(h, obj, status=200):
     h.send_response(status)
     h.send_header('Content-Type', 'application/json')
     h.send_header('Content-Length', str(len(data)))
-    h.send_header('Cache-Control', 'no-store')
     h.end_headers()
-    if h.command != 'HEAD':
-        h.wfile.write(data)
+    h.wfile.write(data)
 
 
 def handle(h, method, path):
     """Answers one /api/setup/ request on a BaseHTTPRequestHandler h."""
     name = path[len('/api/setup/'):].strip('/')
-    fn = ROUTES.get(('GET' if method == 'HEAD' else method, name))
+    fn = ROUTES.get((method, name))
     if not fn:
         return _send_json(h, {'error': 'not found'}, 404)
     body = {}
@@ -1253,9 +1223,6 @@ class SetupHandler(BaseHTTPRequestHandler):
     """All there is in setup mode: /api/setup/*."""
     server_version = 'Lastbook'
     sys_version = ''
-    NO_CODE_CSP = ("default-src 'none'; script-src 'none'; connect-src 'none'; worker-src 'none'; object-src 'none'; manifest-src 'none'; "
-                   "base-uri 'none'; form-action 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:")
-    SAVED_PAGE_CSP = 'sandbox; ' + NO_CODE_CSP
 
     def log_message(self, *a):
         pass
@@ -1269,10 +1236,8 @@ class SetupHandler(BaseHTTPRequestHandler):
         if '\0' in path or '/..' in path or '\\' in path:
             return _send_json(self, {'error': 'not found'}, 404)
         if path.startswith('/api/setup/'):
-            return handle(self, self.command, path)
+            return handle(self, 'GET', path)
         return _send_json(self, {'error': 'not found'}, 404)
-
-    do_HEAD = do_GET
 
     def do_POST(self):
         path = self._path()

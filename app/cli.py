@@ -165,7 +165,7 @@ def page(S, A, a):
     if a.out:
         out = Path(a.out).expanduser()
     else:
-        cache = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'lastbook' / 'pages'
+        cache = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'Lastbook' / 'pages'
         cache.mkdir(parents=True, exist_ok=True)
         out = cache / (re.sub(r'[^\w.-]', '_', f"{r['id']}-{a.page}-{a.width}") + '.png')
     try:
@@ -245,11 +245,8 @@ def guide(S, A, a):
 
 
 def ask(S, A, a):
-    import time
-    waited = 0.0   # as the window's engine does: the local AI may still be finding and checking its model file
-    while A.LOCAL and waited < 600 and (A.LOCAL.state in ('checking', 'measuring') or (A.LOCAL.state == 'absent' and waited < 5)):
-        time.sleep(0.25)
-        waited += 0.25
+    if A.LOCAL:
+        A.LOCAL.settle()   # as the window's engine does: the local AI may still be finding and checking its model file
     if not A.model_status()['online']:
         why = (A.LOCAL.status().get('message') if A.LOCAL else '') or 'set it up in the window (About), or use: lastbook search'
         raise Failed(f'No local AI to answer with: {why}')
@@ -275,14 +272,14 @@ def status(S, A, a):
     # The local AI as its saved state says, without checking the file or starting anything: `ask` does that.
     local = llm_local.LOCAL
     model = next((str(f / llm_local.FILE) for f in llm_local.places() if (f / llm_local.FILE).is_file()), None)
-    ai = 'no runtime' if not local.runner else 'off' if not local.enabled() else 'installed' if model else 'absent'
+    ai = 'no runtime' if not local.runner else 'installed' if model else 'absent'
     index = S.INDEX
     try:
         recall = {'running': True, 'model': retrieval.Recall().capabilities(timeout=2).get('source')}
     except retrieval.RecallUnavailable as e:
         recall = {'running': False, 'error': str(e)}
-    version = HERE.parent / 'VERSION'
-    return {'version': version.read_text().strip() if version.exists() else None,
+    import main as app_main
+    return {'version': app_main.version(),
             'library': str(S.LIB), 'data': str(S.HERE),
             'counts': {'documents': summary.get('resources', len(S.catalog()['by_id'])), 'pdfs': summary.get('pdfs'), 'pages': summary.get('pdf_pages'),
                        'web_pages': summary.get('web_pages'), 'videos': summary.get('videos'), 'encyclopedias': len(zims)},

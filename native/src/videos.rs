@@ -15,7 +15,7 @@ use omui::clear;
 use serde_json::Value;
 
 use crate::{
-    cards::{self, activate, clock, section},
+    cards::{self, activate, clock, section, some_then_all},
     engine::query,
     ui::{App, Route},
 };
@@ -165,7 +165,7 @@ impl Videos {
                     continue;
                 }
                 me.rails.append(&section(&format!("{} ({})", rail["title"].as_str().unwrap_or_default(), rail["count"])));
-                me.rails.append(&me.grid(&items));
+                me.show_cards(&items);
             }
         });
     }
@@ -185,13 +185,24 @@ impl Videos {
             clear(&me.rails);
             let items: Vec<Value> = r["items"].as_array().cloned().unwrap_or_default();
             me.rails.append(&section(&format!("{} video{} for “{q}”", r["total"], if r["total"] == 1 { "" } else { "s" })));
-            me.rails.append(&me.grid(&items));
+            me.show_cards(&items);
         });
     }
 
-    fn grid(&self, items: &[Value]) -> gtk::FlowBox {
+    /// A grid of the first few of `items`, the rest behind a button: every card reads its thumbnail from disk.
+    fn show_cards(self: &Rc<Self>, items: &[Value]) {
         let grid = cards::grid(5, 10);
-        let Some(app) = self.app.upgrade() else { return grid };
+        self.rails.append(&grid);
+        let me = Rc::downgrade(self);
+        some_then_all(&self.rails, items, 10, move |part| {
+            if let Some(me) = me.upgrade() {
+                me.fill(&grid, part);
+            }
+        });
+    }
+
+    fn fill(&self, grid: &gtk::FlowBox, items: &[Value]) {
+        let Some(app) = self.app.upgrade() else { return };
         for it in items {
             let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
             card.add_css_class("video-card");
@@ -243,7 +254,6 @@ impl Videos {
             activate(&card, self.app.clone(), Route::Watch { video: it["id"].as_str().unwrap_or_default().to_owned(), t: 0.0 });
             grid.insert(&card, -1);
         }
-        grid
     }
 
     /// Opens video `id` at `t` seconds.

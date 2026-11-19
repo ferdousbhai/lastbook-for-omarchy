@@ -1,10 +1,10 @@
 """The base of the engine's request Handler (server.py subclasses it), and the rules for what in the library may be read.
 
 Files are served only from the library's served folders, judged by where a path really leads; encyclopedias (ZIM) are read
-through libzim and searched by their own indexes; a video answers Range requests. Nothing here opens a port: app/bridge.py
-runs the Handler over in-memory streams.
+through libzim and searched by their own indexes; of a video, only the piece asked for by Range is read (app/bridge.py asks
+for its start, and the window plays the library's videos from disk). Nothing here opens a port: app/bridge.py runs the
+Handler over in-memory streams.
 """
-from __future__ import annotations
 import http.server, json, mimetypes, os, re, threading, urllib.parse
 from pathlib import Path
 
@@ -73,9 +73,7 @@ def open_zim(name):
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
- timeout=30  # a client that sends half a request gives its thread back; do_GET allows longer for sending
- SEND_TIMEOUT=600  # a paused video stops reading for minutes at a time; the player asks again with a Range when it resumes
- # The system's MIME table can call .js text/plain, which X-Content-Type-Options: nosniff would then refuse to run.
+ # The system's MIME table can call .js text/plain: these types are told to the window as they are, whatever it says.
  extensions_map={**http.server.SimpleHTTPRequestHandler.extensions_map,'.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.svg':'image/svg+xml'}
  def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT),**kwargs)
  def log_message(self,*args):pass
@@ -106,10 +104,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
  def send_data(self,data,mime='application/json',status=200):
   self.send_response(status);self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
  def do_GET(self):
-  self.connection.settimeout(self.SEND_TIMEOUT)
   url=urllib.parse.urlsplit(self.path)
-  if url.path=='/api/health':
-   self.send_data(b'{"service":"survival-library","offline":true}');return
   if url.path.startswith('/zim/'):
    try:
     parts=url.path.split('/',3);name=urllib.parse.unquote(parts[2]);entrypath=urllib.parse.unquote(parts[3]) if len(parts)>3 else ''

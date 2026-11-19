@@ -104,6 +104,21 @@ pub fn section(text: &str) -> gtk::Label {
     l
 }
 
+/// Draws the first `first` of `items` with `draw`, and a "Show all" button for the rest when there are more.
+pub fn some_then_all<T: Clone + 'static>(into: &gtk::Box, items: &[T], first: usize, draw: impl Fn(&[T]) + 'static) {
+    draw(&items[..items.len().min(first)]);
+    if items.len() > first {
+        let more = gtk::Button::with_label(&format!("Show all {}", items.len()));
+        more.set_halign(gtk::Align::Start);
+        into.append(&more);
+        let rest = items[first..].to_vec();
+        more.connect_clicked(move |b| {
+            b.set_visible(false);
+            draw(&rest);
+        });
+    }
+}
+
 /// Plain text as Pango markup, shortened.
 pub fn plain_markup(s: &str, max: usize) -> String {
     let short: String = s.chars().take(max).collect();

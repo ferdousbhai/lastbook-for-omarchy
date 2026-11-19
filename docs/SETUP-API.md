@@ -3,8 +3,8 @@
 One package per computer (Arch/Omarchy). On first open, Lastbook finds no library and
 opens **setup** in its own window. Setup shows what this computer has, recommends a library (Small, Medium or All) and whether
 the optional local AI fits, offers the map of the world and street-level areas, then downloads, checks, unpacks and switches
-to it. No separate library or model download, no manual unzip. Setup also opens later from inside the app (Library →
-*Library and local AI*) to upgrade, add the AI or map areas, or repair.
+to it. No separate library or model download, no manual unzip. Setup also opens later from inside the app (About →
+*Library and downloads*) to upgrade, add the AI or map areas, or repair.
 
 The screens are `native/src/setup.rs`; the engine side is `engine/setup/` ([its README](../engine/setup/README.md)).
 
@@ -85,7 +85,6 @@ are served by `engine/setup/api.py` alone. In normal mode `server.py` hands `/ap
 | `POST /api/setup/pause`, `/resume`, `/cancel`, `/retry` | `job` |
 | `POST /api/setup/use` `{path}` | uses a library or file already on this computer: `job` (verify, then unpack or activate) |
 | `POST /api/setup/finish` | `{ok: true, folder}`; the window then starts the engine again on that library (see below) |
-| `POST /api/setup/remove-ai` | manage mode: deletes `LastbookData/models/<file>` (the library stays): `{ok, freed_bytes}` |
 | `POST /api/setup/start` `{repair: true, ai}` | manage mode: re-checks every file against the library's `pack-manifest.tsv` and the model's SHA-256 (items `verifying`); fetches again only what is wrong (the pack: downloaded and switched to like an upgrade; the model: replaced in place). All well: `done`, nothing downloaded |
 
 Also: `recommend.folder` (where it would go) and `recommend.need_bytes` (`{pack id: bytes}` per pack); each `found` entry is
@@ -113,7 +112,7 @@ error}], error, started, folder}`. Each item also has `source`: `"found"` when i
 item that stopped mid-run has `paused_from` (`downloading`, `verifying`, `unpacking` or `activating`), dropped on resume, and its
 `bytes_done`/`bytes_total` describe that step: unpacked bytes of the installed size for `unpacking`, the whole file for a found item. States in order: `waiting`, `downloading`, `paused`, `verifying`, `unpacking`,
 `activating`, `done`, or `failed` (with `error`: a plain sentence and a `code`: `no_space`, `network`, `checksum`, `unpack`,
-`activate`, `cancelled`, and `found_mismatch`: a file already on this computer (`use`) did not match its published SHA-256; the error carries `file`, the file is left untouched and no longer offered, and `retry` downloads it instead). The job lives in the app's own settings folder (`<settings>/setup/job.json`, with a staged switch in `<settings>/setup/pending.json`; never in `LastbookData.setup`, whose contents are not obeyed: audit E3), so a restart picks it up as `paused` and resumes
+`activate`, `cancelled`, and `found_mismatch`: a file already on this computer (`use`) did not match its published SHA-256; the error carries `file`, the file is left untouched and no longer offered, and `retry` downloads it instead). The job lives in the app's own settings folder (`<settings>/setup/job.json`, with a staged switch in `<settings>/setup/pending.json`; never in `LastbookData.setup`, whose contents are not obeyed, because that folder can arrive with a copied library or a drive), so a restart picks it up as `paused` and resumes
 with HTTP Range from the bytes already on disk. A corrupt download (wrong SHA-256) is deleted and downloaded once more
 automatically, then fails with `checksum`.
 

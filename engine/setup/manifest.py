@@ -104,7 +104,7 @@ def load_bundled(paths=None):
 
 
 def merge(bundled, fetched):
-    """What the app was built with stays (audit E1): for an id the bundled manifest pins (it has files, or the model's file),
+    """What the app was built with stays: for an id the bundled manifest pins (it has files, or the model's file),
     its addresses, sizes and SHA-256 are kept and the fetched copy may only change whether it is available. A fetched copy may
     add ids, and give the files of an id the app was built without (a pack published later). One bad publish never takes an
     option away."""

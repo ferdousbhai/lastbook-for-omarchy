@@ -7,11 +7,11 @@
 # Needs: base-devel git cmake ninja shaderc vulkan-headers vulkan-icd-loader spirv-headers
 #   bash packaging/llm/build_llm_linux.sh
 # W  Work folder (default derived/llm). llama.cpp is cloned into W/llama.cpp at the tag if it is not there.
-# Output: W/bin-linux/lastbook-llm, the .so files beside it, LICENSE and notices, deps.txt (what each file needs), SHA256SUMS.txt
+# Output: W/bin-linux/lastbook-llm, the .so files beside it, LICENSE and notices
 set -euo pipefail
 HERE="$(dirname "$(realpath "$0")")"
 ROOT="$(dirname "$(dirname "$HERE")")"
-TAG=b12032       # the build the small-model evaluation ran on
+TAG=b12032       # the llama.cpp release the runner is built and tested against; COMMIT is that tag's commit
 COMMIT=dde879bc4f954b809892fd0d660515f42536394a
 W="$(realpath -m "${W:-$ROOT/derived/llm}")"
 L="$W/llama.cpp"
@@ -59,10 +59,8 @@ EOF
 
 # What each file needs. Every library it names must be beside it or a package of the system (the PKGBUILD's depends).
 bad=0
-: > "$O/deps.txt"
 for f in "$O"/lastbook-llm "$O"/*.so*; do
   needs="$(objdump -p "$f" | sed -n 's/^ *NEEDED *//p' | sort -u)"
-  echo "$(basename "$f"): $(echo $needs)  [runpath: $(objdump -p "$f" | sed -n 's/^ *RUNPATH *//p')]" >> "$O/deps.txt"
   # Nothing may reach a network: no socket calls, no name lookups.
   if nm -D --undefined-only "$f" | grep -Ew '(socket|connect|bind|listen|accept|accept4|getaddrinfo|gethostbyname|gethostbyname_r|getnameinfo|sendto|recvfrom|sendmsg|recvmsg|res_query|curl_easy_init)'; then
     echo "$(basename "$f") imports network calls" >&2; bad=1
@@ -80,7 +78,4 @@ if grep -aEq '/(Users|home|root)/' "$O"/lastbook-llm "$O"/*.so*; then
   echo "a file names a folder of this machine" >&2; bad=1
 fi
 [ "$bad" = 0 ] || exit 1
-# Web addresses inside are text in llama.cpp's log and error messages; with no network calls they go nowhere.
-cat "$O"/lastbook-llm "$O"/*.so* | grep -aEio 'https?://[^ "<>]+' | sort -u > "$O/addresses-in-messages.txt" || true
-( cd "$O" && sha256sum lastbook-llm *.so* > SHA256SUMS.txt )
 ls -l "$O"

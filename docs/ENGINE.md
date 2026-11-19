@@ -30,10 +30,10 @@ the engine starts in setup and answers `/api/setup/*` only ([SETUP-API.md](SETUP
 | `/api/places?q=` | Place search: addresses, ZIP codes, towns and named places (US data from an upstream pack), and the world's countries, regions and towns (GeoNames, built in setup) |
 | `/api/library`, `/api/assistant/status` | What this library holds; the state of the model and of the search index |
 | `POST /api/chat` | One assistant turn, streamed as server-sent events |
-| `POST /api/assistant/local` | The local AI: `rescan`, `on`, `off`, `stop`, `warm` |
-| `/api/setup/*` | Library and local AI ([SETUP-API.md](SETUP-API.md)) |
+| `POST /api/assistant/local` `{action: "warm"}` | Chat is open: the local AI starts loading before the question comes |
+| `/api/setup/*` | About → Library and downloads ([SETUP-API.md](SETUP-API.md)) |
 | `/zim/<file>/<article>` | An encyclopedia article, its scripts and web links taken out (`engine/saved_pages.py`) |
-| `/documents/…`, `/pages/…`, `/videos/…` and the other library folders | A file of the library. A saved web page is rewritten to run no code; a PDF comes as a page of pictures PDFium has drawn, never as the file; a video comes in pieces of at most 8 MiB |
+| `/documents/…`, `/pages/…`, `/videos/…` and the other library folders | A file of the library. A saved web page is rewritten to run no code; a PDF comes as a page of pictures PDFium has drawn, never as the file; of a video only the first 8 MiB come (the window plays the library's videos from disk, not through here) |
 
 Only the library's served folders are readable, judged by where a path really leads (`engine/library.py`, `file_ok`): no
 catalog, index, log, hidden file or link out of the library. Article and saved pages are shown in a WebKit view with
@@ -47,19 +47,18 @@ JavaScript off and every address but `lastbook:` blocked (`native/src/web.rs`).
   re-checks the catalog every 5 minutes and embeds only new or changed documents and transcripts (one writer at a time,
   by file lock). Without Recall, search is keyword search.
 - **The assistant** (`assistant.py`) searches first, then gives the model read-only tools that accept catalog ids only:
-  `search_library`, `read_pages`, `read_article`, `get_timed_transcript`, `lookup_place` (and `view_page`, a page image,
-  for a model that reads images). Source text is wrapped as untrusted reference data. Every `[S3]` in an answer is checked
+  `search_library`, `read_pages`, `read_article`, `get_timed_transcript`, `lookup_place`. Source text is wrapped as untrusted reference data. Every `[S3]` in an answer is checked
   against what the tools returned in that turn; unknown keys are removed and reported.
 - **The local AI** (`llm_local.py`) is Gemma 4 26B A4B run by `lastbook-llm` (`packaging/llm/lastbook_llm.cpp`, on a pinned
   llama.cpp), which speaks JSON lines on its standard input and output and has no network code. The engine finds the model
   file in `LastbookData/models/` (setup puts it there), checks it once (size, then SHA-256), and asks
   `lastbook-llm --measure` whether it fits this computer's memory. It starts when someone asks, and stops after 15
-  minutes unused, when turned off, and when the app quits. It is text only: it is not given page images.
+  minutes unused and when the app quits. It is text only: it is not given page images.
 - What the assistant cannot read is reported, not hidden (`/api/assistant/status`, shown under Library → About): videos
   without captions, scanned PDFs without text.
 
-For development, `LASTBOOK_LOCAL_AI=0` makes the assistant call an OpenAI-compatible model server instead, at
-`SURVIVAL_MODEL_BASE` (default `http://127.0.0.1:19443`), which must be a loopback address.
+There is no other model. Without the local AI (not installed, too big for this computer, or `LASTBOOK_LOCAL_AI=0` in
+development) Chat answers `model_unavailable` and the window shows the matching pages instead.
 
 ## What stays correct as a library changes
 

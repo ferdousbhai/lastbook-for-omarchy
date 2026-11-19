@@ -2,7 +2,7 @@
 so it is unfolded here as the page is served: no library file changes and no page needs code of its own.
 
 Measured on 642 real pages against scripts on with every toggle opened: 0.5% of the words and no links lost, most of the words
-being labels of buttons hidden on purpose. A convenience, not a defense: the Content-Security-Policy is what stops scripts.
+being labels of buttons hidden on purpose. A convenience, not a defense: the window's web view, with JavaScript off, is what stops scripts (native/src/web.rs).
 Not done: MathJax pages keep their raw TeX, because typesetting it here needs a new third-party package. An accepted limit: 511 pages in the packs, 490 of them in the statistics handbook.
 """
 import html
@@ -58,7 +58,7 @@ _TAG = re.compile(r'<[^>]+>')
 # within its memory limit, around 150 KB of real content.
 _BLANK_ROW = re.compile(rb'<tr>(?:<td><small>[A-Z]+\d+</small>\s*</td>)+</tr>')
 MAX_TAG = 64 * 1024     # no real tag is this long. One that is gets left as it is.
-# WebKit opens a socket for preconnect even with a Content-Security-Policy of default-src 'none'. The window has its own switches for these as well.
+# WebKit opens a socket for preconnect whatever a page's policy says. The window has its own switches for these as well.
 _LINK = re.compile(rb'<link\b[^>]*>', re.I)
 _HINT_REL = re.compile(rb"""\brel\s*=\s*(?:"[^"]*|'[^']*|[^\s>]+)""", re.I)
 _HINT = re.compile(rb'preconnect|dns-prefetch|prefetch|prerender', re.I)
@@ -80,7 +80,7 @@ def _upto(data):
     return data.rfind(b'>') + 1
 
 
-# Encyclopedia files stay byte for byte as they came, so their scripts come out here, as each article is served. The block in the Content-Security-Policy stays on regardless.
+# Encyclopedia files stay byte for byte as they came, so their scripts come out here, as each article is served. The window's web view has JavaScript off regardless.
 _ARTICLE_TAG = re.compile(rb"""<!--|<(/?)([a-z][^\s/>"'=<]*)((?:[^>"']|"[^"]*"|'[^']*')*)>""", re.I)   # each choice starts with a different character, so a tag that fails fails once
 _ATTRIBUTE = re.compile(rb"""([^\s=/>"']+)(\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>"']+))?""")
 _RAW_TEXT = (b'style', b'title', b'textarea', b'xmp', b'noembed', b'noframes', b'iframe')   # what is inside these is not markup

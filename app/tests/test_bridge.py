@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The bridge with no window: Range forms, streaming, cancel, lanes, every refusal.
+"""The bridge with no window: streaming, cancel, lanes, every refusal.
 
   python3 -B app/tests/test_bridge.py [-v]
 
@@ -15,8 +15,8 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'app'), str(HERE)]
 import fixture  # noqa: E402
 DATA = fixture.ensure()
 os.environ['LASTBOOK_DATA'] = str(DATA)
-os.environ['SURVIVAL_MODEL_BASE'] = 'http://127.0.0.1:9'   # a dead address: the real model server is never contacted
-os.environ['LASTBOOK_RECALL_SOCKET'] = '/nonexistent/recall.sock'   # no embedding model: meaning-based search stays off
+os.environ['LASTBOOK_LOCAL_AI'] = '0'   # no model: the local AI is never looked for, checked or started here
+os.environ['LASTBOOK_RECALL_SOCKET'] ='/nonexistent/recall.sock'   # no embedding model: meaning-based search stays off
 
 import server, assistant  # noqa: E402
 import bridge as B  # noqa: E402
@@ -36,7 +36,6 @@ assert server.INDEX.query_vector('water') is None, 'meaning-based search is on; 
 
 MiB = B.MiB
 A = '/videos/a.mp4'
-A_SIZE = 20 * MiB
 pat = fixture.pattern
 OBSERVED = {}   # numbers worth printing at the end
 
@@ -176,76 +175,29 @@ class Both:
     """The tests StreamTests runs on a fresh bridge each."""
 
     def setUp(self):
-        self.logged = []
-        self.b = B.Bridge(MOD, log=self.logged.append)
+        self.b = B.Bridge(MOD)
         self.json = {'Content-Type': 'application/json'}
         self.piece = B.VIDEO_PIECE
 
-    def get(self, path, rng=None, **k):
-        return call(self.b, 'GET', path, {'Range': rng} if rng else {}, **k)
+    def get(self, path, **k):
+        return call(self.b, 'GET', path, {}, **k)
 
-    # ---- Range forms on video
-    def check_slice(self, r, start, end, size=A_SIZE):
+    # ---- a video through the bridge: its first piece and no more (the window plays the library's videos from disk)
+    def test_video_gets_first_piece(self):
+        r = self.get(A)
         self.assertEqual(r.status, 206)
-        self.assertEqual(r.hs['content-range'], f'bytes {start}-{end}/{size}')
-        self.assertEqual(int(r.hs['content-length']), end - start + 1)
-        self.assertEqual(len(r.body), end - start + 1)
-        self.assertEqual(hashlib.sha256(r.body).digest(), hashlib.sha256(pat(start, end - start + 1)).digest())
+        self.assertEqual(len(r.body), self.piece)
+        self.assertEqual(hashlib.sha256(r.body).digest(), hashlib.sha256(pat(0, self.piece)).digest())
 
-    def test_video_bounded_range(self):
-        self.check_slice(self.get(A, 'bytes=0-99'), 0, 99)
-        self.check_slice(self.get(A, 'bytes=1000-1999'), 1000, 1999)
-        self.check_slice(self.get(A, 'bytes=0-0'), 0, 0)
-
-    def test_video_open_range_gets_one_piece(self):
-        self.check_slice(self.get(A, 'bytes=0-'), 0, self.piece - 1)
-        self.check_slice(self.get(A, 'bytes=12345-'), 12345, 12345 + self.piece - 1)
-
-    def test_video_long_bounded_range_is_capped(self):
-        self.check_slice(self.get(A, f'bytes=5-{A_SIZE - 1}'), 5, 5 + self.piece - 1)
-
-    def test_video_largest_player_ask_is_answered_whole(self):
-        ask = int(2.38 * 1000 * 1000)
-        self.assertGreater(self.piece, ask)
-        self.check_slice(self.get(A, f'bytes=0-{ask - 1}'), 0, ask - 1)
-
-    def test_video_no_range_gets_first_piece(self):
-        self.check_slice(self.get(A), 0, self.piece - 1)
-
-    def test_video_end_past_file_and_last_byte(self):
-        self.check_slice(self.get(A, f'bytes={A_SIZE - 10}-{A_SIZE + 500}'), A_SIZE - 10, A_SIZE - 1)
-        self.check_slice(self.get(A, f'bytes={A_SIZE - 1}-'), A_SIZE - 1, A_SIZE - 1)
-
-    def test_video_refused_forms(self):
-        for rng in (f'bytes={A_SIZE}-', 'bytes=5-3', 'bytes=-500', 'bytes=abc', 'items=0-5', 'bytes=', 'bytes=99999999999999999999-'):
-            self.assertEqual(self.get(A, rng).status, 416, rng)
-
-    def test_video_multi_range_reads_as_first(self):
-        self.check_slice(self.get(A, 'bytes=0-9,20-29'), 0, 9)
-        self.check_slice(self.get(A, f'bytes=0-{A_SIZE},20-29'), 0, self.piece - 1)
-
-    def test_video_walk_whole_file(self):
-        got, off = [], 0
-        n = 0
-        while off < A_SIZE:
-            r = self.get(A, f'bytes={off}-')
-            self.assertEqual(r.status, 206)
-            got.append(r.body)
-            off += len(r.body)
-            n += 1
-        self.assertEqual(hashlib.sha256(b''.join(got)).digest(), hashlib.sha256(pat(0, A_SIZE)).digest())
-        self.assertEqual(n, -(-A_SIZE // self.piece))
+    def test_video_range_from_a_caller_is_not_passed_on(self):
+        r = call(self.b, 'GET', A, {'Range': 'bytes=1000-1999'})
+        self.assertEqual(len(r.body), self.piece)
+        self.assertEqual(r.body[:1000], pat(0, 1000))
 
     def test_video_other_types_and_case(self):
-        self.assertEqual(self.get('/videos/b.webm', 'bytes=0-9').status, 206)
+        self.assertEqual(self.get('/videos/b.webm').status, 206)
         self.assertEqual(self.get('/videos/huge.mkv').status, 206)
         self.assertEqual(len(self.get('/videos/huge.mkv').body), self.piece)
-
-    def test_video_head_is_not_capped(self):
-        r = call(self.b, 'HEAD', A)
-        self.assertEqual(r.status, 200)
-        self.assertEqual(int(r.hs['content-length']), A_SIZE)
-        self.assertEqual(r.body, b'')
 
     # ---- a PDF never reaches the web view: it becomes pictures
     def real_pdf(self):
@@ -255,15 +207,10 @@ class Both:
         return '/documents/real.pdf'
 
     def test_pdf_file_is_never_handed_over(self):
-        p = self.real_pdf()
-        for rng in (None, 'bytes=0-99', 'bytes=-500', 'bytes=0-'):
-            r = self.get(p, rng)
-            self.assertEqual(r.status, 200, rng)
-            self.assertTrue(r.hs['content-type'].startswith('text/html'), rng)
-            self.assertNotIn(b'%PDF', r.body, rng)
-            self.assertNotIn('accept-ranges', r.hs)
-            self.assertTrue(r.hs['content-security-policy'].startswith('sandbox allow-scripts;'))
-            self.assertIn("script-src 'none'", r.hs['content-security-policy'])
+        r = self.get(self.real_pdf())
+        self.assertEqual(r.status, 200)
+        self.assertTrue(r.hs['content-type'].startswith('text/html'))
+        self.assertNotIn(b'%PDF', r.body)
 
     def test_pdf_viewer_lists_pages_and_runs_nothing(self):
         b = self.get(self.real_pdf()).body
@@ -287,41 +234,27 @@ class Both:
 
     def test_damaged_pdf_shows_a_notice_and_not_its_bytes(self):
         for p in ('/documents/s.pdf', '/documents/big.pdf'):
-            for rng in (None, 'bytes=0-99'):
-                r = self.get(p, rng)
-                self.assertEqual(r.status, 404)
-                self.assertEqual(r.body, B.PDF_NOTICE)
-                self.assertIn('sandbox', r.hs['content-security-policy'])
+            r = self.get(p)
+            self.assertEqual(r.status, 404)
+            self.assertEqual(r.body, B.PDF_NOTICE)
 
     def test_pdf_elsewhere_is_refused_by_its_type(self):
         r = self.get('/zim/t/pdf')
         self.assertEqual(r.status, 404)
         self.assertEqual(r.body, B.PDF_NOTICE)
 
-    def test_pdf_head(self):
-        r = call(self.b, 'HEAD', self.real_pdf())
-        self.assertEqual(r.status, 200)
-        self.assertEqual(r.body, b'')
-
-    def test_other_file_ignores_range(self):
-        r = self.get('/documents/mid.bin', 'bytes=0-9')
-        self.assertEqual(r.status, 200)
-        self.assertEqual(len(r.body), 5 * MiB)
-
     # ---- every refusal
     def test_refused_host(self):
         for url in ('https://evil.example/', 'lastbook://other/', self.b.origin + '.evil/', self.b.origin + '@evil/', 'file:///etc/hosts', 'about:blank', ''):
             r = call(self.b, 'GET', '', url=url)
             self.assertEqual(r.status, 400, url)
-        self.assertGreaterEqual(self.b.counts['host'], 7)
 
     def test_refused_target(self):
         for t in ('//evil/', '/a b', '/a\nb', '/a\x00b', '/a\tb', '/\x7f'):
             self.assertEqual(self.get(t).status, 400, repr(t))
-        self.assertEqual(self.b.counts['target'], 6)
 
     def test_refused_method(self):
-        for m in ('PUT', 'DELETE', 'OPTIONS', 'TRACE', 'PATCH', 'CONNECT', 'get'):
+        for m in ('HEAD', 'PUT', 'DELETE', 'OPTIONS', 'TRACE', 'PATCH', 'CONNECT', 'get'):
             self.assertEqual(call(self.b, m, '/').status, 405, m)
 
     def test_post_too_big(self):
@@ -333,10 +266,9 @@ class Both:
                    '/search.sqlite', '/documents/hl.txt', '/pages/hl2.txt', '/zim/../canary-root.txt', '/zim/%2e%2e%2fcanary-root.txt/x', '/ui/../server.py',
                    '/ui/%2e%2e/server.py', '/documents%2f..%2f..%2fcanary-root.txt', '/documents/..\\canary-root.txt', '/documents/plain.txt/../../canary-root.txt', '/assets/../tools/secret.txt']
         for t in attacks:
-            for m in ('GET', 'HEAD'):
-                r = call(self.b, m, t)
-                self.assertGreaterEqual(r.status, 400, f'{m} {t}')
-                self.assertNotIn(fixture.CANARY, r.body, t)
+            r = self.get(t)
+            self.assertGreaterEqual(r.status, 400, t)
+            self.assertNotIn(fixture.CANARY, r.body, t)
         r = self.get('/?x=../canary-root.txt')
         self.assertEqual(r.status, 404)
         self.assertNotIn(fixture.CANARY, r.body)
@@ -344,10 +276,9 @@ class Both:
     def test_symlink_out_of_the_library_is_refused(self):
         """A link from a served folder to a file outside the library."""
         self.assertTrue(os.path.isfile(fixture.LIB / 'documents' / 'out.txt'))
-        for method in ('GET', 'HEAD'):
-            r = call(self.b, method, '/documents/out.txt')
-            self.assertGreaterEqual(r.status, 400, method)
-            self.assertNotIn(fixture.CANARY, r.body, method)
+        r = self.get('/documents/out.txt')
+        self.assertGreaterEqual(r.status, 400)
+        self.assertNotIn(fixture.CANARY, r.body)
 
     def test_hard_link_refused_but_plain_files_served(self):
         self.assertEqual(os.stat(fixture.LIB / 'documents' / 'hl.txt').st_nlink, 2)
@@ -355,12 +286,12 @@ class Both:
         self.assertEqual(self.get('/pages/hl2.txt').status, 404)
         self.assertEqual(self.get('/documents/plain.txt').status, 200)
 
-    def test_only_three_headers_reach_the_engine(self):
+    def test_only_two_headers_reach_the_engine(self):
         r = call(self.b, 'GET', '/api/t/echo', {'X-Lastbook-Key': 'secret', 'Origin': 'null', 'Cookie': 'sg_key=1', 'Host': 'evil.example', 'X-Forwarded-For': '1.2.3.4', 'Accept': 'x/y', 'Range': 'bytes=0-1', 'Bad': 'a\r\nInjected: 1', 'Accept\r\nInjected': '2'})
         seen = json.loads(r.body)['headers']
         self.assertEqual(seen['host'], 'localhost')
         self.assertEqual(seen['accept'], 'x/y')
-        for h in ('x-lastbook-key', 'origin', 'cookie', 'x-forwarded-for', 'bad', 'injected'):
+        for h in ('x-lastbook-key', 'origin', 'cookie', 'x-forwarded-for', 'range', 'bad', 'injected'):
             self.assertNotIn(h, seen)
 
     def test_non_ascii_target(self):
@@ -372,7 +303,6 @@ class Both:
         r = self.get('/documents/t/sized')
         self.assertEqual(r.status, 403)
         self.assertEqual(r.body, B.TOO_LARGE)
-        self.assertEqual(self.b.counts['flood-gate'], 1)
 
     def test_gate_size_edge(self):
         self.assertEqual(self.get('/documents/t/sized?bytes=%d' % (B.BIG_BODY + 1)).status, 403)
@@ -391,7 +321,7 @@ class Both:
         self.assertEqual(self.get('/documents/mid.bin').status, 200)
 
     def test_gate_catches_a_video_the_engine_does_not_recognise(self):
-        r = self.get('/videos/huge.mk%76', 'bytes=0-')   # the engine's own Range path looks at the raw address, so it answers whole
+        r = self.get('/videos/huge.mk%76')   # the engine's own Range path looks at the raw address, so it answers whole
         self.assertEqual(r.status, 403)
 
     def test_rewrite_takes_linear_time_on_tags_that_never_close(self):
@@ -429,44 +359,23 @@ class Both:
         self.assertEqual(r.status, 200)
         self.assertFalse(r.ok)
         self.assertLessEqual(len(r.body), B.BIG_BODY + MiB)
-        self.assertEqual(self.b.counts['unknown-length'], 1)
 
     # ---- what stays the engine's
-    def no_code(self, r, sandbox='sandbox;'):
-        csp = r.hs['content-security-policy']
-        self.assertTrue(csp.startswith(sandbox), csp)
-        for word in ('allow-scripts', 'allow-popups', 'allow-forms', 'allow-downloads', 'unsafe-eval', 'blob:', 'http'):
-            self.assertNotIn(word, csp)
-        for rule in ("default-src 'none'", "script-src 'none'", "object-src 'none'", "connect-src 'none'", "form-action 'none'", "base-uri 'none'"):
-            self.assertIn(rule, csp)
-
-    def test_saved_page_runs_no_code(self):
-        r = self.get('/pages/s.html')
-        self.assertEqual(r.status, 200)
-        self.no_code(r)
-        self.assertNotIn('allow-same-origin', r.hs['content-security-policy'])
-        self.no_code(self.get('/pages/a.svg'))
-
-    def test_every_answer_for_library_content_runs_no_code(self):
+    def test_library_pages_of_every_kind_are_answered(self):
         d = fixture.LIB / 'pages' / 'kinds'
         (d / 'folder').mkdir(parents=True, exist_ok=True)
         (d / 'folder' / 'index.html').write_bytes(b'<p>in a folder')
         (d / 'nosuffix').write_bytes(b'<script>1</script>')
         (d / 'upper.HTML').write_bytes(b'<script>1</script>')
         (d / 'x.xhtml').write_bytes(b'<html xmlns="http://www.w3.org/1999/xhtml"><script>1</script></html>')
-        for t in ('/pages/kinds/nosuffix', '/pages/kinds/upper.HTML', '/pages/kinds/x.xhtml', '/pages/kinds/folder/', '/pages/kinds/folder/index.html', '/pages/kinds/none.html', '/pages/kinds/none', '/%70ages/kinds/nosuffix'):
-            r = self.get(t)
-            self.assertIn(r.status, (200, 404), t)
-            self.no_code(r)
-        r = self.get('/pages/kinds/folder')     # a folder with no slash: a redirect
-        self.assertEqual(r.status, 200)         # the page that stands in for it holds no code either, and cannot be sandboxed
-        self.assertEqual(r.hs['content-security-policy'], "default-src 'none'; script-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'")
+        for t in ('/pages/s.html', '/pages/a.svg', '/pages/kinds/nosuffix', '/pages/kinds/upper.HTML', '/pages/kinds/x.xhtml', '/pages/kinds/folder/', '/pages/kinds/folder/index.html', '/%70ages/kinds/nosuffix'):
+            self.assertEqual(self.get(t).status, 200, t)
+        for t in ('/pages/kinds/none.html', '/pages/kinds/none', '/zim/none.zim/A/x', '/zim/none.zim/', '/zim/'):
+            self.assertEqual(self.get(t).status, 404, t)
+        r = self.get('/pages/kinds/folder')     # a folder with no slash: a redirect, answered as a page that moves itself
+        self.assertEqual(r.status, 200)
         self.assertIn(b'http-equiv="refresh"', r.body)
         self.assertNotIn(b'<script', r.body)
-        for t in ('/zim/none.zim/A/x', '/zim/none.zim/', '/zim/'):
-            r = self.get(t)
-            self.no_code(r, 'sandbox allow-same-origin;')
-        self.assertEqual(server.Handler.ZIM_CSP, 'sandbox allow-same-origin; ' + server.Handler.NO_CODE_CSP)
 
     def test_a_library_page_may_be_called_tools(self):
         for rel in ('courses/c1/resources/tools/index.html', 'pages/work/index.html', 'documents/logs/index.html', 'assets/runtime/index.html', 'metadata/videos/tools/index.html', 'collections/tools/index.html'):
@@ -477,10 +386,6 @@ class Both:
                 r = self.get(t)
                 self.assertEqual(r.status, 200, t)
                 self.assertIn(b'a real page', r.body, t)
-                self.no_code(r)
-        p = fixture.LIB / 'courses' / 'c1' / 'resources' / 'tools' / 'index.xml'
-        p.write_bytes(b'<?xml version="1.0"?><x/>')
-        self.no_code(self.get('/courses/c1/resources/tools/index.xml'))
         hidden = fixture.LIB / 'courses' / 'c1' / 'tools' / '.Data'
         hidden.mkdir(parents=True, exist_ok=True)
         (hidden / 'x.txt').write_bytes(fixture.CANARY)
@@ -522,7 +427,6 @@ class Both:
             self.assertNotIn(gone, low)
         for kept in (b'keep.css', b'href="/keep"', b'rel=preconnect stays as text'):
             self.assertIn(kept, low)
-        self.assertEqual(r.hs['x-dns-prefetch-control'], 'off')
 
     def test_saved_page_comes_with_what_its_scripts_unfolded(self):
         d = fixture.LIB / 'pages' / 'kinds'
@@ -536,7 +440,6 @@ class Both:
         for t in ('/pages/kinds/ocw.html', '/pages/kinds/', '/pages/kinds/index.html'):
             r = self.get(t)
             self.assertEqual(r.status, 200, t)
-            self.no_code(r)
             self.assertEqual(int(r.hs['content-length']), len(r.body), t)
             b = r.body
             self.assertLess(b.lower().index(b'<head>'), b.index(b'<style>'))
@@ -552,7 +455,7 @@ class Both:
         self.assertIsNone(self.part('/pages/kinds/ocw.html', '../../../canary-root.txt'))
         self.assertIsNone(self.part('/pages/kinds/ocw.html', 'https://evil.example/a.vtt'))
         self.assertIsNone(self.part('/pages/kinds/ocw.html', '//evil.example/a.vtt'))
-        self.assertIsNone(self.part('/pages/kinds/ocw.html', '/api/health'))
+        self.assertIsNone(self.part('/pages/kinds/ocw.html', '/api/topics'))
 
     def part(self, page, src):
         h = server.Handler.__new__(server.Handler)
@@ -565,7 +468,8 @@ class Both:
         self.assertEqual(call(self.b, 'POST', '/api/tool/search', self.json, b'{}').status, 404)
 
     def test_no_server_or_date_header(self):
-        r = self.get('/api/health')
+        r = self.get('/api/doc/pdfsmall')
+        self.assertEqual(r.status, 200)
         self.assertNotIn('server', r.hs)
         self.assertNotIn('date', r.hs)
 
@@ -576,7 +480,7 @@ class Both:
         self.assertEqual(self.get('/api/t/uncaught').status, 502)   # an error the Handler let out still becomes an answer
 
     def test_ordinary_api(self):
-        self.assertEqual(json.loads(self.get('/api/health').body)['offline'], True)
+        self.assertEqual(self.get('/api/health').status, 404)   # gone: nothing asks whether the engine is up, the window reads its "ready" line
         self.assertEqual(self.get('/reader.css').status, 200)
         self.assertEqual(self.get('/api/nope').status, 404)
         r = json.loads(self.get('/api/find?q=boil').body)
@@ -590,27 +494,17 @@ class Both:
 
 
 class AssistantStaysHere(unittest.TestCase):
-    def test_only_loopback_addresses(self):
-        for good, out in (('http://127.0.0.1:19443', 'http://127.0.0.1:19443'), ('http://127.0.0.1:1/', 'http://127.0.0.1:1'), ('http://[::1]:80', 'http://[::1]:80'), ('http://localhost:9', 'http://127.0.0.1:9')):
-            self.assertEqual(assistant.loopback_base(good), out)
-        for bad in ('https://127.0.0.1:1', 'http://127.0.0.1', 'http://127.0.0.1:1/v1', 'http://10.0.0.5:1', 'http://example.org:80', 'http://127.0.0.1.example.org:1', 'http://127.0.0.1:1@example.org:1',
-                    'http://localhost.example.org:1', 'http://0.0.0.0:1', 'http://127.0.0.1:1\n', 'ftp://127.0.0.1:1', ''):
-            with self.assertRaises(ValueError, msg=bad):
-                assistant.loopback_base(bad)
+    def test_the_assistant_has_no_way_to_a_model_server(self):
+        """The model is the local AI over pipes, or none: neither file can open a connection."""
+        for name in ('assistant.py', 'llm_local.py'):
+            src = (ROOT / name).read_text(encoding='utf-8')
+            for word in ('urllib', 'http.client', 'import socket', 'socket.socket', 'create_connection', 'http://', 'https://'):
+                self.assertNotIn(word, src, name)
 
-    def test_no_request_leaves_this_computer(self):
-        import urllib.error, urllib.request
-        for bad in ('http://example.org:80/v1/models', 'https://127.0.0.1:1/x', 'http://127.0.0.1:1@example.org:1/x', 'http://127.0.0.1:1\n/x'):
-            with self.assertRaises(urllib.error.URLError, msg=bad):
-                assistant.model_open(bad, 1)
-        with self.assertRaises(urllib.error.URLError):
-            assistant.model_open(urllib.request.Request('http://example.org:80/v1/chat/completions', b'{}'), 1)
-        kinds = {type(h).__name__ for h in assistant._opener.handlers}
-        self.assertNotIn('ProxyHandler', {k for k in kinds if getattr(next(h for h in assistant._opener.handlers if type(h).__name__ == k), 'proxies', None)})
-        self.assertIn('_NoRedirect', kinds)
-        self.assertNotIn('HTTPRedirectHandler', kinds)
-        self.assertIsNone(assistant._NoRedirect().redirect_request(None, None, 302, 'Found', {}, 'https://example.org/'))
-        self.assertEqual(assistant.MODEL_URL, 'http://127.0.0.1:9/v1/chat/completions')
+    def test_no_model_means_not_online(self):
+        st = REAL_STATUS()
+        self.assertFalse(st['online'])
+        self.assertIsNone(st['local'])
 
 
 class NothingGoesOut(unittest.TestCase):
@@ -642,7 +536,7 @@ class StreamTests(Both, unittest.TestCase):
 
     def test_chunks_are_bounded(self):
         r = Rec()
-        self.b.start('GET', self.b.origin + A, {'Range': 'bytes=0-'}, None, r)
+        self.b.start('GET', self.b.origin + A, {}, None, r)
         self.assertTrue(r.done.wait(20))
         self.assertTrue(all(len(p) <= B.CHUNK for p in r.parts))
         self.assertTrue(r.ok)
@@ -705,8 +599,8 @@ class StreamTests(Both, unittest.TestCase):
         self.assertTrue(wait_until(lambda: self.b.lanes['chat'].active == 0))
 
     def test_cancel_while_queued_never_runs(self):
-        lanes = {**B.LANES, 'large': (1, 10)}
-        b = B.Bridge(MOD, lanes=lanes)
+        b = B.Bridge(MOD)
+        lane = b.lanes['large'] = B._Lane('large', 1, 10)
         hold = threading.Event()
         r1, r2 = Rec(hold), Rec()
         e1 = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r1)
@@ -715,7 +609,7 @@ class StreamTests(Both, unittest.TestCase):
         e2.cancel()
         e1.cancel()
         hold.set()
-        self.assertTrue(wait_until(lambda: b.lanes['large'].done >= 2))
+        self.assertTrue(wait_until(lambda: not lane.waiting and lane.active == 0))
         self.assertIsNone(r2.status)
         self.assertFalse(r2.done.is_set())
 
@@ -723,7 +617,7 @@ class StreamTests(Both, unittest.TestCase):
         b = B.Bridge(MOD)
         hold = threading.Event()
         recs = [Rec(hold) for _ in range(300)]
-        exs = [b.start('GET', b.origin + '/videos/huge.mkv', {'Range': f'bytes={i * 1000}-'}, None, r) for i, r in enumerate(recs)]
+        exs = [b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r) for r in recs]
         lane = b.lanes['large']
         self.assertTrue(wait_until(lambda: lane.active == 6))
         time.sleep(0.2)
@@ -733,9 +627,9 @@ class StreamTests(Both, unittest.TestCase):
         times = []
         for _ in range(200):
             t = time.perf_counter()
-            self.assertEqual(call(b, 'GET', '/api/health').status, 200)
+            self.assertEqual(call(b, 'GET', '/api/t/echo').status, 200)
             times.append(time.perf_counter() - t)
-        OBSERVED['stream, small during large flood (300 videos, the window not reading)'] = f'/api/health median {statistics.median(times) * 1000:.2f} ms, max {max(times) * 1000:.2f} ms over 200'
+        OBSERVED['stream, small during large flood (300 videos, the window not reading)'] = f'/api/t/echo median {statistics.median(times) * 1000:.2f} ms, max {max(times) * 1000:.2f} ms over 200'
         self.assertLess(max(times), 1.0)
         for e in exs:
             e.cancel()
@@ -743,8 +637,8 @@ class StreamTests(Both, unittest.TestCase):
         self.assertTrue(wait_until(lambda: lane.active == 0 and not lane.waiting))
 
     def test_queue_full(self):
-        lanes = {**B.LANES, 'large': (1, 2)}
-        b = B.Bridge(MOD, lanes=lanes)
+        b = B.Bridge(MOD)
+        b.lanes['large'] = B._Lane('large', 1, 2)
         hold = threading.Event()
         recs = [Rec(hold) for _ in range(3)]
         exs = [b.start('GET', b.origin + '/videos/huge.mkv', {}, None, recs[0])]
@@ -755,7 +649,6 @@ class StreamTests(Both, unittest.TestCase):
         got = [b.start('GET', b.origin + '/videos/a.mp4', {}, None, r) for r in extra]
         self.assertEqual(got, [None] * 3)
         self.assertEqual([r.status for r in extra], [503] * 3)
-        self.assertEqual(b.counts['queue-full'], 3)
         for e in exs:
             e.cancel()
         hold.set()
@@ -766,12 +659,10 @@ class StreamTests(Both, unittest.TestCase):
         self.assertIn(b'http-equiv="refresh"', r.body)
         self.assertIn(b'&quot;&lt;b&gt;', r.body)
         self.assertNotIn(b'"<b>', r.body)
-        self.assertIn("default-src 'none'", r.hs['content-security-policy'])
 
     def test_real_chat_with_no_model_is_plain(self):
         assistant.model_status, assistant.chat = REAL_STATUS, REAL_CHAT
         try:
-            assistant._status['at'] = 0
             r = call(self.b, 'POST', '/api/chat', self.json, b'{}', timeout=15)
         finally:
             assistant.model_status, assistant.chat = stub_status, stub_chat
@@ -799,7 +690,6 @@ class WholeProcess(unittest.TestCase):
         self.assertTrue(str(server.LIB).startswith(str(DATA)))
 
     def test_video_piece_size(self):
-        self.assertGreater(B.VIDEO_PIECE, 2.38e6)     # the largest request seen from a player
         self.assertGreaterEqual(B.VIDEO_PIECE, 4 * MiB)
         self.assertLessEqual(B.VIDEO_PIECE, 8 * MiB)
 
@@ -810,7 +700,7 @@ REAL_STATUS, REAL_CHAT = assistant.model_status, assistant.chat
 
 
 def stub_status():
-    return {'online': True, 'model': 'TEST-STUB-NOT-A-MODEL', 'error': None}
+    return {'online': True, 'model': 'TEST-STUB-NOT-A-MODEL', 'local': None}
 
 
 def stub_chat(messages, about, emit, cancelled):

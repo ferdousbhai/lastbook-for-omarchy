@@ -26,9 +26,9 @@ ORIGIN = 'lastbook://app'
 
 MiB = 1024 * 1024
 CHUNK = MiB                         # largest piece handed to a stream Sink
-VIDEO_PIECE = 8 * MiB               # most bytes one video Range answer holds. The player asks for the rest.
+VIDEO_PIECE = 8 * MiB               # all of a video an answer holds: its start. A memory guard for a page that names one; the window plays the library's videos from disk.
 BIG_BODY = 64 * MiB                 # the largest answer handed over whole. The largest real saved page is 44 MB.
-WHOLE_MAX = 256 * MiB               # above this the refusal says 413, not 403. PDFs and videos come in pieces.
+WHOLE_MAX = 256 * MiB               # above this the refusal says 413, not 403
 MAX_POST = 256 * 1024               # the engine's own limit on a chat request is 200,000 bytes
 
 # name: (workers, most waiting)
@@ -42,12 +42,11 @@ GROW_TO = {'small': 48}                 # most workers once requests are kept wa
 GROW_AFTER = 0.05                       # seconds a request waits before a lane adds workers for what is waiting
 SHRINK_AFTER = 10                       # seconds an added worker sits idle before it goes
 
-PASS_HEADERS = {'range', 'content-type', 'accept'}  # the only request headers the engine sees
+PASS_HEADERS = {'content-type', 'accept'}  # the only request headers the engine sees
 FILE_PREFIXES = ('/documents/', '/pages/', '/videos/', '/videos-external/', '/transcripts/', '/metadata/videos/', '/courses/', '/collections/', '/assets/')
 HOP = {'connection', 'keep-alive', 'transfer-encoding', 'te', 'upgrade', 'proxy-connection', 'trailer'}
 DROP = HOP | {'server', 'date'}
 VIDEO_SUFFIXES = ('.mp4', '.webm', '.mkv')
-ENGINE_RANGE = re.compile(r'bytes=(\d+)-(\d*)')   # read as the engine reads it: match at the start, so a second range is ignored there too
 PDF_PAGE = re.compile(r'[?&]pdf-page=(\d+)(?:&|$)')
 PDF_WIDTH = 1400                    # the longer side of a drawn page
 PDF_MAX_PAGES = 20000               # the most one viewer page lists
@@ -76,11 +75,10 @@ class _Lane:
         self.waiting = deque()
         self.cond = threading.Condition()
         self.grow_to = max(workers, grow_to or 0)
-        self.threads = self.active = self.peak_active = self.peak_waiting = self.peak_threads = self.done = 0
+        self.threads = self.active = 0
 
     def _add_thread(self):
         self.threads += 1
-        self.peak_threads = max(self.peak_threads, self.threads)
         threading.Thread(target=self._work, daemon=True, name=f'lane-{self.name}').start()
 
     def submit(self, ex):
@@ -88,7 +86,6 @@ class _Lane:
             if len(self.waiting) >= self.max_waiting:
                 return False
             self.waiting.append(ex)
-            self.peak_waiting = max(self.peak_waiting, len(self.waiting))
             if self.threads < self.workers and self.threads < self.active + len(self.waiting):
                 self._add_thread()
             self.cond.notify()
@@ -111,7 +108,6 @@ class _Lane:
                         return
                 ex = self.waiting.popleft()
                 self.active += 1
-                self.peak_active = max(self.peak_active, self.active)
             try:
                 ex.run()
             except Exception:
@@ -119,7 +115,6 @@ class _Lane:
             finally:
                 with self.cond:
                     self.active -= 1
-                    self.done += 1
 
 
 class _Sock:
@@ -131,20 +126,8 @@ class _Sock:
     def makefile(self, mode, buffering=-1):
         return io.BufferedReader(io.BytesIO(self.raw))
 
-    def settimeout(self, t):
-        pass
-
     def sendall(self, b):
         self.ex.write(bytes(b))
-
-    def getsockname(self):
-        return ('127.0.0.1', 0)
-
-    def shutdown(self, how):
-        pass
-
-    def close(self):
-        pass
 
 
 def _make_handler(base):
@@ -162,8 +145,8 @@ def _make_handler(base):
 class Exchange:
     """One request. `stopped` is safe to read from any thread; cancel() may be called from any thread."""
 
-    def __init__(self, bridge, method, target, raw, lane):
-        self.b, self.method, self.target, self.raw, self.lane = bridge, method, target, raw, lane
+    def __init__(self, bridge, method, target, raw, lane, sink):
+        self.b, self.method, self.target, self.raw, self.lane, self.sink = bridge, method, target, raw, lane, sink
         self.path = urllib.parse.unquote(target.split('?', 1)[0])
         self.stopped = False
         self.hbuf = bytearray()
@@ -175,15 +158,12 @@ class Exchange:
         self.sent = 0
         self.local = None        # the file the engine is answering from, once it has found one
         self.swallow = False     # the engine's body is not wanted: a refusal or a redirect replaced it
-        self.note = None
+        self.cut = False         # stopped here: a body that never said how long it was grew past the limit
         self.t0 = time.time()
 
     def cancel(self):
         """The window gave up on this request. The Handler stops at its next write."""
-        if self.stopped:
-            return
         self.stopped = True
-        self.b._log_end(self, 'cancelled')
 
     # ---- worker side
     def run(self):
@@ -195,8 +175,16 @@ class Exchange:
             pass
         except Exception:
             traceback.print_exc()
-            self.note = 'exception'
-        self._end()
+        if self.stopped:
+            return
+        if not self.head_done:
+            self.status, self.reason = 502, 'No Answer'
+            self.headers = [('Content-Length', '0')]
+            self.head_done = True
+            self.announced = 0
+            self._send_head()
+        short = self.announced is not None and not self.swallow and self.sent < self.announced and self.status not in (204, 304)
+        self.sink.finish(not (short or self.cut))
 
     def write(self, b):
         if self.stopped:
@@ -228,72 +216,45 @@ class Exchange:
     def _header(self, name):
         return next((v for k, v in self.headers if k.lower() == name), None)
 
-    def _set_header(self, name, value):
-        self.headers = [(k, v) for k, v in self.headers if k.lower() != name.lower()] + [(name, value)]
-
-    def _replace(self, status, reason, ctype, body, *extra):
-        """This answer instead of the engine's. Stops the Handler before it sends any of its own."""
+    def _replace(self, status, reason, ctype, body):
+        """This answer instead of the engine's, whose body is no longer wanted."""
         self.status, self.reason, self.swallow, self.announced = status, reason, True, len(body)
-        self.headers = [('Content-Type', ctype), ('Content-Length', str(len(body))), ('X-Content-Type-Options', 'nosniff'), *extra]
+        self.headers = [('Content-Type', ctype), ('Content-Length', str(len(body)))]
         self._send_head()
-        if self.method != 'HEAD':
-            self._send(body)
-        raise BrokenPipeError
+        self._send(body)
 
     def _answer_pdf(self):
-        """The file itself is never handed over, whoever asks: not to a frame, an object, a fetch or a Range. A library address with ?pdf-page=N is one page as a picture.
+        """The file itself is never handed over, whoever asks: not to a frame, an object or a fetch. A library address with ?pdf-page=N is one page as a picture.
         Without it, it is a page holding them all. PDFium as packaged has no script engine, and the engine draws pages with it already.
         The engine has already judged the address, so everything it refuses stays refused."""
-        csp = ('Content-Security-Policy', self.b.server.Handler.SAVED_PAGE_CSP)
         path = self.path
         if self.local and path.startswith(FILE_PREFIXES) and os.path.isfile(self.local):
             try:
                 m = PDF_PAGE.search(self.target)
                 if m:
-                    body = self.b.pdf_page(path, self.local, int(m.group(1)))
-                    self._replace(200, 'OK', 'image/png', body, csp, ('Cache-Control', 'max-age=86400'))
-                body = self.b.pdf_viewer(path, self.local)
-                self._replace(200, 'OK', 'text/html; charset=utf-8', body, ('Content-Security-Policy', self.b.viewer_csp()))
+                    return self._replace(200, 'OK', 'image/png', self.b.pdf_page(path, self.local, int(m.group(1))))
+                return self._replace(200, 'OK', 'text/html; charset=utf-8', self.b.pdf_viewer(path, self.local))
             except GONE:
                 raise
             except Exception as e:     # a damaged or locked PDF
                 print('PDF not shown:', type(e).__name__, flush=True)
-        self.note = 'pdf-refused'
-        self._replace(404, 'Not Found', 'text/html; charset=utf-8', PDF_NOTICE, csp)
+        self._replace(404, 'Not Found', 'text/html; charset=utf-8', PDF_NOTICE)
 
     def _on_head(self):
         """The Handler's headers are in and no body has moved. Everything that can change the answer happens here."""
         if self.status in (200, 206) and 'pdf' in (self._header('content-type') or '').lower():
             self._answer_pdf()
+            raise BrokenPipeError   # stops the Handler before it sends any of the file
         length = self._header('content-length')
         self.announced = int(length) if length and length.isdigit() else None
         refusal = self._flood_gate()
         if refusal:
-            self.note = 'flood-gate'
-            self.b.count('flood-gate')
-            self.status, self.reason = refusal
-            self.headers = [('Content-Type', 'text/html; charset=utf-8'), ('Content-Length', str(len(TOO_LARGE))), ('X-Content-Type-Options', 'nosniff'),   # as plain text, a frame showed it blank
-                            ('Content-Security-Policy', self.b.server.Handler.SAVED_PAGE_CSP)]
-            self.announced = len(TOO_LARGE)
-            self.swallow = True
-            self._send_head()
-            self._send(TOO_LARGE)
+            self._replace(*refusal, 'text/html; charset=utf-8', TOO_LARGE)   # as plain text, a frame showed it blank
             raise BrokenPipeError   # stops the Handler before it reads the file
         if 300 <= self.status < 400 and self._header('location'):
-            # No public URI scheme call follows a redirect, so hand the frame a page that moves itself.
-            # A sandbox would stop the refresh, so this one page says instead that it runs nothing and loads nothing. It holds only the engine's address, escaped.
+            # No public URI scheme call follows a redirect, so hand the frame a page that moves itself. It holds only the engine's address, escaped.
             body = f'<!doctype html><meta http-equiv="refresh" content="0;url={html.escape(self._header("location"), quote=True)}">'.encode()
-            self.status, self.reason = 200, 'OK'
-            self.headers = [('Content-Type', 'text/html; charset=utf-8'), ('Content-Length', str(len(body))), ('X-Content-Type-Options', 'nosniff'),
-                            ('Content-Security-Policy', "default-src 'none'; script-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'")]
-            self.announced = len(body)
-            self.swallow = True
-            self._send_head()
-            self._send(body)
-            return
-        ctype = (self._header('content-type') or '').lower()
-        if 'html' in ctype and not self._header('content-security-policy'):   # an error page: it may not sit inside a frame
-            self.headers.append(('Content-Security-Policy', "frame-ancestors 'none'"))
+            return self._replace(200, 'OK', 'text/html; charset=utf-8', body)
         self._send_head()
 
     def _flood_gate(self):
@@ -321,25 +282,9 @@ class Exchange:
         self.sent += len(b)
         unknown_limit = None if self.lane is self.b.lanes['chat'] else BIG_BODY
         if self.announced is None and unknown_limit and self.sent > unknown_limit:   # a body that never said how long it was
-            self.note = 'unknown-length-over-limit'
-            self.b.count('unknown-length')
+            self.cut = True
             raise BrokenPipeError
         self._send(b)
-
-    def _end(self):
-        raise NotImplementedError
-
-    def _send_head(self):
-        raise NotImplementedError
-
-    def _send(self, b):
-        raise NotImplementedError
-
-
-class _Streamed(Exchange):
-    def __init__(self, bridge, method, target, raw, lane, sink):
-        super().__init__(bridge, method, target, raw, lane)
-        self.sink = sink
 
     def _send_head(self):
         self.sink.head(self.status, self.reason, list(self.headers))
@@ -350,32 +295,15 @@ class _Streamed(Exchange):
                 raise BrokenPipeError
             self.sink.data(b[i:i + CHUNK])
 
-    def _end(self):
-        if self.stopped:
-            return
-        if not self.head_done:
-            self.status, self.reason, self.note = 502, 'No Answer', self.note or 'no-answer'
-            self.headers = [('Content-Length', '0')]
-            self.head_done = True
-            self.announced = 0
-            self._send_head()
-        short = self.method != 'HEAD' and self.announced is not None and not self.swallow and self.sent < self.announced and self.status not in (204, 304)
-        cut = self.note == 'unknown-length-over-limit'
-        self.sink.finish(not (short or cut))
-        self.b._log_end(self, 'short' if short or cut else 'finished')
-
 
 class Bridge:
-    def __init__(self, server_module, log=None, lanes=None):
-        """server_module: the imported engine, after server.init(). log: a function taking one dict per request."""
+    def __init__(self, server_module):
+        """server_module: the imported engine, after server.init()."""
         self.server, self.origin = server_module, ORIGIN
-        self.logger = log
         self.Handler = _make_handler(server_module.Handler)
-        self.lanes = {n: _Lane(n, w, q, GROW_TO.get(n)) for n, (w, q) in (lanes or LANES).items()}
+        self.lanes = {n: _Lane(n, w, q, GROW_TO.get(n)) for n, (w, q) in LANES.items()}
         self.waiting_now = threading.Event()
         threading.Thread(target=self._grow_lanes, daemon=True, name='lane-grow').start()
-        self.counts = {}
-        self.count_lock = threading.Lock()
         self.pdf_sizes = {}
         self.pdf_lock = threading.Lock()
 
@@ -392,9 +320,8 @@ class Bridge:
             sink.finish(True)
             return None
         target, raw, lane = prepared
-        ex = _Streamed(self, method, target, raw, lane, sink)
+        ex = Exchange(self, method, target, raw, lane, sink)
         if not lane.submit(ex):
-            self.count('queue-full')
             status, reason, hs, text = _plain(503, 'Busy', b'too many requests')
             sink.head(status, reason, hs)
             sink.data(text)
@@ -430,7 +357,7 @@ class Bridge:
         return sizes
 
     def pdf_viewer(self, path, real):
-        """A page this program writes, with no script in it and a policy allowing none. Each picture loads when it comes near the view; the ids are what #page=N looks for."""
+        """A page this program writes, with no script in it. Each picture loads when it comes near the view; the ids are what #page=N looks for."""
         rec = self.server.catalog()['by_path'].get(path.lstrip('/')) or {}
         title = html.escape(str(rec.get('title') or os.path.basename(real)))
         rows = [f'<div class="p" id="page={i}"><img loading="lazy" decoding="async" alt="Page {i}" width="{max(round(w), 1)}" height="{max(round(h), 1)}" src="?pdf-page={i}"></div>'
@@ -441,9 +368,6 @@ class Bridge:
                 '.p img{display:block;width:100%;height:auto;background:#fff}'
                 '</style></head><body>' + ''.join(rows) + '</body></html>').encode()
 
-    def viewer_csp(self):
-        return 'sandbox allow-scripts; ' + self.server.Handler.NO_CODE_CSP     # no script is allowed from anywhere, and the page keeps no origin of its own
-
     def target_of(self, url):
         if url == self.origin:
             return '/'
@@ -452,57 +376,27 @@ class Bridge:
         target = url[len(self.origin):].split('#', 1)[0]
         return re.sub(r'[\x80-\U0010ffff]', lambda m: urllib.parse.quote(m.group()), target)
 
-    def count(self, what):
-        with self.count_lock:
-            self.counts[what] = self.counts.get(what, 0) + 1
-
     # ---- inside
-    def _refusal(self, why, status, reason, url):
-        self.count(why)
-        self._log(kind='refused', why=why, status=status, url=url[:300])
-        return _plain(status, reason, b'refused')
-
     def _prepare(self, method, url, headers, body):
         target = self.target_of(url)
-        if target is None:
-            return self._refusal('host', 400, 'Bad Request', url), None
-        if not target.startswith('/') or target.startswith('//') or BAD_TARGET.search(target):
-            return self._refusal('target', 400, 'Bad Request', url), None
-        if method not in ('GET', 'HEAD', 'POST'):
-            return self._refusal('method', 405, 'Method Not Allowed', url), None
-        low = _lower(headers)
+        if target is None or not target.startswith('/') or target.startswith('//') or BAD_TARGET.search(target):
+            return _plain(400, 'Bad Request', b'refused'), None
+        if method not in ('GET', 'POST'):
+            return _plain(405, 'Method Not Allowed', b'refused'), None
         path = target.split('?', 1)[0]
         if method == 'POST' and body is not None and len(body) > MAX_POST:
-            return self._refusal('post-size', 413, 'Too Large', url), None
+            return _plain(413, 'Too Large', b'refused'), None
         lines = [f'{method} {target} HTTP/1.1', 'Host: localhost', 'Connection: close']
-        for k, v in low.items():
-            if k in PASS_HEADERS and k != 'range' and not re.search(r'[\r\n]', v):
+        for k, v in _lower(headers).items():
+            if k in PASS_HEADERS and not re.search(r'[\r\n]', v):
                 lines.append(f'{k}: {v}')
-        rng = self._engine_range(method, path, low.get('range'))
-        if rng:
-            lines.append(f'Range: {rng}')
+        real = urllib.parse.unquote(path).lower()
+        if method == 'GET' and real.endswith(VIDEO_SUFFIXES) and real.startswith(FILE_PREFIXES):
+            lines.append(f'Range: bytes=0-{VIDEO_PIECE - 1}')   # the pipe carries no Range, so the engine is asked for a video's first piece and no more
         if method == 'POST':
             lines.append(f'Content-Length: {len(body or b"")}')
         raw = ('\r\n'.join(lines) + '\r\n\r\n').encode('latin-1', 'replace') + (body or b'' if method == 'POST' else b'')
         return None, (target, raw, self.lanes[_lane_for(method, path, target)])
-
-    def _engine_range(self, method, path, asked):
-        """What the Handler gets as Range. A video answer holds at most one piece, and a video asked for with no Range gets the first."""
-        real = urllib.parse.unquote(path).lower()
-        if not real.endswith(VIDEO_SUFFIXES) or not real.startswith(FILE_PREFIXES):
-            return asked
-        if method != 'GET':
-            return asked
-        if not asked:
-            return f'bytes=0-{VIDEO_PIECE - 1}'
-        m = ENGINE_RANGE.match(asked)
-        if not m:
-            return asked   # the engine answers 416
-        start = int(m.group(1))
-        end = int(m.group(2)) if m.group(2) else None
-        if end is None or end - start + 1 > VIDEO_PIECE:
-            end = start + VIDEO_PIECE - 1
-        return f'bytes={start}-{end}'
 
     def _grow_lanes(self):
         while True:
@@ -512,20 +406,9 @@ class Bridge:
             if any([lane.grow() for lane in self.lanes.values()]):
                 self.waiting_now.set()
 
-    def _log(self, **kw):
-        if self.logger:
-            try:
-                self.logger({'ts': round(time.time(), 3), **kw})
-            except Exception:
-                traceback.print_exc()
-
-    def _log_end(self, ex, end):
-        self._log(kind='req', m=ex.method, t=ex.target[:240], lane=ex.lane.name if ex.lane else None, status=ex.status, sent=ex.sent,
-                  ms=round((time.time() - ex.t0) * 1000, 1), end=end, note=ex.note)
-
 
 def _plain(status, reason, text):
-    return status, reason, [('Content-Type', 'text/plain'), ('Content-Length', str(len(text))), ('X-Content-Type-Options', 'nosniff')], text
+    return status, reason, [('Content-Type', 'text/plain'), ('Content-Length', str(len(text)))], text
 
 
 def _lower(headers):

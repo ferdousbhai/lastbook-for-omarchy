@@ -83,6 +83,12 @@ impl SetupPage {
         });
     }
 
+    /// Draws the page again from the state last read (a choice changed what it shows).
+    fn redraw(self: &Rc<Self>) {
+        let st = self.state.borrow().clone();
+        self.draw(st);
+    }
+
     fn draw(self: &Rc<Self>, st: Value) {
         clear(&self.body);
         let first = st["mode"] == "first-run";
@@ -352,14 +358,12 @@ impl SetupPage {
         dd.set_enable_search(true);
         dd.set_search_match_mode(gtk::StringFilterMatchMode::Substring);
         dd.set_expression(Some(gtk::PropertyExpression::new(gtk::StringObject::static_type(), gtk::Expression::NONE, "string")));
-        dd.add_css_class("map-choice");
         let chips = gtk::FlowBox::new();
         chips.set_selection_mode(gtk::SelectionMode::None);
         chips.set_column_spacing(6);
         chips.set_row_spacing(6);
         let ids: Vec<String> = all.iter().map(|r| r["id"].as_str().unwrap_or_default().to_owned()).collect();
         let me = Rc::downgrade(self);
-        let st2 = st.clone();
         dd.connect_selected_notify(move |d| {
             let i = d.selected() as usize;
             if i == 0 {
@@ -371,7 +375,7 @@ impl SetupPage {
                 if !me.regions.borrow().contains(id) {
                     me.regions.borrow_mut().push(id.clone());
                 }
-                me.draw(st2.clone());
+                me.redraw();
             }
         });
         self.body.append(&dd);
@@ -380,11 +384,11 @@ impl SetupPage {
             b.add_css_class("chip");
             b.set_tooltip_text(Some("Remove"));
             let me = Rc::downgrade(self);
-            let (id, st3) = (id.clone(), st.clone());
+            let id = id.clone();
             b.connect_clicked(move |_| {
                 if let Some(me) = me.upgrade() {
                     me.regions.borrow_mut().retain(|x| *x != id);
-                    me.draw(st3.clone());
+                    me.redraw();
                 }
             });
             chips.insert(&b, -1);

@@ -48,8 +48,8 @@ nothing shared may name a real person's home, street, coordinates, machines or a
 - Write guides for any reader in any place. Name a region only when the source is about that region.
 - Never commit a private word list, real coordinates of a home, user or machine names, LAN
   addresses, keys or tokens. Test paths use placeholders such as `/path/to/lastbook`.
-- To keep your own words out of a build, put them in a local copy of `packaging/ship_edits.json` (`forbidden`) and do not
-  commit it.
+- The package is built from the committed source, so what you commit is what ships. The package scan
+  (`packaging/arch/scan_package.py`) refuses home-folder paths; it cannot know your other personal details.
 
 **Sources first.** A guide card points at a real page of a real source in the library, with its page number. If the
 library does not cover something, record that in `content/gaps.json` instead of writing advice from memory.
