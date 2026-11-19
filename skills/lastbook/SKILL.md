@@ -35,7 +35,7 @@ Cite what you used: document title, publisher and page (or the time in a video),
 
 `place QUERY` finds towns, addresses and features on the offline map (`lat`, `lon`); `--nearby hospital,clinic,pharmacy,…` adds the nearest help points around the first match; `nearby` is empty where the library holds no such points for the area, which does not mean there are none. Distances are straight lines and the data may be outdated.
 
-`ask "QUESTION"` has the library's local AI write a cited answer (`answer`, `sources`, `steps`). It loads a 17 GB model into memory, takes a minute or more, and on a busy computer can exhaust memory and get other programs killed: run it only when the owner asks for it; otherwise use `search` and `read` and write the answer yourself. It exits 1 when no local AI is set up.
+`ask "QUESTION"` has the library's local AI write a cited answer (`answer`, `sources`, `steps`). It loads a 17 GB model into memory and takes a minute or more: run it only when the owner asks for it; otherwise use `search` and `read` and write the answer yourself. It exits 1 when no local AI is set up, or when too little memory is free to load the model (the message says how much is needed).
 
 To show the owner something, `lastbook open DOC_ID [PAGE]` opens a new Lastbook window at that page (a video: seconds); it also takes routes: `guide:hurt`, `search:burns`, `map:LAT,LON,LABEL`. `--dry-run` prints the route without opening.
 
