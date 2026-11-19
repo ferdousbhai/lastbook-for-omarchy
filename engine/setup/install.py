@@ -17,6 +17,7 @@ import stat
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
+from . import maps
 
 DATA_NAME = 'LastbookData'
 CATALOG = Path('library-data') / 'catalog.json'
@@ -206,7 +207,8 @@ def stage_switch(pend, new_lib, target, model_file=None, kind=None, model_sha256
 
 
 def carry_over(old, new):
-    """What belongs to the person, not the pack, goes with them: the model file, address indexes, and the AI's on/off setting."""
+    """What belongs to the person, not the pack, goes with them: the model file, address indexes, the world map and its
+    regions (engine/setup/maps.py), and the AI's on/off setting."""
     old, new = Path(old), Path(new)
     moved = []
     src = old / 'models'
@@ -224,6 +226,14 @@ def carry_over(old, new):
         for source in addresses.iterdir():
             dest = dest_dir / source.name
             if source.is_file() and re.fullmatch(r'[A-Z]{2}\.(sqlite|json)', source.name) and not dest.exists():
+                os.replace(source, dest)
+                moved.append(dest)
+    geo = old / 'derived' / 'geo'
+    if geo.is_dir():
+        for source in geo.iterdir():
+            dest = new / 'derived' / 'geo' / source.name
+            if source.is_file() and maps.ours(source.name) and not dest.exists():
+                dest.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(source, dest)
                 moved.append(dest)
     state = old / 'derived' / 'llm' / 'state.json'
@@ -298,7 +308,8 @@ def map_files(lib):
     rels = {r for r in d['files'] if map_member(r) and '..' not in Path(r).parts} if d else set()    # the fixed list only
     geo = lib / 'derived' / 'geo'
     if geo.is_dir():
-        rels |= {f'derived/geo/{p.name}' for p in geo.iterdir() if p.is_file() and map_member(f'derived/geo/{p.name}')}
+        rels |= {f'derived/geo/{p.name}' for p in geo.iterdir()
+                 if p.is_file() and map_member(f'derived/geo/{p.name}') and not maps.ours(p.name)}   # the world map is the person's
     rels |= {r for r in MAP_FIXED if (lib / r).is_file()}
     out = set()
     for r in rels:

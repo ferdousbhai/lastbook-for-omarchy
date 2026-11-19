@@ -323,7 +323,16 @@ dropdown > button {
   padding: 4px 8px;
 }
 popover > contents { background: @lb_surface; border: 1px solid alpha(@lb_border, 0.6); color: @lb_text; padding: 4px; }
+popover listview, popover scrolledwindow, popover viewport { background: transparent; color: @lb_text; }
+popover listview > row { padding: 5px 8px; border-radius: 5px; }
 popover listview > row:selected, popover listview > row:hover { background: alpha(@lb_accent, 0.18); }
+popover searchbar entry, popover entry {
+  background: alpha(@lb_text, 0.04);
+  border: 1px solid alpha(@lb_border, 0.6);
+  border-radius: 5px;
+  padding: 4px 8px;
+  margin: 2px 2px 6px;
+}
 
 /* ---------------------------------------------------------------------------------------------------------- map -- */
 .map-bar {

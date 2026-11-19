@@ -63,7 +63,7 @@ package() {
   install -m644 server.py retrieval.py encyclopedia.py assistant.py llm_local.py VERSION "$lib/"
   install -m644 engine/__init__.py engine/paths.py engine/library.py engine/saved_pages.py engine/address_search.py "$lib/engine/"
   install -m644 engine/setup/*.py engine/setup/roots.pem "$lib/engine/setup/"
-  install -m644 packaging/arch/manifest-v1.json "$lib/setup/"
+  install -m644 packaging/arch/manifest-v1.json packaging/arch/map-regions.json "$lib/setup/"
   cp -R "$srcdir/ship/content" "$lib/"
   install -m755 "$srcdir/llm/bin-linux/lastbook-llm" "$lib/llm/"
   install -m644 "$srcdir"/llm/bin-linux/*.so* "$srcdir"/llm/bin-linux/LICENSE* "$srcdir"/llm/bin-linux/NOTICE* "$lib/llm/"

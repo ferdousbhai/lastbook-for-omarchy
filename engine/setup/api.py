@@ -20,7 +20,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-from . import download, hardware, install
+from . import download, hardware, install, maps
 from .manifest import Manifest
 
 DATA_NAME = install.DATA_NAME
@@ -29,6 +29,7 @@ SAVE_EVERY = 2.0
 RECOMMEND_MARGIN = 5 * 10 ** 9     # beyond what the install needs, so the disk is not left full
 RECOMMEND_MARGIN_MAX = 20 * 10 ** 9
 MAX_BODY = 64 * 1024
+WORLD_ESTIMATE = 650 * 10 ** 6     # the world map to city level (zoom 8) and place search, before it is measured
 ACTIVE = ('waiting', 'downloading', 'verifying', 'unpacking', 'activating')
 
 
@@ -174,6 +175,8 @@ class Setup:
         if (plan.get('pack') and not pack) or (plan.get('map') and not mp) or (plan.get('model') and not model):
             return None
         wanted = {('pack', pack['id']) if pack else None, ('map', mp['id']) if mp else None, ('model', model['id']) if model else None, ('addresses', addresses['id']) if addresses else None} - {None}
+        osm = [x for x in (plan.get('osm') or []) if x in ('world', 'places') or (isinstance(x, str) and maps.region(x))]
+        wanted |= {('osm', x) for x in osm}
         if {(i.get('kind'), i.get('id')) for i in items} != wanted:
             return None
         names = ([f['name'] for f in pack['files']] if pack else []) + ([f['name'] for f in mp['files']] if mp else []) + ([f['name'] for f in addresses['files']] if addresses else []) + ([model['file']] if model else [])
@@ -181,7 +184,8 @@ class Setup:
                    if n in names and isinstance(v, str) and Path(v).name == n and Path(v).is_file()}
         switch = bool(plan.get('switch')) and pack is not None
         clean = {'pack': pack, 'model': model, 'map': mp, 'addresses': addresses, 'parent': str(parent), 'target': str(target), 'work': str(work),
-                 'sources': sources, 'explicit': bool(plan.get('explicit')), 'retried': {}, 'switch': switch, 'repair': bool(plan.get('repair'))}
+                 'sources': sources, 'explicit': bool(plan.get('explicit')), 'retried': {}, 'switch': switch, 'repair': bool(plan.get('repair')),
+                 'osm': osm}
         if isinstance(plan.get('damaged'), list):
             clean['damaged'] = [str(x) for x in plan['damaged']]
         if plan.get('map_new'):
@@ -195,6 +199,8 @@ class Setup:
 
     def _done_after_restart(self, plan, it, was):
         """(bytes done, bytes total) for an item found mid-run at startup, from what is on disk for the step it was in."""
+        if it['kind'] == 'osm':
+            return 0, it['bytes_total']        # a map cut starts over: its half-made file is set aside on the next run
         if was == 'unpacking' and it['kind'] == 'map' and plan.get('map'):
             total = plan['map']['installed_bytes']
             return min(_tree_size(Path(plan['work']) / 'unpack-map'), total), total
@@ -265,7 +271,8 @@ class Setup:
             p = self.current / 'models' / m['file']
             if p.is_file() and p.stat().st_size == m['size']:
                 model = m['id']
-        return {'folder': str(self.current), 'pack': pack, 'content_revision': revision, 'map_bytes': install.map_bytes(self.current), 'model': model, 'map': install.map_name(self.current), 'address_indexes': self.address_indexes(), 'old': self._settings().get('old', [])}
+        return {'folder': str(self.current), 'pack': pack, 'content_revision': revision, 'map_bytes': install.map_bytes(self.current), 'model': model, 'map': install.map_name(self.current), 'address_indexes': self.address_indexes(), 'old': self._settings().get('old', []),
+                'osm': maps.installed(self.current / 'derived' / 'geo')}
 
     def address_indexes(self):
         if not self.current:
@@ -411,7 +418,8 @@ class Setup:
         self.manifest.fetch_once()
         hw = self.hardware()
         return {'mode': self.mode, 'hardware': hw, 'manifest': self.manifest.public(), 'current': self.current_info(),
-                'found': self.found(), 'recommend': self.recommend(hw), 'job': self.public_job()}
+                'found': self.found(), 'recommend': self.recommend(hw), 'job': self.public_job(),
+                'map_regions': maps.regions(), 'world_bytes': WORLD_ESTIMATE}
 
     def public_job(self):
         with self.lock:
@@ -426,7 +434,7 @@ class Setup:
             return p.parent if p.name == DATA_NAME else p
         return self.current.parent if self.current else self.default_parent
 
-    def start(self, pack_id=None, ai=False, folder=None, sources=None, explicit=False, repair=False, map_id=None, address_id=None):
+    def start(self, pack_id=None, ai=False, folder=None, sources=None, explicit=False, repair=False, map_id=None, address_id=None, world=False, regions=()):
         if repair:
             return self._start_repair(ai)
         with self.lock:
@@ -467,9 +475,18 @@ class Setup:
                 model = None       # already here, and an upgrade in place carries it over
             if mp and not pack and cur.get('map') == mp['id']:
                 mp = None          # this state's map is the one here already
-            if self.mode == 'first-run' and not pack and (model or mp or addresses):
+            have_osm = maps.installed(Path(target) / 'derived' / 'geo') if target == self.current or not pack else {'world': False, 'places': False, 'regions': []}
+            osm = []
+            if world or regions:       # street-level regions draw over the world map, so a region brings the world with it
+                osm += [x for x in ('world', 'places') if not have_osm[x]]
+            for rid in dict.fromkeys(regions or ()):
+                if not isinstance(rid, str) or not maps.region(rid):
+                    return {'error': 'Lastbook does not know that map region.', 'code': 'unavailable'}
+                if rid not in {r['id'] for r in have_osm['regions']}:
+                    osm.append(rid)
+            if self.mode == 'first-run' and not pack and (model or mp or addresses or osm):
                 return {'error': 'Choose a library first.', 'code': 'nothing'}
-            if not pack and not model and not mp and not addresses:
+            if not pack and not model and not mp and not addresses and not osm:
                 if self.mode == 'first-run':
                     return {'error': 'Choose a library first.', 'code': 'nothing'}
                 return {'error': 'Nothing to add: this library and the local AI are already here.', 'code': 'nothing'}
@@ -490,7 +507,7 @@ class Setup:
                     srcs[f['name']] = f['path']
             names = ([f['name'] for f in pack['files']] if pack else []) + ([model['file']] if model else []) + ([f['name'] for f in mp['files']] if mp else []) + ([f['name'] for f in addresses['files']] if addresses else [])
             have = set(srcs)
-            need = install.need_bytes(pack, model, have) + _map_need(mp, have) + _map_need(addresses, have)
+            need = install.need_bytes(pack, model, have) + _map_need(mp, have) + _map_need(addresses, have) + (WORLD_ESTIMATE if 'world' in osm else 0)
             preserve_map = bool(pack and cur.get('pack') == pack['id'] and target == self.current and not mp and cur.get('map') not in (None, 'base'))
             if preserve_map:
                 need += cur['map_bytes']
@@ -516,6 +533,10 @@ class Setup:
             if addresses:
                 items.append({'id': addresses['id'], 'kind': 'addresses', 'title': addresses['title'] + ' address search', 'state': 'waiting', 'bytes_done': 0,
                               'bytes_total': addresses['download_bytes'], 'rate_bps': 0, 'eta_s': None, 'error': None})
+            for x in osm:          # sizes are known once each cut is measured, when its turn comes
+                title = {'world': 'World map', 'places': 'Place search'}.get(x) or maps.region(x)['name'] + ' streets'
+                items.append({'id': x, 'kind': 'osm', 'title': title, 'state': 'waiting', 'bytes_done': 0,
+                              'bytes_total': WORLD_ESTIMATE if x == 'world' else 0, 'rate_bps': 0, 'eta_s': None, 'error': None})
             if model:
                 items.append({'id': model['id'], 'kind': 'model', 'title': model['title'], 'state': 'waiting', 'bytes_done': 0,
                               'bytes_total': model['size'], 'rate_bps': 0, 'eta_s': None, 'error': None})
@@ -523,7 +544,7 @@ class Setup:
                         'folder': str(target),
                         'plan': {'pack': pack, 'model': model, 'map': mp, 'addresses': addresses, 'parent': str(parent), 'target': str(target), 'work': str(work),
                                  'sources': {k: v for k, v in srcs.items() if k in names}, 'explicit': explicit,
-                                 'retried': {}, 'switch': bool(pack)}}
+                                 'retried': {}, 'switch': bool(pack), 'osm': osm}}
             s = self._settings()
             s['work'] = str(work)
             self._save_settings(s)
@@ -842,6 +863,8 @@ class Setup:
                     self._do_map(it, plan, work, control)
                 elif it['kind'] == 'addresses':
                     self._do_addresses(it, plan, work, control)
+                elif it['kind'] == 'osm':
+                    self._do_osm(it, plan, work, control)
                 else:
                     self._do_model(it, plan, work, control)
                 with self.lock:
@@ -1022,6 +1045,34 @@ class Setup:
         for path, ours in got:
             if ours:
                 os.unlink(path)
+
+    def _do_osm(self, it, plan, work, control):
+        """The world map, place search, or one street-level region, made here from OpenStreetMap (engine/setup/maps.py).
+        Into the staged library when one is being installed, else straight into the open one: the map picks it up when shown."""
+        lib = (work / 'unpack' / DATA_NAME) if plan['switch'] else Path(self.current or plan['target'])
+        geo = lib / 'derived' / 'geo'
+        geo.mkdir(parents=True, exist_ok=True)
+        tracker = _Item(it)
+        self._set(it, 'downloading', bytes_done=0)
+        if it['id'] == 'places':
+            maps.build_places(geo / maps.PLACES_FILE, control, allowed=self.allowed, context=self.context)
+            with self.lock:
+                it['bytes_total'] = it['bytes_done'] = (geo / maps.PLACES_FILE).stat().st_size
+            return
+        if it['id'] == 'world':
+            cut = maps.Cut(geo / maps.WORLD_FILE, None, 0, maps.WORLD_MAXZOOM, 'World', control, self.allowed, self.context)
+        else:
+            r = maps.region(it['id'])
+            cut = maps.Cut(geo / f'regions-{maps.file_id(r["id"])}.mbtiles', r['bbox'], maps.REGION_MINZOOM, maps.REGION_MAXZOOM,
+                           r['name'], control, self.allowed, self.context)
+        total = cut.measure()
+        free, _ = hardware.disk_of(geo)
+        if free < total * 1.1 + 512 * 2 ** 20:
+            raise download.Failed('no_space', f'{it["title"]} needs {_gb(total)} free, and the disk has {_gb(free)}. Free some space, then try again.',
+                                  need_bytes=total, free_bytes=free)
+        with self.lock:
+            it['bytes_total'] = total
+        cut.run(lambda done, total: tracker.progress(done, total))
 
     def _do_model(self, it, plan, work, control):
         m = plan['model']
@@ -1207,7 +1258,8 @@ def _default():
 ROUTES = {
     ('GET', 'state'): lambda s, b: s.state(),
     ('GET', 'job'): lambda s, b: s.public_job(),
-    ('POST', 'start'): lambda s, b: s.start(b.get('pack'), bool(b.get('ai')), b.get('folder'), repair=bool(b.get('repair')), map_id=b.get('map') or None, address_id=b.get('address_id') or None),
+    ('POST', 'start'): lambda s, b: s.start(b.get('pack'), bool(b.get('ai')), b.get('folder'), repair=bool(b.get('repair')), map_id=b.get('map') or None, address_id=b.get('address_id') or None,
+                                         world=bool(b.get('world')), regions=[x for x in (b.get('regions') or []) if isinstance(x, str)][:50]),
     ('POST', 'pause'): lambda s, b: s.pause(),
     ('POST', 'resume'): lambda s, b: s.resume(),
     ('POST', 'cancel'): lambda s, b: s.cancel(),

@@ -27,6 +27,10 @@ pub struct SetupPage {
     state: RefCell<Value>,
     pack: RefCell<Option<String>>,
     map: RefCell<Option<String>>,
+    /// The world map and place search (cut from OpenStreetMap on this computer, engine/setup/maps.py).
+    world: Cell<bool>,
+    /// Street-level areas to add (Geofabrik region ids).
+    regions: RefCell<Vec<String>>,
     ai: Cell<bool>,
     folder: RefCell<Option<String>>,
     polling: Cell<bool>,
@@ -68,6 +72,8 @@ impl SetupPage {
             state: RefCell::new(Value::Null),
             pack: RefCell::new(None),
             map: RefCell::new(None),
+            world: Cell::new(true),
+            regions: RefCell::new(Vec::new()),
             ai: Cell::new(false),
             folder: RefCell::new(None),
             polling: Cell::new(false),
@@ -101,6 +107,7 @@ impl SetupPage {
             self.pack.replace(rec["pack"].as_str().map(str::to_owned).or_else(|| st["current"]["pack"].as_str().map(str::to_owned)));
             // Only first-run setup suggests the model; managing a library never ticks a 17 GB download by itself.
             self.ai.set(first && rec["ai"].as_bool().unwrap_or(false));
+            self.world.set(first);
         }
         if self.folder.borrow().is_none() {
             self.folder.replace(rec["folder"].as_str().map(str::to_owned));
@@ -110,17 +117,16 @@ impl SetupPage {
             if first {
                 "Choose what to keep on this computer. Everything is checked as it arrives, and after this Lastbook works with no internet."
             } else {
-                "Add to this library, change its detailed map, add the local AI, or check every file."
+                "Add to this library, add map areas, add the local AI, or check every file."
             },
             "dim",
         ));
         if let Some(c) = st["current"].as_object() {
             self.body.append(&label(
                 &format!(
-                    "This library: {} · map {} · local AI {} · {}",
+                    "This library: {} · local AI {} · {}",
                     c.get("pack").and_then(Value::as_str).unwrap_or("—"),
-                    c.get("map").and_then(Value::as_str).unwrap_or("base"),
-                    if c.get("model").is_some_and(|m| !m.is_null()) { "installed" } else { "not installed" },
+                    if c.get("model").is_some_and(|m| !m.is_null()) || self.ai_present.get() { "on this computer" } else { "not installed" },
                     c.get("folder").and_then(Value::as_str).unwrap_or_default()
                 ),
                 "meta",
@@ -213,33 +219,7 @@ impl SetupPage {
         self.body.append(&sw);
         self.body.append(&label(ai["why"].as_str().unwrap_or_default(), "meta"));
 
-        // Detailed map
-        let maps: Vec<Value> = st["manifest"]["maps"].as_array().cloned().unwrap_or_default();
-        if !maps.is_empty() {
-            self.body.append(&crate::cards::section("Detailed map"));
-            let mut names = vec!["No detailed map (the base map only)".to_owned()];
-            names.extend(maps.iter().map(|m| {
-                format!("{} · {}", m["title"].as_str().unwrap_or_default(), gb(m["installed_bytes"].as_f64().unwrap_or(0.0)))
-            }));
-            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-            let dd = gtk::DropDown::from_strings(&refs);
-            dd.set_enable_search(true);
-            dd.add_css_class("map-choice");
-            let current = self.map.borrow().clone();
-            if let Some(i) = current.and_then(|c| maps.iter().position(|m| m["id"] == c.as_str())) {
-                dd.set_selected(i as u32 + 1);
-            }
-            let me = Rc::downgrade(self);
-            let ids: Vec<String> = maps.iter().map(|m| m["id"].as_str().unwrap_or_default().to_owned()).collect();
-            dd.connect_selected_notify(move |d| {
-                if let Some(me) = me.upgrade() {
-                    let i = d.selected() as usize;
-                    me.map.replace(if i == 0 { None } else { ids.get(i - 1).cloned() });
-                }
-            });
-            self.body.append(&dd);
-            self.body.append(&label("Local streets, buildings, terrain and places for one area. You choose it: Lastbook never detects your location.", "meta"));
-        }
+        self.draw_maps(&st);
 
         // Where
         if first {
@@ -344,14 +324,116 @@ impl SetupPage {
         });
     }
 
+    /// The map: the world to city level, and street-level areas the person picks. Both are made on this computer from
+    /// OpenStreetMap's newest daily build; Lastbook hosts no maps.
+    fn draw_maps(self: &Rc<Self>, st: &Value) {
+        self.body.append(&crate::cards::section("Map"));
+        let have = &st["current"]["osm"];
+        let has_world = have["world"].as_bool().unwrap_or(false) && have["places"].as_bool().unwrap_or(false);
+        let all: Vec<Value> = st["map_regions"].as_array().cloned().unwrap_or_default();
+        let name_of_all = all.clone();
+        let name_of = move |id: &str| name_of_all.iter().find(|r| r["id"] == id).and_then(|r| r["name"].as_str()).unwrap_or(id).to_owned();
+        // Whole continents are tens of GB: offered are countries and their parts (Russia is its own top-level region).
+        let mut all: Vec<Value> = all.into_iter().filter(|r| r["parent"].as_str().is_some_and(|p| !p.is_empty()) || r["id"] == "russia").collect();
+        all.sort_by_key(|r| r["name"].as_str().unwrap_or_default().to_lowercase());
+        if has_world {
+            let installed: Vec<String> = have["regions"].as_array().into_iter().flatten()
+                .map(|r| format!("{} ({})", r["name"].as_str().unwrap_or_default(), gb(r["bytes"].as_f64().unwrap_or(0.0))))
+                .collect();
+            self.body.append(&label(&if installed.is_empty() {
+                "The world map is here, to city level.".to_owned()
+            } else {
+                format!("The world map is here, with streets for {}.", installed.join(", "))
+            }, "meta"));
+            self.world.set(false);
+        } else {
+            let check = gtk::CheckButton::with_label(&format!(
+                "World map and place search, to city level · about {}",
+                gb(st["world_bytes"].as_f64().unwrap_or(650e6))
+            ));
+            crate::cards::wrap_check(&check);
+            check.set_active(self.world.get());
+            let me = Rc::downgrade(self);
+            check.connect_toggled(move |b| {
+                if let Some(me) = me.upgrade() {
+                    me.world.set(b.is_active());
+                }
+            });
+            self.body.append(&check);
+        }
+        if all.is_empty() {
+            return;
+        }
+        // Street-level areas: pick from a searchable list; each pick shows as a chip that removes it when clicked.
+        let names: Vec<String> = std::iter::once("Add streets for an area…".to_owned())
+            .chain(all.iter().map(|r| {
+                let parent = r["parent"].as_str().unwrap_or_default();
+                if parent.is_empty() { r["name"].as_str().unwrap_or_default().to_owned() } else { format!("{} · {}", r["name"].as_str().unwrap_or_default(), name_of(parent)) }
+            }))
+            .collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let dd = gtk::DropDown::from_strings(&refs);
+        dd.set_enable_search(true);
+        dd.set_search_match_mode(gtk::StringFilterMatchMode::Substring);
+        dd.set_expression(Some(gtk::PropertyExpression::new(gtk::StringObject::static_type(), gtk::Expression::NONE, "string")));
+        dd.add_css_class("map-choice");
+        let chips = gtk::FlowBox::new();
+        chips.set_selection_mode(gtk::SelectionMode::None);
+        chips.set_column_spacing(6);
+        chips.set_row_spacing(6);
+        let ids: Vec<String> = all.iter().map(|r| r["id"].as_str().unwrap_or_default().to_owned()).collect();
+        let me = Rc::downgrade(self);
+        let st2 = st.clone();
+        dd.connect_selected_notify(move |d| {
+            let i = d.selected() as usize;
+            if i == 0 {
+                return;
+            }
+            if let Some(me) = me.upgrade()
+                && let Some(id) = ids.get(i - 1)
+            {
+                if !me.regions.borrow().contains(id) {
+                    me.regions.borrow_mut().push(id.clone());
+                }
+                me.draw(st2.clone());
+            }
+        });
+        self.body.append(&dd);
+        for id in self.regions.borrow().iter() {
+            let b = crate::cards::wrap_button(&format!("{} ✕", name_of(id)));
+            b.add_css_class("chip");
+            b.set_tooltip_text(Some("Remove"));
+            let me = Rc::downgrade(self);
+            let (id, st3) = (id.clone(), st.clone());
+            b.connect_clicked(move |_| {
+                if let Some(me) = me.upgrade() {
+                    me.regions.borrow_mut().retain(|x| *x != id);
+                    me.draw(st3.clone());
+                }
+            });
+            chips.insert(&b, -1);
+        }
+        if !self.regions.borrow().is_empty() {
+            self.body.append(&chips);
+        }
+        self.body.append(&label(
+            "Streets, buildings and help points (hospitals, pharmacies, water, shelters) for the areas you pick; a small country \
+             is about 0.1–0.5 GB, a large one several GB. Made on this computer from OpenStreetMap: you choose the areas, and \
+             Lastbook never detects your location.",
+            "meta",
+        ));
+    }
+
     fn start(self: &Rc<Self>) {
-        let mut body = json!({"pack": *self.pack.borrow(), "ai": self.ai.get(), "map": *self.map.borrow()});
+        let regions = self.regions.borrow().clone();
+        let mut body = json!({"pack": *self.pack.borrow(), "ai": self.ai.get(), "map": *self.map.borrow(),
+                              "world": self.world.get(), "regions": regions});
         if let Some(f) = self.folder.borrow().as_ref()
             && self.state.borrow()["mode"] == "first-run"
         {
             body["folder"] = json!(f);
         }
-        if body["pack"].is_null() && !self.ai.get() && body["map"].is_null() {
+        if body["pack"].is_null() && !self.ai.get() && body["map"].is_null() && !self.world.get() && self.regions.borrow().is_empty() {
             self.status.set_text("Choose something to download first.");
             return;
         }

@@ -29,6 +29,9 @@ ALLOWED_HOSTS = frozenset({
     'downloads.lastbook.org',
     'huggingface.co',
     'cas-bridge.xethub.hf.co',
+    'build-metadata.protomaps.dev',     # the list of Protomaps' daily OpenStreetMap builds
+    'build.protomaps.com',              # the builds: the map is cut from one with range requests (engine/setup/maps.py)
+    'download.geonames.org',            # the place names for searching the map (GeoNames, CC BY 4.0)
 })
 ALLOWED_SUFFIXES = ('.hf.co',)      # Hugging Face's download hosts (cas-bridge.xethub.hf.co and its siblings)
 MAX_REDIRECTS = 5
@@ -152,6 +155,52 @@ def _open(url, start, etag, allowed, context, timeout):
             continue
         return conn, r, url
     raise Failed('network', 'The download server sent Lastbook round in circles.')
+
+
+def fetch_range(url, start, length, control, allowed=None, context=None, timeout=TIMEOUT):
+    """Exactly `length` bytes of `url` from byte `start` (one HTTP Range request), retried with backoff on a broken connection.
+    The map is cut from a large archive this way (engine/setup/maps.py). Raises Failed, or Stopped when paused or cancelled."""
+    context = context or tls_context()
+    for attempt in range(NETWORK_TRIES):
+        control.check()
+        try:
+            u = url
+            for _ in range(MAX_REDIRECTS + 1):
+                if not url_allowed(u, allowed):
+                    raise Failed('network', 'Lastbook refused to download from an address it does not know.')
+                p = urllib.parse.urlsplit(u)
+                conn = http.client.HTTPSConnection(p.hostname, p.port or 443, timeout=timeout, context=context)
+                conn.request('GET', (p.path or '/') + ('?' + p.query if p.query else ''),
+                             headers={'User-Agent': USER_AGENT, 'Accept-Encoding': 'identity', 'Range': f'bytes={start}-{start + length - 1}'})
+                r = conn.getresponse()
+                if r.status in (301, 302, 303, 307, 308) and r.getheader('Location'):
+                    u = urllib.parse.urljoin(u, r.getheader('Location'))
+                    r.close()
+                    conn.close()
+                    continue
+                break
+            try:
+                if r.status != 206:
+                    raise Failed('network', f'The map server answered {r.status} to a part request.')
+                out = bytearray()
+                while len(out) < length:
+                    control.check()
+                    piece = r.read(min(CHUNK, length - len(out)))
+                    if not piece:
+                        break
+                    out += piece
+                if len(out) != length:
+                    raise ConnectionError(f'short read: {len(out)} of {length}')
+                return bytes(out)
+            finally:
+                conn.close()
+        except (OSError, http.client.HTTPException) as e:
+            if disk_full(e):
+                raise
+            if attempt == NETWORK_TRIES - 1:
+                raise Failed('network', f'The connection to the map server keeps breaking ({type(e).__name__}). Try again later.')
+            control.sleep(BACKOFF[min(attempt, len(BACKOFF) - 1)])
+    raise Failed('network', 'The map server did not answer.')
 
 
 def fetch_small(url, limit=1 << 20, allowed=None, context=None, timeout=10):

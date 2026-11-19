@@ -42,7 +42,7 @@ WEB = APP / 'web'
 CACHE = HERE / 'derived' / 'cache'
 MAPDB = HERE / 'derived' / 'geo' / 'map.sqlite'
 PLACEDB = HERE / 'derived' / 'geo' / 'places.sqlite'
-WORLD_PLACEDB = HERE / 'derived' / 'geo' / 'world-places.sqlite'   # GeoNames: countries, regions, towns of 15,000+ (tools/build_world_places.py)
+WORLD_PLACEDB = HERE / 'derived' / 'geo' / 'world-places.sqlite'   # GeoNames: countries, regions, towns of 15,000+ (engine/setup/maps.py builds it in setup)
 os.environ.setdefault('SURVIVAL_DISABLE_INDEX_WATCH', '1')
 import engine.library as library  # noqa: E402  (provides Handler, search DB path, ZIM reader)
 import retrieval, assistant  # noqa: E402

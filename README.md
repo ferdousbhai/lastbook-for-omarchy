@@ -38,9 +38,11 @@ the Python engine as its own child process. Your library and settings stay in yo
   level (`derived/geo/world.mbtiles`, about 0.6 GB), plus street-level detail (roads, buildings, water, and help points:
   hospitals, pharmacies, police, fire stations, drinking water, shelters) for the region chosen in setup, any of
   Geofabrik's 554 regions. Places anywhere can be found offline (a GeoNames gazetteer of countries, regions and towns of
-  15,000+). The person picks the region; Lastbook never detects location. Builders: `tools/map_extract.py` (cuts tiles from
-  Protomaps' world build over HTTPS range requests), `tools/build_world_places.py`, `tools/build_map_region.py` (a region's
-  map-set zip and manifest entry). The US library maps (state maps, addresses, terrain) still work where installed.
+  15,000+). The person picks the areas in setup; Lastbook never detects location. Nothing is hosted by Lastbook: setup
+  cuts the map on the person's computer from Protomaps' newest daily OpenStreetMap build (HTTPS range requests, only the
+  tiles wanted) and builds place search from GeoNames (`engine/setup/maps.py`; the area list is
+  `packaging/arch/map-regions.json`, made by `tools/make_region_list.py`). The US library maps (state maps, addresses,
+  terrain) still work where installed.
 - **Optional local AI.** Ask questions in plain words and get answers that cite library pages, from a model that runs on
   the computer itself (see "The local AI" below). Without it, Chat still finds the right pages.
 - **One-download setup.** On first run, setup defaults to Small and selects local AI when the computer can run it.

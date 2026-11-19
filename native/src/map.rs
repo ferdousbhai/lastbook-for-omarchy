@@ -3,7 +3,7 @@
 //! Cairo in the Omarchy theme's colours.
 //!
 //! derived/geo/world.mbtiles holds the whole world to zoom 8; derived/geo/regions-*.mbtiles add street-level detail for
-//! the regions a person chose (tools/map_extract.py builds both). Each tile comes from the most detailed file that has
+//! the regions a person chose (setup makes both: engine/setup/maps.py). Each tile comes from the most detailed file that has
 //! it, and a less detailed tile is scaled up where nothing finer exists. Tiles are drawn once into images (at screen
 //! scale) and kept; labels for places and help points are placed each frame, without overlapping.
 
@@ -66,6 +66,20 @@ fn open_sources(geo: &Path) -> Vec<Source> {
     let mut out: Vec<Source> = regions.iter().filter_map(|p| Source::open(p)).collect();
     out.extend(Source::open(&geo.join("world.mbtiles")));
     out
+}
+
+fn files_seen(geo: &Path) -> String {
+    let mut v: Vec<String> = std::fs::read_dir(geo)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n.ends_with(".mbtiles").then(|| format!("{n}:{}", e.metadata().map(|m| m.len()).unwrap_or(0)))
+        })
+        .collect();
+    v.sort();
+    v.join("|")
 }
 
 // ---------------------------------------------------------------------------------------------------------- colours --
@@ -161,7 +175,8 @@ pub struct MapPage {
     results: gtk::ListBox,
     results_pop: gtk::Popover,
     found: RefCell<Vec<Value>>,
-    loaded: Cell<bool>,
+    /// The map files open now (names and sizes): a download that adds or finishes one opens them again.
+    loaded: RefCell<String>,
 }
 
 impl MapPage {
@@ -229,7 +244,7 @@ impl MapPage {
             results,
             results_pop,
             found: RefCell::new(Vec::new()),
-            loaded: Cell::new(false),
+            loaded: RefCell::new(String::new()),
         });
         let me = Rc::downgrade(&page);
         page.area.set_draw_func(move |_, cr, w, h| {
@@ -340,13 +355,19 @@ impl MapPage {
         });
     }
 
-    /// Opens the map files the first time the map is shown.
+    /// Opens the map files when the map is shown, and again whenever they have changed (setup adds maps while Lastbook runs).
     pub fn show(self: &Rc<Self>) {
-        if !self.loaded.replace(true)
-            && let Some(app) = self.app.upgrade()
+        if let Some(app) = self.app.upgrade()
             && let Some(data) = app.engine.ready.data.as_ref()
+            && let geo = data.join("derived").join("geo")
+            && let seen = files_seen(&geo)
+            && *self.loaded.borrow() != seen
         {
-            let srcs = open_sources(&data.join("derived").join("geo"));
+            self.loaded.replace(seen);
+            self.tiles.borrow_mut().clear();
+            self.order.borrow_mut().clear();
+            self.decoded.borrow_mut().clear();
+            let srcs = open_sources(&geo);
             let names: Vec<String> = srcs.iter().map(|s| s.name.clone()).collect();
             self.status.set_text(&if srcs.is_empty() {
                 "No map in this library yet: About → Library and downloads".to_owned()
