@@ -9,8 +9,9 @@ use std::{
 };
 
 use gtk::{gdk, glib, prelude::*};
+use omui::{icon_button, icons::name};
 
-use crate::{cards::icon_button, pdf, ui::App};
+use crate::{pdf, ui::App};
 
 pub struct Reader {
     pub root: gtk::Widget,
@@ -38,7 +39,7 @@ impl Reader {
         meta.set_xalign(0.0);
         meta.set_hexpand(true);
         meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        let prev = icon_button("go-previous-symbolic", "Previous page (Left, Page Up)");
+        let prev = icon_button(name::BACK, "Previous page (Left, Page Up)");
         let entry = gtk::Entry::new();
         entry.add_css_class("page-entry");
         entry.set_width_chars(4);
@@ -46,10 +47,10 @@ impl Reader {
         gtk::prelude::EditableExt::set_alignment(&entry, 1.0);
         let total = gtk::Label::new(None);
         total.add_css_class("meta");
-        let next = icon_button("go-next-symbolic", "Next page (Right, Page Down)");
-        let out = icon_button("zoom-out-symbolic", "Smaller (-)");
-        let fit = icon_button("zoom-fit-best-symbolic", "Fit the width (0)");
-        let inn = icon_button("zoom-in-symbolic", "Larger (+)");
+        let next = icon_button(name::FORWARD, "Next page (Right, Page Down)");
+        let out = icon_button(name::ZOOM_OUT, "Smaller (-)");
+        let fit = icon_button(name::FIT, "Fit the width (0)");
+        let inn = icon_button(name::ZOOM_IN, "Larger (+)");
         let ask = gtk::Button::with_label("Ask about this page");
         ask.add_css_class("chip");
         bar.append(&meta);
@@ -66,7 +67,7 @@ impl Reader {
         picture.set_margin_top(18);
         picture.set_margin_bottom(18);
         let note = gtk::Label::new(None);
-        note.add_css_class("empty-state");
+        note.add_css_class("status-line");
         note.set_wrap(true);
         note.set_visible(false);
         let canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);

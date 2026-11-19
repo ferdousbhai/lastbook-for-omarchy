@@ -20,12 +20,11 @@ mod pdf;
 mod reader;
 mod search;
 mod setup;
-mod theme;
 mod videos;
 mod web;
 mod ui;
 
-use gtk::{gdk, gio, glib, prelude::*};
+use gtk::{gio, glib, prelude::*};
 
 pub const APP_ID: &str = "io.github.ferdousbhai.Lastbook";
 
@@ -53,43 +52,36 @@ fn main() -> glib::ExitCode {
         }
     };
     cli::refresh_skill();
-    glib::set_prgname(Some(APP_ID));
-    glib::set_application_name("Lastbook");
-    // NON_UNIQUE: the library's own lock (the engine) decides whether a second window may start.
-    let app = gtk::Application::builder().application_id(APP_ID).flags(gio::ApplicationFlags::NON_UNIQUE).build();
-    app.connect_activate(move |app| {
-        let Some(display) = gdk::Display::default() else { return };
-        let theme = theme::Theme::install(&display);
+    let app = omui::application(APP_ID, APP_ID, "Lastbook", include_str!("style.css"), move |app| {
+        // Installed when the application started; missing only without a display.
+        let Some(theme) = omui::Theme::get() else { return };
         gtk::Window::set_default_icon_name(APP_ID);
         match engine::Engine::start(data.as_deref()) {
             Ok(engine) if engine.ready.setup => {
                 // No library yet: the window is setup, and nothing else.
                 setup::restart_on_notice(app, &engine);
                 let w = gtk::ApplicationWindow::builder().application(app).title("Set up Lastbook").default_width(900).default_height(760).build();
-                let header = gtk::HeaderBar::new();
-                header.set_show_title_buttons(false);
                 let t = gtk::Label::new(Some("Set up Lastbook"));
-                t.add_css_class("header-title");
-                header.set_title_widget(Some(&t));
-                w.set_titlebar(Some(&header));
+                t.add_css_class("title");
+                w.set_titlebar(Some(&omui::header(Some(t.upcast_ref()))));
                 let page = setup::SetupPage::build(engine);
                 page.set_window(&w);
                 w.set_child(Some(&page.root));
                 page.refresh();
                 w.present();
-                unsafe { app.set_data("lastbook-setup", (page, theme)) };
+                unsafe { app.set_data("lastbook-setup", page) };
             }
             Ok(engine) => {
                 setup::restart_on_notice(app, &engine);
                 let ui = ui::App::build(app, engine, theme);
                 ui.window.present();
-                // The window (and the theme it holds) lives as long as the application does.
+                // The window lives as long as the application does.
                 unsafe { app.set_data("lastbook-ui", ui) };
             }
             Err(e) => {
                 let w = gtk::ApplicationWindow::builder().application(app).title("Lastbook").default_width(560).default_height(260).build();
                 let l = gtk::Label::new(Some(&format!("Lastbook could not open its library.\n\n{e}")));
-                l.add_css_class("empty-state");
+                l.add_css_class("status-line");
                 l.set_wrap(true);
                 l.set_margin_start(24);
                 l.set_margin_end(24);
@@ -98,5 +90,7 @@ fn main() -> glib::ExitCode {
             }
         }
     });
+    // NON_UNIQUE: the library's own lock (the engine) decides whether a second window may start.
+    app.set_flags(gio::ApplicationFlags::NON_UNIQUE);
     app.run_with_args::<&str>(&[])
 }

@@ -152,7 +152,7 @@ pub fn blocks(md: &str, cited: &dyn Fn(&str) -> bool) -> Vec<Block> {
 
 /// The answer as widgets in `into` (emptied first). `on_link` gets "cite:S3" when a citation is clicked.
 pub fn render(into: &gtk::Box, md: &str, cited: &dyn Fn(&str) -> bool, on_link: impl Fn(&str) + Clone + 'static) {
-    crate::cards::clear(into);
+    omui::clear(into);
     for b in blocks(md, cited) {
         let (markup, class, indent, marker) = match b {
             Block::Para(m) => (m, "md-p", 0, None),

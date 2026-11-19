@@ -10,10 +10,11 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
+use omui::clear;
 use serde_json::Value;
 
 use crate::{
-    cards::{self, activate, card, clear, mark_markup, plain_markup, route_of, section, source_meta},
+    cards::{self, activate, card, mark_markup, plain_markup, route_of, section, source_meta},
     engine::query,
     pdf,
     ui::{App, Route},
@@ -59,7 +60,6 @@ impl SearchPage {
         status.add_css_class("meta");
         status.set_xalign(0.0);
         let results = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        results.add_css_class("results");
         column.append(&title);
         column.append(&entry);
         column.append(&chips_box);

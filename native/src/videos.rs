@@ -11,10 +11,11 @@ use std::{
 };
 
 use gtk::{gdk, glib, prelude::*};
+use omui::clear;
 use serde_json::Value;
 
 use crate::{
-    cards::{self, activate, clear, clock, section},
+    cards::{self, activate, clock, section},
     engine::query,
     ui::{App, Route},
 };
@@ -78,7 +79,7 @@ impl Videos {
         video.set_hexpand(true);
         video.set_vexpand(true);
         video.add_css_class("player");
-        let title = cards::label("", "section-title");
+        let title = omui::label("", "section-title");
         let meta = gtk::Label::new(None);
         meta.add_css_class("meta");
         meta.set_xalign(0.0);
@@ -299,10 +300,10 @@ impl Videos {
             stream.connect_error_notify(move |s| {
                 if let Some(e) = s.error() {
                     note.set_text(&format!("{base} · can't play here: {} (an AV1 video needs gst-plugin-dav1d)", e.message()));
-                    note.add_css_class("danger");
+                    note.add_css_class("error");
                 }
             });
-            me.meta.remove_css_class("danger");
+            me.meta.remove_css_class("error");
             me.video.set_media_stream(Some(&stream));
             if let Ok(tx) = engine.get(&format!("/api/transcript/{}", urlencoding::encode(&id))).await {
                 for c in tx["cues"].as_array().into_iter().flatten() {
@@ -322,7 +323,7 @@ impl Videos {
                 }
                 if tx["cues"].as_array().is_none_or(|c| c.is_empty()) {
                     let l = gtk::Label::new(Some("This video has no transcript."));
-                    l.add_css_class("dim");
+                    l.add_css_class("dim-label");
                     me.cues.append(&l);
                 }
             }

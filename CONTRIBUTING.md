@@ -60,7 +60,9 @@ language.
 ## Pull requests
 
 - Keep each change small and about one thing, and say what you checked and how.
-- Screenshots help for any change you can see, in light and dark mode.
+- Screenshots help for any change you can see, in light and dark mode. `native/dev/preview.sh` takes one of the window
+  over a small made-up library, in a nested Hyprland with its own home folder, so nothing of your desktop or your
+  library is in the picture; its header lists the screens and themes it takes.
 - Be ready to explain anything that touches setup, the bridge, the scans or the downloader. These keep people's libraries
   safe and their computers private.
 

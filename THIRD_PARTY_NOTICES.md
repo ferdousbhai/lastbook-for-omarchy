@@ -22,10 +22,54 @@ Versions are the pins in `packaging/arch/PKGBUILD` (the two wheels), `native/Car
 | Libraries built into PDFium: abseil, agg 2.3, fast_float, FreeType, ICU, Little CMS, libjpeg-turbo, OpenJPEG, libpng, LLVM libc, simdutf, zlib | as built | Each under its own licence (Apache-2.0, BSD-style, FreeType/FTL, Unicode, MIT, IJG, zlib and others) | see each file | Checked: the full texts are in the wheel's `pypdfium2-5.14.0.dist-info/licenses/data/<platform>/BUILD_LICENSES/` |
 | llama.cpp and ggml, in `lastbook-llm` (optional local AI runner) | tag b12032 (dde879bc) | MIT (Copyright the ggml authors) | https://github.com/ggml-org/llama.cpp | Checked: `LICENSE`; it ships beside the runner as `LICENSE-llama.cpp.txt` |
 | nlohmann/json, used by llama.cpp's `common/` | as vendored in b12032 | MIT | https://github.com/nlohmann/json | Checked: `licenses/LICENSE-jsonhpp` |
-| Rust crates linked into the window (`/usr/bin/lastbook`): gtk4-rs and gtk-rs-core (gtk4, glib, gio, cairo-rs, pango, pangocairo), webkit6, poppler-rs, rusqlite, serde, serde_json, toml, pulldown-cmark, flate2, base64, async-channel, urlencoding, and what they depend on | as locked in `native/Cargo.lock` (111 packages) | MIT, or MIT OR Apache-2.0, for all but four: two under Zlib, one under Apache-2.0 WITH LLVM-exception, one under (MIT OR Apache-2.0) AND Unicode-3.0 | https://crates.io | Checked: each crate's package metadata (`cargo metadata`), not its licence file |
+| Rust crates linked into the window (`/usr/bin/lastbook`): gtk4-rs and gtk-rs-core (gtk4, glib, gio, cairo-rs, pango, pangocairo), webkit6, poppler-rs, rusqlite, serde, serde_json, pulldown-cmark, flate2, base64, async-channel, urlencoding, and what they depend on | as locked in `native/Cargo.lock` (113 packages, omui among them: see below) | MIT, or MIT OR Apache-2.0, for all but four: two under Zlib, one under Apache-2.0 WITH LLVM-exception, one under (MIT OR Apache-2.0) AND Unicode-3.0 | https://crates.io | Checked: each crate's package metadata (`cargo metadata`), not its licence file |
 
-The window's theme logic and CSS are adapted from Strata (https://github.com/lgse/strata, MIT), as `native/src/theme.rs`
-says.
+The window's look and shared widgets come from omui (https://github.com/ferdousbhai/omui, MIT), which is linked into
+`/usr/bin/lastbook` and brings two more notices with it:
+
+- **Strata** (https://github.com/lgse/strata), MIT, Copyright (c) 2026 LGSE Ltd. omui's theme logic and the conventions
+  of its stylesheet are adapted from Strata's source; omui's own `THIRD_PARTY_NOTICES.md` lists the parts.
+- **Lucide** 1.35.0 (https://github.com/lucide-icons/lucide), ISC, Copyright (c) 2026 Lucide Icons and Contributors; the
+  icons Lucide derives from Feather are MIT, Copyright (c) 2013-present Cole Bemis. The window's icons are Lucide's,
+  each stroke outlined as a fill and the files renamed, inside the binary.
+
+The ISC License, for Lucide:
+
+```
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+```
+
+The MIT License, for Strata and for the Feather-derived icons:
+
+```
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 Build-only tools (CMake, Ninja, glslc/shaderc, Vulkan and SPIR-V headers, the compiler) are used to make the package, and
 none of their code is bundled except as their licences allow.

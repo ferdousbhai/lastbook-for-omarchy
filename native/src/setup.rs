@@ -13,12 +13,10 @@ use std::{
 };
 
 use gtk::{gio, glib, prelude::*};
+use omui::{clear, label};
 use serde_json::{Value, json};
 
-use crate::{
-    cards::{clear, label},
-    engine::Engine,
-};
+use crate::engine::Engine;
 
 pub struct SetupPage {
     pub root: gtk::Widget,
@@ -129,7 +127,7 @@ impl SetupPage {
                 head.push_str("  (recommended)");
             }
             text.append(&label(&head, "result-title"));
-            text.append(&label(p["summary"].as_str().unwrap_or_default(), "dim"));
+            text.append(&label(p["summary"].as_str().unwrap_or_default(), "dim-label"));
             if let Some(n) = need[&id].as_f64() {
                 text.append(&label(&format!("Needs {} free while it downloads and unpacks", gb(n)), "meta"));
             }
@@ -245,7 +243,7 @@ impl SetupPage {
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         actions.set_margin_top(12);
         let start = gtk::Button::with_label(if first { "Download and set up" } else { "Download" });
-        start.add_css_class("primary");
+        start.add_css_class("suggested-action");
         let me = Rc::downgrade(self);
         start.connect_clicked(move |_| {
             if let Some(me) = me.upgrade() {
@@ -429,10 +427,10 @@ impl SetupPage {
                         t.push_str(&format!(" It needs {} and {} is free.", gb(n), gb(f)));
                     }
                     me.status.set_text(&t);
-                    me.status.add_css_class("danger");
+                    me.status.add_css_class("error");
                 }
                 Ok(v) => {
-                    me.status.remove_css_class("danger");
+                    me.status.remove_css_class("error");
                     me.status.set_text("");
                     if v.get("items").is_some() {
                         me.draw_job(&v);
@@ -491,7 +489,7 @@ impl SetupPage {
             row.append(&bar);
             if let Some(e) = it["error"].as_str() {
                 let l = label(e, "meta");
-                l.add_css_class("danger");
+                l.add_css_class("error");
                 row.append(&l);
             }
             self.job_box.append(&row);
@@ -500,7 +498,7 @@ impl SetupPage {
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let add = |text: &str, path: &'static str, primary: bool| {
             let b = gtk::Button::with_label(text);
-            b.add_css_class(if primary { "primary" } else { "chip" });
+            b.add_css_class(if primary { "suggested-action" } else { "chip" });
             let me = Rc::downgrade(self);
             b.connect_clicked(move |_| {
                 if let Some(me) = me.upgrade() {
@@ -527,7 +525,7 @@ impl SetupPage {
         }
         if let Some(e) = job["error"].as_str() {
             let l = label(e, "meta");
-            l.add_css_class("danger");
+            l.add_css_class("error");
             self.job_box.append(&l);
         }
         self.job_box.append(&buttons);

@@ -8,11 +8,12 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
+use omui::{clear, label};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    cards::{self, activate, card, clear, column, encyclopedia_name, label, route_of, section},
+    cards::{self, activate, card, column, encyclopedia_name, route_of, section},
     engine::query,
     ui::{App, Route},
 };
@@ -20,7 +21,7 @@ use crate::{
 fn title(text: &str, sub: &str, into: &gtk::Box) {
     into.append(&label(text, "page-title"));
     if !sub.is_empty() {
-        into.append(&label(sub, "dim"));
+        into.append(&label(sub, "dim-label"));
     }
 }
 
@@ -189,7 +190,7 @@ impl Browse {
             let hits: Vec<Value> = r.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
             if hits.is_empty() {
                 let l = gtk::Label::new(Some("No articles found. Try another word for the same thing."));
-                l.add_css_class("empty-state");
+                l.add_css_class("status-line");
                 me.enc_results.append(&l);
                 return;
             }
@@ -210,7 +211,7 @@ impl Browse {
         let items = load_saved();
         if items.is_empty() {
             let l = gtk::Label::new(Some("Nothing saved yet. Star a page, video or guide to keep it here (Ctrl+D)."));
-            l.add_css_class("empty-state");
+            l.add_css_class("status-line");
             l.set_xalign(0.0);
             self.saved.append(&l);
         }
@@ -260,7 +261,7 @@ impl Browse {
             ));
             me.about.append(&card(
                 "Credits",
-                &glib::markup_escape_text("Based on Lastbook (lastbook.org), MIT. The look follows Strata (github.com/lgse/strata), MIT. Encyclopedias by Kiwix and their contributors. Map data © OpenStreetMap contributors (ODbL) where included. Each document keeps its own licence: see Sources and permissions in the library."),
+                &glib::markup_escape_text("Based on Lastbook (lastbook.org), MIT. The look follows Strata (github.com/lgse/strata), MIT; the icons are Lucide's, ISC. Encyclopedias by Kiwix and their contributors. Map data © OpenStreetMap contributors (ODbL) where included. Each document keeps its own licence: see Sources and permissions in the library."),
                 &format!("Lastbook for Omarchy {}", app_version(&me.app)),
                 None,
             ));

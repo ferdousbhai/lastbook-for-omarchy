@@ -13,11 +13,12 @@ use std::{
 };
 
 use gtk::{gdk, glib, prelude::*};
+use omui::{clear, icon_button, icons::name};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    cards::{activate, card, clear, icon_button, plain_markup, route_of, section, source_meta},
+    cards::{activate, card, plain_markup, route_of, section, source_meta},
     engine::{Piece, query},
     md,
     ui::{App, Route},
@@ -93,16 +94,16 @@ impl ChatPage {
     pub fn build(app: &Rc<App>) -> Rc<Self> {
         // The list of chats: a narrow column beside the conversation.
         let list = gtk::ListBox::new();
-        list.add_css_class("chat-list");
         list.set_selection_mode(gtk::SelectionMode::Single);
         let new = gtk::Button::with_label("New chat");
-        new.add_css_class("primary");
-        new.set_margin_start(8);
-        new.set_margin_end(8);
-        new.set_margin_top(8);
+        new.add_css_class("suggested-action");
+        // The pane's own padding is 5 px: 8 px from its edges, as the rows' text is.
+        new.set_margin_start(3);
+        new.set_margin_end(3);
+        new.set_margin_top(3);
         new.set_margin_bottom(6);
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        column.add_css_class("chat-column");
+        column.add_css_class("sidebar");
         column.set_size_request(200, -1);
         column.append(&new);
         column.append(&gtk::ScrolledWindow::builder().child(&list).vexpand(true).hscrollbar_policy(gtk::PolicyType::Never).build());
@@ -121,14 +122,13 @@ impl ChatPage {
         about_label.set_xalign(0.0);
         about_label.set_hexpand(true);
         about_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        let about_x = icon_button("window-close-symbolic", "Don't use this page as context");
-        about_bar.append(&gtk::Image::from_icon_name("x-office-document-symbolic"));
+        let about_x = icon_button(name::CLOSE, "Don't use this page as context");
+        about_bar.append(&omui::icon(name::DOCUMENT));
         about_bar.append(&about_label);
         about_bar.append(&about_x);
         about_bar.set_visible(false);
 
         let input = gtk::TextView::new();
-        input.add_css_class("composer");
         input.set_wrap_mode(gtk::WrapMode::WordChar);
         input.set_top_margin(8);
         input.set_bottom_margin(8);
@@ -138,7 +138,7 @@ impl ChatPage {
         let input_scroll = gtk::ScrolledWindow::builder().child(&input).hexpand(true).max_content_height(160).propagate_natural_height(true).build();
         input_scroll.add_css_class("composer-frame");
         let send = gtk::Button::with_label("Ask");
-        send.add_css_class("primary");
+        send.add_css_class("suggested-action");
         send.set_valign(gtk::Align::End);
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         row.append(&input_scroll);
@@ -398,7 +398,7 @@ impl ChatPage {
         md::render(&w.body, &m.content, &|k| m.cited.iter().any(|c| c == k), self.citation_opener(m.sources.clone()));
         if let Some(e) = &m.error {
             w.note.set_text(e);
-            w.note.add_css_class("danger");
+            w.note.add_css_class("error");
         }
         self.draw_sources(&w.sources, &m.sources, &m.cited);
     }

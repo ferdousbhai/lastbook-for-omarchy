@@ -13,9 +13,10 @@ use std::{
 };
 
 use gtk::{gio, glib, prelude::*};
+use omui::Theme;
 use webkit6::prelude::*;
 
-use crate::{engine::Engine, theme::Tokens, ui::App};
+use crate::{engine::Engine, ui::App};
 
 pub const ORIGIN: &str = "lastbook://app";
 
@@ -30,7 +31,7 @@ pub struct WebPage {
     view: webkit6::WebView,
     meta: gtk::Label,
     manager: webkit6::UserContentManager,
-    tokens: RefCell<Option<Tokens>>,
+    theme: Rc<Theme>,
     themed: RefCell<bool>,
 }
 
@@ -108,7 +109,14 @@ impl WebPage {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.append(&bar);
         root.append(&view);
-        let page = Rc::new(Self { root: root.upcast(), app: Rc::downgrade(app), view, meta, manager, tokens: RefCell::new(None), themed: RefCell::new(false) });
+        let page = Rc::new(Self { root: root.upcast(), app: Rc::downgrade(app), view, meta, manager, theme: app.theme.clone(), themed: RefCell::new(false) });
+        // The page on screen follows a theme switch.
+        let p = Rc::downgrade(&page);
+        page.theme.on_change(&page.view, move |_| {
+            if let Some(p) = p.upgrade() {
+                p.apply_style(*p.themed.borrow());
+            }
+        });
         let p = Rc::downgrade(&page);
         page.view.connect_title_notify(move |v| {
             if let Some(p) = p.upgrade()
@@ -121,17 +129,9 @@ impl WebPage {
         page
     }
 
-    /// Re-applies the article stylesheet with the theme's colours.
-    pub fn set_tokens(&self, t: &Tokens) {
-        self.tokens.replace(Some(t.clone()));
-        if *self.themed.borrow() {
-            self.apply_style(true);
-        }
-    }
-
     fn apply_style(&self, themed: bool) {
         self.manager.remove_all_style_sheets();
-        let Some(t) = self.tokens.borrow().clone() else { return };
+        let t = self.theme.tokens();
         let css = if themed {
             format!(
                 "html, body, .mw-page-container, .mw-body, #content, .mw-content-container {{ background: {bg} !important; color: {text} !important; }}\n\

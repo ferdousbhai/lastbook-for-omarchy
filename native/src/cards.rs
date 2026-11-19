@@ -54,15 +54,6 @@ pub fn column(spacing: i32) -> (gtk::ScrolledWindow, gtk::Box) {
     (s, b)
 }
 
-/// A left-aligned label that wraps.
-pub fn label(text: &str, class: &str) -> gtk::Label {
-    let l = gtk::Label::new(Some(text));
-    l.add_css_class(class);
-    l.set_xalign(0.0);
-    l.set_wrap(true);
-    l
-}
-
 /// A grid of equal cards, two to `max` a row.
 pub fn grid(max: u32, spacing: u32) -> gtk::FlowBox {
     let g = gtk::FlowBox::new();
@@ -73,14 +64,6 @@ pub fn grid(max: u32, spacing: u32) -> gtk::FlowBox {
     g.set_row_spacing(spacing);
     g.set_column_spacing(spacing);
     g
-}
-
-/// A borderless icon button with a tooltip, as in the header bar.
-pub fn icon_button(icon: &str, tip: &str) -> gtk::Button {
-    let b = gtk::Button::from_icon_name(icon);
-    b.add_css_class("header-action");
-    b.set_tooltip_text(Some(tip));
-    b
 }
 
 /// An encyclopedia's name, from its ZIM file's name.
@@ -119,24 +102,6 @@ pub fn section(text: &str) -> gtk::Label {
     l.set_xalign(0.0);
     l.set_margin_top(10);
     l
-}
-
-/// Empties a container through its own remove (a list box or flow box keeps bookkeeping a bare unparent would break).
-pub fn clear(b: &impl IsA<gtk::Widget>) {
-    let w = b.as_ref();
-    if let Some(l) = w.downcast_ref::<gtk::ListBox>() {
-        l.remove_all();
-    } else if let Some(f) = w.downcast_ref::<gtk::FlowBox>() {
-        f.remove_all();
-    } else if let Some(bx) = w.downcast_ref::<gtk::Box>() {
-        while let Some(c) = bx.first_child() {
-            bx.remove(&c);
-        }
-    } else {
-        while let Some(c) = w.first_child() {
-            c.unparent();
-        }
-    }
 }
 
 /// Plain text as Pango markup, shortened.

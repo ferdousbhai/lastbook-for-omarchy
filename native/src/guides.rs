@@ -9,10 +9,11 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
+use omui::{clear, label};
 use serde_json::Value;
 
 use crate::{
-    cards::{self, activate, card, clear, clock, column, label, route_of, section},
+    cards::{self, activate, card, clock, column, route_of, section},
     ui::{App, Route},
 };
 
@@ -102,7 +103,7 @@ impl Guides {
             }
         });
         self.page.append(&label(&title, "page-title"));
-        self.page.append(&label(t["intro"].as_str().unwrap_or_default(), "dim"));
+        self.page.append(&label(t["intro"].as_str().unwrap_or_default(), "dim-label"));
         self.page.append(&ask);
 
         if let Some(choices) = t["choices"].as_array().filter(|c| !c.is_empty()) {
@@ -132,8 +133,8 @@ impl Guides {
             b.add_css_class("limits");
             for l in limits {
                 let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-                let icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
-                icon.add_css_class("danger");
+                let icon = omui::icon(omui::icons::name::WARNING);
+                icon.add_css_class("error");
                 icon.set_valign(gtk::Align::Start);
                 let text = gtk::Label::new(l["text"].as_str());
                 text.set_wrap(true);
@@ -172,7 +173,7 @@ impl Guides {
                 l.set_xalign(0.0);
                 self.page.append(&l);
                 if let Some(goal) = step["goal"].as_str() {
-                    self.page.append(&label(goal, "dim"));
+                    self.page.append(&label(goal, "dim-label"));
                 }
                 for r in step["read"].as_array().into_iter().flatten() {
                     self.page.append(&self.item(r));

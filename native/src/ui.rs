@@ -9,9 +9,10 @@ use std::{
 };
 
 use gtk::{gdk, glib, prelude::*};
+use omui::{Theme, icon_button, icons::name};
 
 use crate::{
-    cards::{encyclopedia_name, icon_button},
+    cards::encyclopedia_name,
     chat::ChatPage,
     engine::Engine,
     guides::Guides,
@@ -19,7 +20,6 @@ use crate::{
     map::MapPage,
     reader::Reader,
     search::SearchPage,
-    theme::Theme,
     videos::Videos,
     web::WebPage,
 };
@@ -84,15 +84,15 @@ impl Route {
 
 /// The sidebar's screens: (id, label, icon).
 pub const SECTIONS: &[(&str, &str, &str)] = &[
-    ("guides", "Guides", "help-about-symbolic"),
-    ("search", "Search", "system-search-symbolic"),
-    ("chat", "Chat", "user-available-symbolic"),
-    ("videos", "Videos", "video-x-generic-symbolic"),
-    ("map", "Map", "mark-location-symbolic"),
-    ("library", "Library", "x-office-document-symbolic"),
-    ("encyclopedias", "Encyclopedias", "accessories-dictionary-symbolic"),
-    ("saved", "Saved", "starred-symbolic"),
-    ("about", "About", "dialog-information-symbolic"),
+    ("guides", "Guides", name::INFO),
+    ("search", "Search", name::SEARCH),
+    ("chat", "Chat", name::CHAT),
+    ("videos", "Videos", name::VIDEO),
+    ("map", "Map", name::LOCATION),
+    ("library", "Library", name::DOCUMENT),
+    ("encyclopedias", "Encyclopedias", name::BOOK),
+    ("saved", "Saved", name::STARRED),
+    ("about", "About", name::SETTINGS),
 ];
 
 pub struct App {
@@ -126,42 +126,32 @@ impl App {
     pub fn build(app: &gtk::Application, engine: Arc<Engine>, theme: Rc<Theme>) -> Rc<Self> {
         let window = gtk::ApplicationWindow::builder().application(app).title("Lastbook").default_width(1280).default_height(820).build();
 
-        let header = gtk::HeaderBar::new();
-        header.set_show_title_buttons(false);   // Hyprland tiles the window and Super+W closes it
-        let toggle = icon_button("sidebar-show-symbolic", "Show or hide the sidebar (Ctrl+B)");
+        let title = gtk::Label::new(Some("Guides"));
+        title.add_css_class("title");
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let header = omui::header(Some(title.upcast_ref()));
+        let toggle = icon_button(name::SIDEBAR, "Show or hide the sidebar (Ctrl+B)");
         toggle.add_css_class("sidebar-toggle");
-        let back = icon_button("go-previous-symbolic", "Back (Alt+Left)");
-        let forward = icon_button("go-next-symbolic", "Forward (Alt+Right)");
-        let star = icon_button("non-starred-symbolic", "Save this (Ctrl+D)");
+        let back = icon_button(name::BACK, "Back (Alt+Left)");
+        let forward = icon_button(name::FORWARD, "Forward (Alt+Right)");
+        let star = icon_button(name::STAR, "Save this (Ctrl+D)");
         header.pack_start(&toggle);
         header.pack_start(&back);
         header.pack_start(&forward);
         header.pack_end(&star);
-        let title = gtk::Label::new(Some("Guides"));
-        title.add_css_class("header-title");
-        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        header.set_title_widget(Some(&title));
         window.set_titlebar(Some(&header));
 
         let sidebar = gtk::ListBox::new();
-        sidebar.add_css_class("sidebar");
         sidebar.set_selection_mode(gtk::SelectionMode::Single);
         for (id, label, icon) in SECTIONS {
-            let row = gtk::ListBoxRow::new();
-            row.add_css_class("sidebar-row");
-            row.set_widget_name(id);
-            let b = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-            b.append(&gtk::Image::from_icon_name(icon));
-            b.append(&gtk::Label::new(Some(label)));
-            row.set_child(Some(&b));
-            sidebar.append(&row);
+            sidebar.append(&omui::sidebar_row(id, Some(icon), label, None));
         }
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         footer.add_css_class("sidebar-footer");
-        footer.append(&gtk::Image::from_icon_name("network-offline-symbolic"));
+        footer.append(&omui::icon(name::OFFLINE));
         footer.append(&gtk::Label::new(Some("Works offline")));
         let sidebar_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        sidebar_shell.add_css_class("sidebar-shell");
+        sidebar_shell.add_css_class("sidebar");
         sidebar_shell.set_size_request(200, -1);
         let scroll = gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).child(&sidebar).build();
         sidebar_shell.append(&scroll);
@@ -224,13 +214,6 @@ impl App {
         app.videos.replace(Some(videos));
         let web = WebPage::build(&app);
         app.stack.add_named(&web.root, Some("web"));
-        let w = Rc::downgrade(&web);
-        app.theme.on_change(move |t| {
-            if let Some(w) = w.upgrade() {
-                w.set_tokens(t);
-            }
-        });
-        web.set_tokens(&app.theme.tokens.borrow());
         app.web.replace(Some(web));
         let browse = Browse::build(&app);
         app.stack.add_named(&browse.library_root, Some("library"));
@@ -357,7 +340,7 @@ impl App {
         let key = self.current().and_then(|r| r.key());
         self.star.set_visible(key.is_some());
         let saved = key.is_some_and(|k| load_saved().iter().any(|s| s.key == k));
-        self.star.set_icon_name(if saved { "starred-symbolic" } else { "non-starred-symbolic" });
+        self.star.set_icon_name(if saved { name::STARRED } else { name::STAR });
         self.star.set_tooltip_text(Some(if saved { "Saved — click to remove (Ctrl+D)" } else { "Save this (Ctrl+D)" }));
     }
 

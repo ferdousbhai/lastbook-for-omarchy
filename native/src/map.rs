@@ -16,12 +16,12 @@ use std::{
 };
 
 use gtk::{gdk, glib, pango, prelude::*};
+use omui::{Theme, Tokens, blend};
 use serde_json::Value;
 
 use crate::{
     engine::query,
     mvt::{self, Feature, Geom, Layer},
-    theme::{Tokens, blend},
     ui::App,
 };
 
@@ -195,8 +195,8 @@ impl MapPage {
         results_pop.set_parent(&search);
         results_pop.set_autohide(true);
         results_pop.set_has_arrow(false);
-        let zoom_in = crate::cards::icon_button("zoom-in-symbolic", "Zoom in (+)");
-        let zoom_out = crate::cards::icon_button("zoom-out-symbolic", "Zoom out (-)");
+        let zoom_in = omui::icon_button(omui::icons::name::ZOOM_IN, "Zoom in (+)");
+        let zoom_out = omui::icon_button(omui::icons::name::ZOOM_OUT, "Zoom out (-)");
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         top.add_css_class("map-bar");
         top.set_halign(gtk::Align::Start);
@@ -222,7 +222,7 @@ impl MapPage {
             app: Rc::downgrade(app),
             area,
             sources: RefCell::new(Vec::new()),
-            style: RefCell::new(Style::from(&app.theme.tokens.borrow())),
+            style: RefCell::new(Style::from(&app.theme.tokens())),
             cx: Cell::new(0.5),
             cy: Cell::new(0.42),
             zoom: Cell::new(2.0),
@@ -245,7 +245,7 @@ impl MapPage {
             }
         });
         let me = Rc::downgrade(&page);
-        app.theme.on_change(move |t| {
+        app.theme.on_change(&page.area, move |t| {
             if let Some(me) = me.upgrade() {
                 me.style.replace(Style::from(t));
                 me.tiles.borrow_mut().clear();
@@ -412,7 +412,7 @@ impl MapPage {
             let r = engine.get(&query("/api/places", &[("q", &q)])).await;
             let Some(me) = me.upgrade() else { return };
             let list: Vec<Value> = r.ok().and_then(|v| v.as_array().cloned().or_else(|| v["results"].as_array().cloned())).unwrap_or_default();
-            crate::cards::clear(&me.results);
+            omui::clear(&me.results);
             for p in &list {
                 let row = gtk::Box::new(gtk::Orientation::Vertical, 2);
                 row.set_margin_top(4);
@@ -429,7 +429,7 @@ impl MapPage {
             }
             if list.is_empty() {
                 let l = gtk::Label::new(Some("No place by that name."));
-                l.add_css_class("dim");
+                l.add_css_class("dim-label");
                 me.results.append(&l);
             }
             me.found.replace(list);
@@ -545,7 +545,7 @@ impl MapPage {
         let mut taken: Vec<(f64, f64, f64, f64)> = Vec::new();
         let layout = pangocairo::functions::create_layout(cr);
         // The interface font, at the size labels need (the default would be a serif).
-        let font = format!("JetBrains Mono {}px", (11.0 * crate::theme::Theme::text_scale()).round());
+        let font = format!("JetBrains Mono {}px", (11.0 * Theme::text_scale()).round());
         layout.set_font_description(Some(&pango::FontDescription::from_string(&font)));
         for pass in 0..2 {
             for (key, sx, sy) in &visible {
