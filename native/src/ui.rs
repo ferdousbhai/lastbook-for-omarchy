@@ -177,6 +177,9 @@ impl App {
         stack.set_hexpand(true);
         stack.set_transition_type(gtk::StackTransitionType::Crossfade);
         stack.set_transition_duration(120);
+        // Each screen sizes the window by itself: a homogeneous stack would hold every screen to the widest one's width.
+        stack.set_hhomogeneous(false);
+        stack.set_vhomogeneous(false);
         let body = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         body.append(&sidebar_shell);
         body.append(&stack);
@@ -496,6 +499,13 @@ impl App {
         self.stack.set_visible_child_name(page);
         if std::env::var_os("LASTBOOK_DEBUG").is_some() {
             eprintln!("route {route:?} -> page {page} visible {:?}", self.stack.visible_child_name());
+            // The narrowest the window can be on this screen (Hyprland tiles a half screen at about 840 px).
+            let a = self.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(1500), move || {
+                if let Some(child) = a.window.child() {
+                    eprintln!("min width {:?}: {}", a.stack.visible_child_name(), child.measure(gtk::Orientation::Horizontal, -1).0);
+                }
+            });
         }
         if !title.is_empty() {
             self.set_title(&title);

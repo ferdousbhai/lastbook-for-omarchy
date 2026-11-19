@@ -98,7 +98,7 @@ impl ChatPage {
         new.set_margin_bottom(6);
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         column.add_css_class("chat-column");
-        column.set_size_request(220, -1);
+        column.set_size_request(200, -1);
         column.append(&new);
         column.append(&gtk::ScrolledWindow::builder().child(&list).vexpand(true).hscrollbar_policy(gtk::PolicyType::Never).build());
 
@@ -143,6 +143,7 @@ impl ChatPage {
         let status = gtk::Label::new(None);
         status.add_css_class("meta");
         status.set_xalign(0.0);
+        status.set_wrap(true);
         let composer = gtk::Box::new(gtk::Orientation::Vertical, 6);
         composer.add_css_class("composer-bar");
         composer.append(&about_bar);
@@ -365,7 +366,7 @@ impl ChatPage {
             hello.append(&t);
             hello.append(&s);
             for q in ["How do I make water safe to drink?", "Someone is bleeding badly from a leg wound", "How do I treat a second-degree burn?", "What should I do during an earthquake?"] {
-                let b = gtk::Button::with_label(q);
+                let b = crate::cards::wrap_button(q);
                 b.add_css_class("chip");
                 b.set_halign(gtk::Align::Start);
                 let me = Rc::downgrade(self);

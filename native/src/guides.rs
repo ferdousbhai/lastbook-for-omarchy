@@ -182,6 +182,8 @@ impl Guides {
                     let s = gtk::Label::new(Some(&format!("{}{}", src.get("publisher").and_then(Value::as_str).unwrap_or_default(), l["page"].as_i64().map(|p| format!(", p. {p}")).unwrap_or_default())));
                     s.add_css_class("meta");
                     s.set_valign(gtk::Align::Start);
+                    s.set_wrap(true);
+                    s.set_max_width_chars(28);
                     row.append(&s);
                     if let Some(r) = route_of(&merge(l)) {
                         activate(&row, self.app.clone(), r);
@@ -225,7 +227,7 @@ impl Guides {
             for r in related.iter().filter_map(Value::as_str) {
                 let name = self.topics.borrow().iter().find(|t| t["id"] == r).and_then(|t| t["title"].as_str().map(str::to_owned));
                 let Some(name) = name else { continue };
-                let b = gtk::Button::with_label(&name);
+                let b = crate::cards::wrap_button(&name);
                 b.add_css_class("chip");
                 let (app, id) = (self.app.clone(), r.to_owned());
                 b.connect_clicked(move |_| {

@@ -43,6 +43,25 @@ pub fn card(title: &str, snippet_markup: &str, meta: &str, trust: Option<&str>) 
     card
 }
 
+/// A button whose label wraps: a long one must not set the window's minimum width (a half-screen tile is ~840 px).
+pub fn wrap_button(text: &str) -> gtk::Button {
+    let l = gtk::Label::new(Some(text));
+    l.set_wrap(true);
+    l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    l.set_xalign(0.0);
+    let b = gtk::Button::new();
+    b.set_child(Some(&l));
+    b
+}
+
+/// Lets a check button's label wrap, for the same reason.
+pub fn wrap_check(b: &gtk::CheckButton) {
+    if let Some(l) = b.last_child().and_downcast::<gtk::Label>() {
+        l.set_wrap(true);
+        l.set_xalign(0.0);
+    }
+}
+
 pub fn section(text: &str) -> gtk::Label {
     let l = gtk::Label::new(Some(text));
     l.add_css_class("section-title");

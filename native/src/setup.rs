@@ -169,6 +169,7 @@ impl SetupPage {
                 none.set_group(Some(g));
             }
             none.add_css_class("choice-row");
+            crate::cards::wrap_check(&none);
             let me = Rc::downgrade(self);
             none.connect_toggled(move |b| {
                 if b.is_active()
@@ -194,6 +195,7 @@ impl SetupPage {
             gb(model["size"].as_f64().unwrap_or(0.0))
         ));
         sw.add_css_class("choice-row");
+        crate::cards::wrap_check(&sw);
         sw.set_active(self.ai.get());
         let present = self.ai_present.get() || !st["current"]["model"].is_null();
         if present {
@@ -244,6 +246,7 @@ impl SetupPage {
             self.body.append(&crate::cards::section("Where to keep it"));
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             let path = label(self.folder.borrow().as_deref().unwrap_or_default(), "meta");
+            path.set_wrap_mode(gtk::pango::WrapMode::Char);
             path.set_hexpand(true);
             let choose = gtk::Button::with_label("Choose folder…");
             choose.add_css_class("chip");
@@ -257,7 +260,7 @@ impl SetupPage {
             row.append(&path);
             row.append(&choose);
             self.body.append(&row);
-            let use_existing = gtk::Button::with_label("Use a library or pack already on this computer…");
+            let use_existing = crate::cards::wrap_button("Use a library or pack already on this computer…");
             use_existing.add_css_class("chip");
             use_existing.set_halign(gtk::Align::Start);
             let me = Rc::downgrade(self);
@@ -268,7 +271,7 @@ impl SetupPage {
             });
             self.body.append(&use_existing);
             for f in st["found"].as_array().into_iter().flatten() {
-                let b = gtk::Button::with_label(&format!("Use {} found at {}", f["kind"].as_str().unwrap_or("library"), f["path"].as_str().unwrap_or_default()));
+                let b = crate::cards::wrap_button(&format!("Use {} found at {}", f["kind"].as_str().unwrap_or("library"), f["path"].as_str().unwrap_or_default()));
                 b.add_css_class("chip");
                 b.set_halign(gtk::Align::Start);
                 let (me, p) = (Rc::downgrade(self), f["path"].as_str().unwrap_or_default().to_owned());

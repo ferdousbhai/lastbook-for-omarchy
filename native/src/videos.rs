@@ -227,6 +227,7 @@ impl Videos {
             let meta = gtk::Label::new(it["publisher"].as_str());
             meta.add_css_class("meta");
             meta.set_xalign(0.0);
+            meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
             card.append(&overlay);
             card.append(&title);
             card.append(&meta);
