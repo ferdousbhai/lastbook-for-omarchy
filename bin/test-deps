@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Unpack the two Python packages Arch does not carry (libzim, pypdfium2) for the tests, from the same pinned wheels
+# the package ships, checked against the PKGBUILD's hashes. Prints the folder to put on PYTHONPATH.
+# Usage: bin/test-deps [folder]   (default: ~/.cache/lastbook-for-omarchy/test-deps/<arch>)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+source packaging/arch/PKGBUILD
+architecture=$(uname -m)
+[[ " ${arch[*]} " == *" $architecture "* ]] || { echo "Unsupported architecture: $architecture" >&2; exit 1; }
+declare -n wheels="source_$architecture" sums="sha256sums_$architecture"
+deps=$(realpath -m "${1:-${XDG_CACHE_HOME:-$HOME/.cache}/lastbook-for-omarchy/test-deps/$architecture}")
+stamp=$(printf '%s\n' "${sums[@]}" | sha256sum | cut -d' ' -f1)
+if [[ $(cat "$deps/.stamp" 2>/dev/null) != "$stamp" ]]; then
+  rm -rf "$deps"
+  mkdir -p "$deps/wheels"
+  for i in "${!wheels[@]}"; do
+    wheel=$deps/wheels/${wheels[$i]##*/}
+    curl -fsSL --retry 3 "${wheels[$i]}" -o "$wheel"
+    echo "${sums[$i]}  $wheel" | sha256sum -c --quiet
+    python3 -I -m zipfile -e "$wheel" "$deps/lib"
+  done
+  rm -rf "$deps/wheels"
+  echo "$stamp" >"$deps/.stamp"
+fi
+echo "$deps/lib"

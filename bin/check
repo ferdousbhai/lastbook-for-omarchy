@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Every check a release must pass, run on this machine: one version everywhere, the tests (bin/test), `bash -n` on the
+# scripts, then install.sh's shared add_signed_repo hash and install.sh itself against stubbed pacman
+# (tests/install_test.sh).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+version=$(cat VERSION)
+[[ $(sed -n '0,/^version = /s/^version = "\(.*\)"/\1/p' native/Cargo.toml) == "$version" ]] \
+  || { echo "native/Cargo.toml's version is not $version (VERSION)" >&2; exit 1; }
+
+bin/test
+bash -n install.sh packaging/arch/PKGBUILD bin/arch-run bin/build-packages bin/check bin/collect-packages bin/release \
+  bin/test bin/test-deps bin/verify-release tests/install_test.sh
+tests/install_test.sh
+
+printf '\nAll checks passed.\n'

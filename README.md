@@ -13,8 +13,15 @@ download packs are Lastbook's own, from `downloads.lastbook.org`.
 
 ## Install
 
-Build and install the package from this checkout (both architectures; it compiles the window and the local AI's runner, which
-takes a while; it needs Rust):
+```bash
+curl -fsSL https://ferdousbhai.com/lastbook/install.sh | sudo bash
+```
+
+It adds Lastbook's signed package repository (both architectures; with `vulkan-asahi` on Apple silicon) and installs
+`lastbook-for-omarchy`; re-running is safe.
+
+Or build and install the package from this checkout (it compiles the window and the local AI's runner, which takes a while;
+it needs Rust):
 
 ```bash
 cd packaging/arch && makepkg -si
@@ -138,7 +145,9 @@ hits@8, MRR and timing on `tools/eval/questions.json` against a real data folder
 `packaging/arch/PKGBUILD` builds the package from the committed source (`git archive HEAD`): the window
 (`cargo build --release --locked --manifest-path native/Cargo.toml`, installed as `/usr/bin/lastbook`), the local AI's runner
 (`packaging/llm/build_llm_linux.sh`, llama.cpp at a pinned tag with Vulkan and every CPU variant), and the two Python packages Arch does not carry (libzim and pypdfium2, pinned wheels). Everything else comes from Arch. Check a
-built package with `python3 packaging/arch/scan_package.py <package>`.
+built package with `python3 packaging/arch/scan_package.py <package>`. Releases: `bin/release <version>` (with
+`packaging/release-notes.md` written first) tags, builds both architectures natively in CI (`.github/workflows/packages.yml`,
+`bin/build-packages`), signs the packages and repository databases locally and publishes them with `install.sh`.
 
 ## Packs, state maps and the local AI
 
@@ -180,7 +189,8 @@ python3 -B -m unittest app.tests.test_bridge app.tests.test_setup app.tests.test
 
 `test_bridge` builds its own made-up library; `test_semantic` runs a stand-in Recall; the others run without a library. `packaging/test_pack_tools.py SAMPLE
 WORK` checks the pack tools against a pack sample (`build_packs.py build <pack> --sample N`). The window's own tests run with
-`cargo test --manifest-path native/Cargo.toml`. The `linux_*` helpers in `app/tests/` drive a running window through AT-SPI.
+`cargo test --manifest-path native/Cargo.toml`. `bin/test` runs both (libzim and pypdfium2 come from the PKGBUILD's pinned
+wheels, `bin/test-deps`); `bin/check` adds the installer test. The `linux_*` helpers in `app/tests/` drive a running window through AT-SPI.
 
 ## Contributing and licence
 

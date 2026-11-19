@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Build committed source with native Arch tools, then scan the package; never install the built package.
+# Usage: bin/build-packages <x86_64|aarch64> [output-directory]
+set -euo pipefail
+cd "$(dirname "$0")/.."
+source packaging/arch/PKGBUILD
+architecture=${1:?Usage: bin/build-packages <x86_64|aarch64> [output-directory]}
+[[ " ${arch[*]} " == *" $architecture "* ]] || { echo "Unsupported architecture: $architecture" >&2; exit 1; }
+[[ $(uname -m) == "$architecture" ]] || { echo 'Build on a host of the requested architecture.' >&2; exit 1; }
+if (( EUID == 0 )); then
+  [[ ${LASTBOOK_ARCH_ROOT:-} == 1 ]] || { echo 'Run as a regular Arch user.' >&2; exit 1; }
+  pacman -S --noconfirm --needed base-devel "${makedepends[@]}" "${depends[@]}"
+  pacman -Scc --noconfirm
+  exec runuser -u builder -- env HOME="$(getent passwd builder | cut -d: -f6)" "$PWD/bin/build-packages" "$@"
+fi
+for tool in makepkg cargo rustc git python3; do
+  command -v "$tool" >/dev/null || { echo "Native Arch build requires $tool on PATH." >&2; exit 1; }
+done
+output=$(realpath -m "${2:-dist/$architecture}")
+mkdir -p "$output"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+source_commit=$(git -c safe.directory="$PWD" rev-parse HEAD)
+# The PKGBUILD packs `git archive HEAD` of the checkout it sits in: a fresh clone holds exactly the commit.
+git -c safe.directory="$PWD/.git" clone --quiet --no-hardlinks "$PWD" "$work/source"
+[[ $(git -C "$work/source" rev-parse HEAD) == "$source_commit" ]]
+export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-$(nproc)}
+# makepkg's llama.cpp clone (over 1 GB) outlives the temporary clone: in the checkout's dist/ (ignored), or beside the
+# output when the checkout is read-only (CI's mount).
+sources=$(realpath -m "${SRCDEST:-$PWD/dist/sources}")
+if ! mkdir -p "$sources" 2>/dev/null || [[ ! -w $sources ]]; then
+  sources=$output/.sources
+  mkdir -p "$sources"
+fi
+(cd "$work/source/packaging/arch" && SRCDEST="$sources" PKGDEST="$output" PKGEXT=.pkg.tar.zst makepkg --force --nodeps)
+package=$output/$pkgname-$pkgver-$pkgrel-$architecture.pkg.tar.zst
+[[ -f $package ]] || { echo "makepkg did not write $package" >&2; exit 1; }
+python3 -I -B "$work/source/packaging/arch/scan_package.py" "$package"
+printf '%s\n' "$source_commit" > "$output/source-commit.txt"

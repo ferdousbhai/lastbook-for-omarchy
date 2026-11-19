@@ -1,0 +1,38 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    # Arch itself: the package's Python (3.14, which the pinned wheels are built for), GTK 4 and WebKitGTK 6.
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    timeout-minutes: 60
+    steps:
+      - name: Install Arch packages
+        run: |
+          pacman -Syu --noconfirm --needed git curl base-devel rust pkgconf gtk4 webkitgtk-6.0 poppler-glib sqlite \
+            gstreamer gst-plugins-base python python-numpy python-beautifulsoup4 nodejs lsof
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            native/target
+          key: cargo-${{ hashFiles('native/Cargo.lock') }}
+          restore-keys: |
+            cargo-
+      # The window's tests, then the engine's (README, Tests), with libzim and pypdfium2 from the PKGBUILD's pinned wheels.
+      - run: bin/test
+  installer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          bash -n install.sh packaging/arch/PKGBUILD bin/arch-run bin/build-packages bin/check bin/collect-packages \
+            bin/release bin/test bin/test-deps bin/verify-release tests/install_test.sh
+          tests/install_test.sh

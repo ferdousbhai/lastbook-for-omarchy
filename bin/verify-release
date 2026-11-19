@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Check the published installer bytes and install the release in a fresh native Arch root.
+set -euo pipefail
+[[ $# == 1 && $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Usage: bin/verify-release <vMAJOR.MINOR.PATCH>' >&2; exit 1; }
+tag=$1
+if [[ ${LASTBOOK_ARCH_ROOT:-} != 1 ]]; then
+  exec sudo "$(dirname "$0")/arch-run" bin/verify-release "$tag"
+fi
+cd "$(dirname "$0")/.."
+source packaging/arch/PKGBUILD
+download=$url/releases/download/$tag
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+curl -fsSL "$download/install.sh" -o "$work/install.sh"
+cmp install.sh "$work/install.sh"
+LASTBOOK_RELEASES="$download" bash "$work/install.sh"
+[[ $(pacman -Q "$pkgname") == "$pkgname ${tag#v}-$pkgrel" ]]
+[[ $(lastbook --version) == "lastbook ${tag#v}" ]]
+pacman -Qkk "$pkgname" >/dev/null
+# The engine imports with the packaged libzim and pypdfium2 (no network, no library).
+(cd /usr/lib/"$pkgname" && python3 -I -B -c 'import sys; sys.path[:0] = [".", "lib"]; import libzim, pypdfium2, server')
+echo "Verified: $pkgname ${tag#v} on $(uname -m)"
