@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Pieces every screen shares: the result card, section headings, and where a source opens.
 
-use gtk::{glib, prelude::*};
+use gtk::{gio, glib, prelude::*};
 use serde_json::Value;
 
 use crate::ui::Route;
@@ -56,6 +56,10 @@ pub fn card(title: &str, snippet_markup: &str, meta: &str, trust: Option<&str>) 
         text.append(&l);
     }
     card.append(&text);
+    // A card takes the keyboard (`activate`), so a screen reader names it: what it is and where from, as two cards
+    // can show pages of one book.
+    let name = if meta.is_empty() { title.to_owned() } else { format!("{title}, {meta}") };
+    card.update_property(&[gtk::accessible::Property::Label(&name)]);
     card
 }
 
@@ -79,6 +83,12 @@ pub fn grid(max: u32, spacing: u32) -> gtk::FlowBox {
     g.set_max_children_per_line(max);
     g.set_row_spacing(spacing);
     g.set_column_spacing(spacing);
+    // A cell is activated whole, by a screen reader or by Enter on the cell itself: its card opens what it shows.
+    g.connect_child_activated(|_, cell| {
+        if let Some(card) = cell.child() {
+            let _ = card.activate_action("card.open", None);
+        }
+    });
     g
 }
 
@@ -194,24 +204,32 @@ pub fn source_meta(s: &Value) -> String {
     meta.join(" · ")
 }
 
-/// Makes `w` open `target` on click, Enter or Space.
+/// Makes `w` open `target` on click, Enter or Space, and as its action `card.open` (what a grid's cell activates).
 pub fn activate(w: &impl IsA<gtk::Widget>, app: std::rc::Weak<crate::ui::App>, target: Route) {
     let w = w.as_ref();
     w.set_cursor_from_name(Some("pointer"));
     w.set_focusable(true);
+    let open = gio::SimpleAction::new("open", None);
+    open.connect_activate(move |_, _| {
+        if let Some(app) = app.upgrade() {
+            app.navigate(target.clone());
+        }
+    });
+    let group = gio::SimpleActionGroup::new();
+    group.add_action(&open);
+    w.insert_action_group("card", Some(&group));
     let click = gtk::GestureClick::new();
-    let (a, t) = (app.clone(), target.clone());
-    click.connect_released(move |_, _, _, _| {
-        if let Some(app) = a.upgrade() {
-            app.navigate(t.clone());
+    click.connect_released(|g, _, _, _| {
+        if let Some(w) = g.widget() {
+            let _ = w.activate_action("card.open", None);
         }
     });
     w.add_controller(click);
     let keys = gtk::EventControllerKey::new();
-    keys.connect_key_pressed(move |_, key, _, _| {
+    keys.connect_key_pressed(|k, key, _, _| {
         if matches!(key, gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter | gtk::gdk::Key::space) {
-            if let Some(app) = app.upgrade() {
-                app.navigate(target.clone());
+            if let Some(w) = k.widget() {
+                let _ = w.activate_action("card.open", None);
             }
             return glib::Propagation::Stop;
         }

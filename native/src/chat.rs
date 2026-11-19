@@ -136,6 +136,8 @@ impl ChatPage {
         input.set_left_margin(10);
         input.set_right_margin(10);
         input.set_accepts_tab(false);
+        // A text view has no placeholder to be named by: a screen reader would announce a bare text box.
+        input.update_property(&[gtk::accessible::Property::Label("Your question")]);
         let input_scroll = gtk::ScrolledWindow::builder().child(&input).hexpand(true).max_content_height(160).propagate_natural_height(true).build();
         input_scroll.add_css_class("composer-frame");
         let send = gtk::Button::with_label("Ask");
