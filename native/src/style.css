@@ -95,9 +95,15 @@ expander-widget.choice > box > title {
   transition: background-color 160ms ease-out;
 }
 expander-widget.choice > box > title:hover { background: alpha(@om_text, 0.04); }
-expander-widget.choice:checked > box > title { background: alpha(@om_accent, 0.10); border-color: alpha(@om_accent, 0.45); }
-expander-widget.choice > box > title > arrow { color: @om_accent; min-width: 16px; min-height: 16px; -gtk-icon-source: -gtk-icontheme("om-chevron-right-symbolic"); }
-expander-widget.choice:checked > box > title > arrow { -gtk-icon-source: -gtk-icontheme("om-chevron-down-symbolic"); }
+expander-widget.choice > box > title:focus-visible { outline: 2px solid @om_accent; outline-offset: -2px; }
+/* GTK names the arrow `expander` and marks it, not the widget, :checked while the choice is open. */
+expander-widget.choice > box > title > expander {
+  color: @om_accent;
+  min-width: 16px;
+  min-height: 16px;
+  -gtk-icon-source: -gtk-icontheme("om-chevron-right-symbolic");
+}
+expander-widget.choice > box > title > expander:checked { -gtk-icon-source: -gtk-icontheme("om-chevron-down-symbolic"); }
 expander-widget.choice > box > box { padding-left: 12px; }
 
 .limits {
@@ -127,14 +133,17 @@ checkbutton.choice-row {
   padding: 8px 10px;
 }
 checkbutton.choice-row:checked { background: alpha(@om_accent, 0.10); border-color: alpha(@om_accent, 0.5); }
-checkbutton.choice-row > check {
-  border: 1px solid alpha(@om_border, 0.9);
-  border-radius: 50%;
+checkbutton.choice-row > check, checkbutton.choice-row > radio { border-radius: 50%; margin-right: 10px; }
+/* omui 0.1 has no check or radio rules, and the built-in theme's unchecked ones are dark on a dark window. */
+checkbutton > check, checkbutton > radio {
+  background: alpha(@om_text, 0.04);
+  border: 1px solid alpha(@om_text, 0.45);
+  box-shadow: none;
   min-width: 14px;
   min-height: 14px;
-  margin-right: 10px;
 }
-checkbutton.choice-row > check:checked { background: @om_accent; border-color: @om_accent; }
+checkbutton > check { border-radius: 3px; }
+checkbutton > check:checked, checkbutton > radio:checked { background: @om_accent; border-color: @om_accent; color: @om_bg; }
 /* The region list of a map download, and its search field. */
 popover listview > row { padding: 5px 8px; }
 popover entry { margin: 2px 2px 6px; }
@@ -147,6 +156,8 @@ popover entry { margin: 2px 2px 6px; }
   padding: 4px;
 }
 .map-bar entry { background: transparent; border: none; }
+/* Without a border, omui's focus colour has nothing to show on. */
+.map-bar entry:focus-within { outline: 2px solid @om_accent; outline-offset: -2px; }
 .map-status {
   background: alpha(@om_surface, 0.85);
   border-radius: 4px;

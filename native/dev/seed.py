@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A small made-up library for dev/preview.sh: one manual (a real two-page PDF), one saved page and one encyclopedia
+"""A small made-up library for dev/preview.sh: two manuals (one real two-page PDF), one saved page and one encyclopedia
 article. Nothing here comes from a real library.
 
   PYTHONPATH=$(bin/test-deps) python3 -B native/dev/seed.py <data folder>"""
@@ -71,10 +71,13 @@ def main(data):
     (lib / 'pages' / 'rope.html').write_text('<!doctype html><title>Rope</title><h1>Rope</h1><p>A saved page about rope.</p>')
     records = [{'id': 'safe-water', 'kind': 'pdf', 'path': 'documents/safe-water.pdf', 'title': 'Safe water at home',
                 'publisher': 'Preview Press', 'year': '2020', 'pages': len(PAGES), 'category': 'water', 'collection': 'Manuals'},
+               # The id the repair guide's choices read from, so `guide:repair` has choices to show.
+               {'id': 'eng-cea09c7220cd4bd0', 'kind': 'pdf', 'path': 'documents/safe-water.pdf', 'title': 'Hand tools',
+                'publisher': 'Preview Press', 'year': '2020', 'pages': len(PAGES), 'category': 'repair', 'collection': 'Manuals'},
                {'id': 'rope', 'kind': 'html', 'path': 'pages/rope.html', 'title': 'Rope', 'publisher': 'Preview Press',
                 'category': 'skills', 'collection': 'Manuals'}]
     (lib / 'catalog.json').write_text(json.dumps(records))
-    (lib / 'summary.json').write_text('{"resources": 2, "pdfs": 1, "pdf_pages": 2, "web_pages": 1}')
+    (lib / 'summary.json').write_text('{"resources": 3, "pdfs": 2, "pdf_pages": 4, "web_pages": 1}')
     con = sqlite3.connect(lib / 'search.sqlite')
     con.execute('CREATE VIRTUAL TABLE pages USING fts5(doc_id UNINDEXED,title,collection,category,path UNINDEXED,'
                 'page UNINDEXED,body,tokenize="unicode61")')
