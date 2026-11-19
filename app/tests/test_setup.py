@@ -1351,9 +1351,7 @@ class Through(Base):
             r = ask('GET', '/api/setup/state')
             self.assertEqual(r.status, 200)
             self.assertEqual(json.loads(r.body)['mode'], 'first-run')
-            r = ask('POST', '/api/setup/start', {'Content-Type': 'application/json'}, b'{"pack":"small"}')
-            self.assertEqual(r.status, 403)       # no launch key
-            r = ask('POST', '/api/setup/pause', {'Content-Type': 'application/json', 'X-Lastbook-Key': b.key}, b'{}')
+            r = ask('POST', '/api/setup/pause', {'Content-Type': 'application/json'}, b'{}')
             self.assertEqual(r.status, 200)
             r = ask('GET', '/')
             self.assertEqual(r.status, 200)

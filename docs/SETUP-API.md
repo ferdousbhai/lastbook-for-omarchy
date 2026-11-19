@@ -82,7 +82,7 @@ and the hosts Hugging Face redirects model downloads to (`cas-bridge.xethub.hf.c
 
 ## Engine interface: `/api/setup/*`
 
-JSON over the app's bridge, so no port. POSTs carry the launch key like every other POST. In setup mode (no library yet) these
+JSON over the app's bridge, so no port. In setup mode (no library yet) these
 are served by `engine/setup/api.py` alone. In normal mode `server.py` hands `/api/setup/` to the same module.
 
 | Request | Answer |

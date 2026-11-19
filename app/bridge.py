@@ -4,14 +4,12 @@ A request from the window runs the engine's unchanged request Handler on a worke
 engine_pipe.py (the native window's engine process) calls start(...), which feeds a Sink piece by piece, with backpressure.
 
 What holds:
-  - Lanes. The app's own small requests, everyone else's /api/, page renders, chat and large files each have their own workers
-    and their own byte budget, so a flood of one never takes a worker or a byte from another. The two /api/ lanes also add workers
+  - Lanes. The app's own small requests, page renders, chat and large files each have their own workers
+    and their own byte budget, so a flood of one never takes a worker or a byte from another. The small lane also adds workers
     when a request has waited, because a slow answer mostly sleeps: it must not hold up a quick one behind it.
   - In flight. LANES below sums to TOTAL_INFLIGHT, the most bytes this process can be holding between the engine and
     the web view. What the web view keeps after it has them is its own, and has to be measured in the real window.
   - The flood gate. An answer over BIG_BODY is refused before any of it moves: the window holds a whole answer in memory.
-  - POST. Every POST needs the key made at launch, which only engine_pipe.py holds.
-  - The key also marks the window's own /api/ reads, which keeps them in a lane of their own.
   - No PDF ever reaches the web view. A PDF can carry scripts and the system's viewers run them, so what arrives is a page of images PDFium has drawn (_answer_pdf).
 """
 import hashlib
@@ -19,7 +17,6 @@ import html
 import io
 import os
 import re
-import secrets
 import threading
 import time
 import traceback
@@ -35,22 +32,20 @@ BIG_BODY = 64 * MiB                 # the largest answer handed over whole. The 
 WHOLE_MAX = 256 * MiB               # above this the refusal says 413, not 403. PDFs and videos come in pieces.
 PER_REQUEST = 8 * MiB               # most unacknowledged bytes for one request
 MAX_POST = 256 * 1024               # the engine's own limit on a chat request is 200,000 bytes
-KEY_HEADER = 'x-lastbook-key'
 
 # name: (workers, most waiting, byte budget). Budgets are separate on purpose: one shared pool would let large files starve /api/.
 LANES = {
-    'small': (8, 5000, 24 * MiB),    # the app's own files, and /api/ asked for with the key: the window's own requests
-    'guest': (8, 5000, 24 * MiB),    # /api/ with no key
+    'small': (8, 5000, 24 * MiB),    # the app's own files and /api/
     'render': (2, 500, 8 * MiB),     # PDF page images: PDFium runs one at a time anyway, so more workers would only sit waiting
     'chat': (8, 32, 8 * MiB),        # long-lived: must not hold a small worker for the length of an answer
     'large': (6, 1000, 64 * MiB),    # video, PDF, saved pages, encyclopedia entries
 }
 TOTAL_INFLIGHT = sum(v[2] for v in LANES.values())
-GROW_TO = {'small': 48, 'guest': 24}    # most workers once requests are kept waiting. The byte budgets above do not grow with them.
+GROW_TO = {'small': 48}                 # most workers once requests are kept waiting. The byte budgets above do not grow with them.
 GROW_AFTER = 0.05                       # seconds a request waits before a lane adds workers for what is waiting
 SHRINK_AFTER = 10                       # seconds an added worker sits idle before it goes
 
-PASS_HEADERS = {'range', 'content-type', 'accept'}  # all a page can send the engine, besides the mapped Origin. The key never goes on.
+PASS_HEADERS = {'range', 'content-type', 'accept'}  # the only request headers the engine sees
 FILE_PREFIXES = ('/documents/', '/pages/', '/videos/', '/videos-external/', '/transcripts/', '/metadata/videos/', '/courses/', '/collections/', '/assets/')
 HOP = {'connection', 'keep-alive', 'transfer-encoding', 'te', 'upgrade', 'proxy-connection', 'trailer'}
 DROP = HOP | {'server', 'date'}
@@ -436,11 +431,10 @@ class _Streamed(Exchange):
 
 class Bridge:
     def __init__(self, server_module, log=None, lanes=None, per_request=PER_REQUEST):
-        """server_module: the imported engine, after server.init(). log: a function taking one dict per request; it never sees the key."""
+        """server_module: the imported engine, after server.init(). log: a function taking one dict per request."""
         self.server, self.origin = server_module, ORIGIN
         self.logger = log
         self.Handler = _make_handler(server_module.Handler)
-        self.key = secrets.token_urlsafe(32)     # new each launch; never written to a log
         self.lanes = {n: _Lane(n, w, q, b, per_request, GROW_TO.get(n)) for n, (w, q, b) in (lanes or LANES).items()}
         self.waiting_now = threading.Event()
         threading.Thread(target=self._grow_lanes, daemon=True, name='lane-grow').start()
@@ -473,10 +467,6 @@ class Bridge:
             return None
         self.waiting_now.set()
         return ex
-
-    def has_key(self, headers):
-        """Did this come from the window itself (engine_pipe.py)?"""
-        return secrets.compare_digest(_lower(headers).get(KEY_HEADER, '').encode('utf-8', 'replace'), self.key.encode())
 
     # ---- PDFs, as pictures
     def pdf_page(self, path, real, n):
@@ -547,20 +537,8 @@ class Bridge:
             return self._refusal('method', 405, 'Method Not Allowed', url), None
         low = _lower(headers)
         path = target.split('?', 1)[0]
-        origin = low.get('origin')
-        if method == 'POST':
-            # WebKit sends no Origin on the app's own POST, and none on a sandboxed page's no-cors POST either, so Origin alone
-            # cannot tell them apart. Nor can Content-Type: a no-cors POST of a Blob typed application/json arrives with that type.
-            # Only the key is proof, and a no-cors request cannot carry a custom header.
-            ctype = low.get('content-type', '').lower()
-            if origin is not None and origin != self.origin:
-                return self._refusal('post-origin', 403, 'Forbidden', url), None
-            if not ctype.startswith('application/json'):
-                return self._refusal('post-type', 403, 'Forbidden', url), None
-            if not self.has_key(low):
-                return self._refusal('post-key', 403, 'Forbidden', url), None
-            if body is not None and len(body) > MAX_POST:
-                return self._refusal('post-size', 413, 'Too Large', url), None
+        if method == 'POST' and body is not None and len(body) > MAX_POST:
+            return self._refusal('post-size', 413, 'Too Large', url), None
         lines = [f'{method} {target} HTTP/1.1', 'Host: localhost', 'Connection: close']
         for k, v in low.items():
             if k in PASS_HEADERS and k != 'range' and not re.search(r'[\r\n]', v):
@@ -568,12 +546,10 @@ class Bridge:
         rng = self._engine_range(method, path, low.get('range'))
         if rng:
             lines.append(f'Range: {rng}')
-        if origin:
-            lines.append(f'Origin: {"http://localhost" if origin == self.origin else origin}')
         if method == 'POST':
             lines.append(f'Content-Length: {len(body or b"")}')
         raw = ('\r\n'.join(lines) + '\r\n\r\n').encode('latin-1', 'replace') + (body or b'' if method == 'POST' else b'')
-        return None, (target, raw, self.lanes[_lane_for(method, path, self.has_key(low), target)])
+        return None, (target, raw, self.lanes[_lane_for(method, path, target)])
 
     def _engine_range(self, method, path, asked):
         """What the Handler gets as Range. A video answer holds at most one piece, and a video asked for with no Range gets the first."""
@@ -622,13 +598,11 @@ def _lower(headers):
     return {str(k).lower(): str(v) for k, v in (items or ())}
 
 
-def _lane_for(method, path, keyed=False, target=''):
+def _lane_for(method, path, target=''):
     if method == 'POST' and path == '/api/chat':
         return 'chat'
     if RENDER.match(path) or PDF_PAGE.search(target):
         return 'render'
-    if path.startswith('/api/'):
-        return 'small' if keyed else 'guest'
-    if path.startswith('/ui/') or path in ('/', '/index.html', '/sw.js', '/reader.css'):
+    if path.startswith(('/api/', '/ui/')) or path in ('/', '/index.html', '/sw.js', '/reader.css'):
         return 'small'
     return 'large'

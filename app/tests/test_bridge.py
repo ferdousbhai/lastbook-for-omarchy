@@ -179,7 +179,7 @@ class Both:
     def setUp(self):
         self.logged = []
         self.b = B.Bridge(MOD, log=self.logged.append)
-        self.key = {'X-Lastbook-Key': self.b.key, 'Content-Type': 'application/json'}
+        self.json = {'Content-Type': 'application/json'}
         self.piece = B.VIDEO_PIECE
 
     def get(self, path, rng=None, **k):
@@ -283,8 +283,8 @@ class Both:
         self.assertEqual(self.get(self.real_pdf() + '?pdf-page=0').status, 404)
 
     def test_pdf_pictures_have_their_own_lane(self):
-        self.assertEqual(B._lane_for('GET', '/documents/real.pdf', False, '/documents/real.pdf?pdf-page=2'), 'render')
-        self.assertEqual(B._lane_for('GET', '/documents/real.pdf', False, '/documents/real.pdf'), 'large')
+        self.assertEqual(B._lane_for('GET', '/documents/real.pdf', '/documents/real.pdf?pdf-page=2'), 'render')
+        self.assertEqual(B._lane_for('GET', '/documents/real.pdf', '/documents/real.pdf'), 'large')
 
     def test_damaged_pdf_shows_a_notice_and_not_its_bytes(self):
         for p in ('/documents/s.pdf', '/documents/big.pdf'):
@@ -325,30 +325,8 @@ class Both:
         for m in ('PUT', 'DELETE', 'OPTIONS', 'TRACE', 'PATCH', 'CONNECT', 'get'):
             self.assertEqual(call(self.b, m, '/').status, 405, m)
 
-    def test_post_needs_the_key(self):
-        before = self.chat_count()
-        for name, h, why in [
-            ('no key', {'Content-Type': 'application/json'}, 'post-key'),
-            ('wrong key', {'Content-Type': 'application/json', 'X-Lastbook-Key': 'x'}, 'post-key'),
-            ('empty key', {'Content-Type': 'application/json', 'X-Lastbook-Key': ''}, 'post-key'),
-            ('null origin with key', {**self.key, 'Origin': 'null'}, 'post-origin'),
-            ('other origin with key', {**self.key, 'Origin': 'https://evil.example'}, 'post-origin'),
-            ('text type with key', {'X-Lastbook-Key': self.b.key, 'Content-Type': 'text/plain'}, 'post-type'),
-            ('no type with key', {'X-Lastbook-Key': self.b.key}, 'post-type'),
-        ]:
-            n = self.b.counts.get(why, 0)
-            r = call(self.b, 'POST', '/api/chat', h, b'{}')
-            self.assertEqual(r.status, 403, name)
-            self.assertEqual(self.b.counts[why], n + 1, name)
-        self.assertEqual(self.chat_count(), before)
-
     def test_post_too_big(self):
-        self.assertEqual(call(self.b, 'POST', '/api/chat', self.key, b'x' * (B.MAX_POST + 1)).status, 413)
-
-    def test_each_launch_has_its_own_key(self):
-        other = B.Bridge(MOD)
-        self.assertNotEqual(self.b.key, other.key)
-        self.assertEqual(call(other, 'POST', '/api/chat', self.key, b'{}').status, 403)
+        self.assertEqual(call(self.b, 'POST', '/api/chat', self.json, b'x' * (B.MAX_POST + 1)).status, 413)
 
     def test_path_attacks(self):
         attacks = ['/../canary-root.txt', '/documents/../canary-root.txt', '/%2e%2e/canary-root.txt', '/documents/%2e%2e/%2e%2e/outside-canary.txt', '/canary-root.txt',
@@ -379,29 +357,17 @@ class Both:
         self.assertEqual(self.get('/pages/hl2.txt').status, 404)
         self.assertEqual(self.get('/documents/plain.txt').status, 200)
 
-    def test_headers_a_page_cannot_smuggle(self):
-        r = call(self.b, 'GET', '/api/t/echo', {'X-Lastbook-Key': 'secret', 'Cookie': 'sg_key=1', 'Host': 'evil.example', 'X-Forwarded-For': '1.2.3.4', 'Accept': 'x/y', 'Range': 'bytes=0-1', 'Bad': 'a\r\nInjected: 1', 'Accept\r\nInjected': '2'})
+    def test_only_three_headers_reach_the_engine(self):
+        r = call(self.b, 'GET', '/api/t/echo', {'X-Lastbook-Key': 'secret', 'Origin': 'null', 'Cookie': 'sg_key=1', 'Host': 'evil.example', 'X-Forwarded-For': '1.2.3.4', 'Accept': 'x/y', 'Range': 'bytes=0-1', 'Bad': 'a\r\nInjected: 1', 'Accept\r\nInjected': '2'})
         seen = json.loads(r.body)['headers']
         self.assertEqual(seen['host'], 'localhost')
         self.assertEqual(seen['accept'], 'x/y')
-        for h in ('x-lastbook-key', 'cookie', 'x-forwarded-for', 'bad', 'injected'):
+        for h in ('x-lastbook-key', 'origin', 'cookie', 'x-forwarded-for', 'bad', 'injected'):
             self.assertNotIn(h, seen)
-
-    def test_own_origin_maps_and_null_stays(self):
-        seen = json.loads(call(self.b, 'GET', '/api/t/echo', {'Origin': self.b.origin}).body)['headers']
-        self.assertEqual(seen['origin'], 'http://localhost')
-        seen = json.loads(call(self.b, 'GET', '/api/t/echo', {'Origin': 'null'}).body)['headers']
-        self.assertEqual(seen['origin'], 'null')
 
     def test_non_ascii_target(self):
         r = self.get('/documents/پ.txt')
         self.assertEqual(r.status, 404)   # no such file, and no crash on the way
-
-    def test_log_never_holds_the_key(self):
-        call(self.b, 'POST', '/api/chat', self.key, b'{}')
-        call(self.b, 'POST', '/api/chat', {'Content-Type': 'application/json', 'X-Lastbook-Key': 'wrong'}, b'{}')
-        wait_until(lambda: len(self.logged) >= 2)
-        self.assertNotIn(self.b.key, json.dumps(self.logged))
 
     # ---- the flood gate
     def test_gate_refuses_an_answer_over_the_limit(self):
@@ -671,9 +637,6 @@ class NothingGoesOut(unittest.TestCase):
 
 class StreamTests(Both, unittest.TestCase):
 
-    def chat_count(self):
-        return len(STUB['runs'])
-
     def test_cancel_mid_body_stops_the_handler(self):
         b = B.Bridge(MOD, per_request=4 * MiB)
         r = Rec(auto=False)
@@ -730,7 +693,7 @@ class StreamTests(Both, unittest.TestCase):
         r = Rec()
         STUB.update(pieces=6, delay=0.1)
         t0 = time.time()
-        self.b.start('POST', self.b.origin + '/api/chat', self.key, b'{"messages":[{"role":"user","content":"hi"}]}', r)
+        self.b.start('POST', self.b.origin + '/api/chat', self.json, b'{"messages":[{"role":"user","content":"hi"}]}', r)
         self.assertTrue(r.first.wait(5))
         first_at = time.time() - t0
         self.assertTrue(r.done.wait(10))
@@ -748,7 +711,7 @@ class StreamTests(Both, unittest.TestCase):
         r = Rec()
         STUB.update(pieces=200, delay=0.05)
         before = len(STUB['stopped'])
-        ex = self.b.start('POST', self.b.origin + '/api/chat', self.key, b'{}', r)
+        ex = self.b.start('POST', self.b.origin + '/api/chat', self.json, b'{}', r)
         self.assertTrue(wait_until(lambda: len(r.parts) >= 3))
         ex.cancel()
         self.assertTrue(wait_until(lambda: len(STUB['stopped']) > before, 5))
@@ -881,7 +844,7 @@ class StreamTests(Both, unittest.TestCase):
         assistant.model_status, assistant.chat = REAL_STATUS, REAL_CHAT
         try:
             assistant._status['at'] = 0
-            r = call(self.b, 'POST', '/api/chat', self.key, b'{}', timeout=15)
+            r = call(self.b, 'POST', '/api/chat', self.json, b'{}', timeout=15)
         finally:
             assistant.model_status, assistant.chat = stub_status, stub_chat
         self.assertEqual(r.status, 200)
@@ -917,7 +880,7 @@ class WholeProcess(unittest.TestCase):
         self.assertTrue(str(server.LIB).startswith(str(DATA)))
 
     def test_budgets_add_up(self):
-        self.assertEqual(B.TOTAL_INFLIGHT, 128 * MiB)
+        self.assertEqual(B.TOTAL_INFLIGHT, 104 * MiB)
         self.assertGreater(B.VIDEO_PIECE, 2.38e6)     # the largest request seen from a player
         self.assertGreaterEqual(B.VIDEO_PIECE, 4 * MiB)
         self.assertLessEqual(B.VIDEO_PIECE, 8 * MiB)
