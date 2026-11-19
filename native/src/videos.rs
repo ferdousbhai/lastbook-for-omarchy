@@ -35,13 +35,28 @@ pub struct Videos {
     loaded: Cell<bool>,
 }
 
-/// A thumbnail from the library folder, or None if it can't be read.
-fn texture(app: &App, rel: &str) -> Option<gdk::Texture> {
+/// A thumbnail from the library folder as a 16:9 tile, or None if it can't be read. The grid lays cards out by the
+/// picture's own size, and the files are up to 1280 pixels wide in several shapes: that gave two stretched, cropped
+/// cards a row. So every tile is CARD_WIDTH across and 16:9, the picture filling it (cut evenly at the edges where its
+/// shape differs), drawn from enough pixels to stay sharp on a 2x screen.
+fn texture(app: &App, rel: &str) -> Option<gdk::Paintable> {
     if rel.is_empty() {
         return None;
     }
-    gdk::Texture::from_filename(app.engine.ready.library.join(rel)).ok()
+    let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(app.engine.ready.library.join(rel), 2 * CARD_WIDTH, -1, true).ok()?;
+    let (w, h) = (CARD_WIDTH as f32, CARD_WIDTH as f32 * 9.0 / 16.0);
+    let scale = (w / pixbuf.width().max(1) as f32).max(h / pixbuf.height().max(1) as f32);
+    let (pw, ph) = (pixbuf.width() as f32 * scale, pixbuf.height() as f32 * scale);
+    let tile = gtk::graphene::Rect::new(0.0, 0.0, w, h);
+    let snapshot = gtk::Snapshot::new();
+    snapshot.push_clip(&tile);
+    snapshot.append_texture(&gdk::Texture::for_pixbuf(&pixbuf), &gtk::graphene::Rect::new((w - pw) / 2.0, (h - ph) / 2.0, pw, ph));
+    snapshot.pop();
+    snapshot.to_paintable(Some(&gtk::graphene::Size::new(w, h)))
 }
+
+/// The width of a video card's picture.
+const CARD_WIDTH: i32 = 230;
 
 impl Videos {
     pub fn build(app: &Rc<App>) -> Rc<Self> {
@@ -181,8 +196,17 @@ impl Videos {
             card.add_css_class("video-card");
             let overlay = gtk::Overlay::new();
             let pic = gtk::Picture::new();
-            pic.set_content_fit(gtk::ContentFit::Cover);
-            pic.set_size_request(200, 112);
+            pic.set_content_fit(gtk::ContentFit::Contain);
+            pic.set_size_request(CARD_WIDTH, CARD_WIDTH * 9 / 16);
+            pic.set_can_shrink(false);
+            for w in [pic.upcast_ref::<gtk::Widget>(), overlay.upcast_ref()] {
+                w.set_halign(gtk::Align::Start);         // the tile keeps its size, over its title, the length badge in its corner
+                w.set_valign(gtk::Align::Start);
+                w.set_hexpand(false);
+                w.set_vexpand(false);
+            }
+            card.set_halign(gtk::Align::Start);            // as wide as its tile: the title wraps under the picture
+            card.set_valign(gtk::Align::Start);
             pic.add_css_class("video-thumb");
             if let Some(tex) = texture(&app, it["thumb"].as_str().unwrap_or_default()) {
                 pic.set_paintable(Some(&tex));
@@ -202,11 +226,16 @@ impl Videos {
             title.set_xalign(0.0);
             title.set_wrap(true);
             title.set_lines(2);
+            title.set_max_width_chars(26);                // no wider than its tile, so the tile sets the column
+            title.set_width_chars(1);
+            title.set_yalign(0.0);
+            title.set_valign(gtk::Align::Start);
             title.set_ellipsize(gtk::pango::EllipsizeMode::End);
             let meta = gtk::Label::new(it["publisher"].as_str());
             meta.add_css_class("meta");
             meta.set_xalign(0.0);
             meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            meta.set_max_width_chars(26);
             card.append(&overlay);
             card.append(&title);
             card.append(&meta);
