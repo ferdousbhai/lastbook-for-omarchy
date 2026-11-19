@@ -18,7 +18,13 @@ for tool in makepkg cargo rustc git python3; do
 done
 output=$(realpath -m "${2:-dist/$architecture}")
 mkdir -p "$output"
-work=$(mktemp -d)
+# In bin/arch-run's root /tmp is memory (arch-chroot's tmpfs, half the RAM): the build tree, several GB, goes on the
+# disk beside the output instead. The artifact upload takes only the package and source-commit.txt from there.
+if [[ ${LASTBOOK_ARCH_ROOT:-} == 1 ]]; then
+  work=$(mktemp -d -p "$output" .build.XXXXXX)
+else
+  work=$(mktemp -d)
+fi
 trap 'rm -rf "$work"' EXIT
 source_commit=$(git -c safe.directory="$PWD" rev-parse HEAD)
 # The PKGBUILD packs `git archive HEAD` of the checkout it sits in: a fresh clone holds exactly the commit.

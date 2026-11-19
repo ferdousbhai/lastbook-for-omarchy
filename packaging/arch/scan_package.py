@@ -70,7 +70,9 @@ def main():
         info = dict(line.split(' = ', 1) for line in (root / '.PKGINFO').read_text().splitlines() if ' = ' in line)
         print({k: info.get(k) for k in ('pkgname', 'pkgver', 'arch', 'size')})
         machine = ARCH[info['arch']]
-        packaged = {p.relative_to(root).as_posix() for p in root.rglob('*') if (p.is_file() or p.is_symlink()) and not p.name.startswith('.')}
+        # Everything but pacman's own metadata at the top of the archive; a dot-file anywhere else is checked like any file.
+        packaged = {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file() or p.is_symlink()} \
+            - {'.PKGINFO', '.MTREE', '.BUILDINFO', '.INSTALL', '.CHANGELOG'}
         for rel in sorted(packaged):
             p = root / rel
             if p.is_symlink():

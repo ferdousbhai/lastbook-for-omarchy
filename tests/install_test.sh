@@ -35,15 +35,11 @@ if [[ ${LASTBOOK_INSTALL_TEST_INNER:-} != 1 ]]; then
   exec env LASTBOOK_INSTALL_TEST_INNER=1 unshare -rm "$root/tests/install_test.sh"
 fi
 
-# Ubuntu CI has no pacman mount targets. Prepare a scratch /etc inside the
-# private mount namespace while preserving account lookups used by hooks.
+# The scratch copies are mounted over /etc/pacman.conf and /etc/pacman.d, so both must be there to mount over (CI,
+# which is not Arch, makes them empty first).
 if [[ ! -f /etc/pacman.conf || ! -d /etc/pacman.d ]]; then
-  mkdir -p "$work/etc/pacman.d"
-  for name in passwd group nsswitch.conf; do
-    [[ ! -f /etc/$name ]] || cp "/etc/$name" "$work/etc/$name"
-  done
-  touch "$work/etc/pacman.conf"
-  mount --bind "$work/etc" /etc
+  echo "install_test: /etc/pacman.conf and /etc/pacman.d must exist (they are never written)" >&2
+  exit 1
 fi
 # Stubs: pacman logs its arguments, curl
 # "downloads" an empty key, gpg reports the pinned fingerprint for it.
@@ -100,7 +96,7 @@ count_include() { grep -cxF "Include = /etc/pacman.d/$1.conf" /etc/pacman.conf |
 setup
 # Nobody is at a terminal here, so Recall is never offered: the installer says how to add it, unless it is there already.
 export LASTBOOK_RECALL_COMMAND=no-such-recall-command
-bash install.sh >"$work/out" 2>&1
+bash install.sh >"$work/out" 2>&1 || { cat "$work/out" >&2; exit 1; }
 check "install.sh installs lastbook-for-omarchy" [ "$(installed)" = "lastbook-for-omarchy" ]
 check "the repository config is written" grep -qx 'Server = https://github.com/ferdousbhai/lastbook-for-omarchy/releases/latest/download' /etc/pacman.d/lastbook-for-omarchy.conf
 check "the repository requires signatures" grep -qx 'SigLevel = Required DatabaseRequired' /etc/pacman.d/lastbook-for-omarchy.conf

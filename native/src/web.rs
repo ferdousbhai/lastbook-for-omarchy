@@ -7,7 +7,7 @@
 //! cookies, cache or storage are written. Encyclopedia articles are recoloured to the Omarchy theme.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     rc::{Rc, Weak},
     sync::Arc,
 };
@@ -33,6 +33,9 @@ pub struct WebPage {
     manager: webkit6::UserContentManager,
     theme: Rc<Theme>,
     themed: RefCell<bool>,
+    /// The filter that blocks the network is in place; until then a page asked for waits in `waiting`.
+    filtered: Rc<Cell<bool>>,
+    waiting: Rc<RefCell<Option<String>>>,
 }
 
 fn register_scheme(engine: Arc<Engine>) {
@@ -83,24 +86,19 @@ impl WebPage {
         }
         view.set_vexpand(true);
         view.set_hexpand(true);
-        // Navigation stays on lastbook:; a link to the web goes nowhere (this is an offline library).
-        view.connect_decide_policy(|_, decision, kind| {
-            if kind == webkit6::PolicyDecisionType::NavigationAction
-                && let Some(nav) = decision.downcast_ref::<webkit6::NavigationPolicyDecision>()
-                && let Some(action) = nav.navigation_action()
-                && let Some(req) = action.clone().request()
-                && !req.uri().is_some_and(|u| u.starts_with("lastbook:"))
-            {
-                decision.ignore();
-                return true;
-            }
-            false
-        });
         let store_dir = glib::user_cache_dir().join("Lastbook").join("content-filters");
         let store = webkit6::UserContentFilterStore::new(&store_dir.to_string_lossy());
-        let m = manager.clone();
+        // No page loads before the filter that blocks the network is in place, and none at all if it cannot be.
+        let (filtered, waiting) = (Rc::new(Cell::new(false)), Rc::new(RefCell::new(None::<String>)));
+        let (m, f2, w2, v2) = (manager.clone(), filtered.clone(), waiting.clone(), view.clone());
         store.save("lastbook-no-network", &glib::Bytes::from_static(NO_NETWORK.as_bytes()), gio::Cancellable::NONE, move |f| match f {
-            Ok(filter) => m.add_filter(&filter),
+            Ok(filter) => {
+                m.add_filter(&filter);
+                f2.set(true);
+                if let Some(uri) = w2.take() {
+                    v2.load_uri(&uri);
+                }
+            }
             Err(e) => eprintln!("content filter: {e}"),
         });
 
@@ -115,13 +113,42 @@ impl WebPage {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.append(&bar);
         root.append(&view);
-        let page = Rc::new(Self { root: root.upcast(), app: Rc::downgrade(app), view, meta, manager, theme: app.theme.clone(), themed: RefCell::new(false) });
+        let page = Rc::new(Self { root: root.upcast(), app: Rc::downgrade(app), view, meta, manager, theme: app.theme.clone(), themed: RefCell::new(false), filtered, waiting });
         // The page on screen follows a theme switch.
         let p = Rc::downgrade(&page);
         page.theme.on_change(&page.view, move |_| {
             if let Some(p) = p.upgrade() {
                 p.apply_style(*p.themed.borrow());
             }
+        });
+        // Navigation stays on lastbook:; a link to the web goes nowhere (this is an offline library). A link to another
+        // page of the library is a step in the window's own history, so the title, the star and Back know of it.
+        let p = Rc::downgrade(&page);
+        page.view.connect_decide_policy(move |v, decision, kind| {
+            if kind != webkit6::PolicyDecisionType::NavigationAction {
+                return false;
+            }
+            let Some(action) = decision.downcast_ref::<webkit6::NavigationPolicyDecision>().and_then(|n| n.navigation_action()) else { return false };
+            let Some(uri) = action.request().and_then(|r| r.uri()) else { return false };
+            let Some(path) = uri.strip_prefix(ORIGIN) else {
+                decision.ignore();
+                return true;
+            };
+            let page_of = |u: &str| u.split('#').next().unwrap_or(u).to_owned();
+            if action.navigation_type() == webkit6::NavigationType::LinkClicked
+                && v.uri().is_some_and(|now| page_of(&now) != page_of(&uri))   // not a jump within the page
+                && let Some(p) = p.upgrade()
+                && let Some(app) = p.app.upgrade()
+            {
+                decision.ignore();
+                let route = match path.strip_prefix("/zim/") {
+                    Some(article) => crate::ui::Route::Wiki { path: article.to_owned() },
+                    None => crate::ui::Route::Web { path: path.to_owned(), meta: p.meta.text().to_string() },
+                };
+                glib::idle_add_local_once(move || app.navigate(route));
+                return true;
+            }
+            false
         });
         let p = Rc::downgrade(&page);
         page.view.connect_title_notify(move |v| {
@@ -164,7 +191,10 @@ impl WebPage {
         self.apply_style(themed);
         self.meta.set_text(meta);
         let uri = format!("{ORIGIN}{}", if path.starts_with('/') { path.to_owned() } else { format!("/{path}") });
-        if self.view.uri().as_deref() != Some(uri.as_str()) {
+        if !self.filtered.get() {
+            self.waiting.replace(Some(uri));   // loaded once the filter is in place
+            self.meta.set_text("Pages cannot be shown yet: Lastbook could not set up its block on the network.");
+        } else if self.view.uri().as_deref() != Some(uri.as_str()) {
             self.view.load_uri(&uri);
         }
     }

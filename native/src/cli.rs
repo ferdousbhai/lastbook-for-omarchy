@@ -95,6 +95,10 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 fn install_skill() -> io::Result<serde_json::Value> {
     let home = home()?;
     let shared = home.join(".agents/skills/lastbook");
+    // A skill of that name that Lastbook did not put there is the person's own (or another tool's): it stays.
+    if shared.join("SKILL.md").exists() && !shared.join(SKILL_MARKER).is_file() {
+        return Err(io::Error::other(format!("{} is there already and is not Lastbook's; move it away first", shared.display())));
+    }
     fs::create_dir_all(&shared)?;
     atomic_write(&shared.join("SKILL.md"), SKILL.as_bytes())?;
     atomic_write(&shared.join(SKILL_MARKER), b"")?;

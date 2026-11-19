@@ -169,6 +169,12 @@ impl SearchPage {
             if page.generation.get() != generation {
                 return;   // a newer search replaced this one
             }
+            if relevant.is_err() {
+                // The engine did not answer: say so, and let the same words be searched again.
+                page.shown.replace(Default::default());
+                page.status.set_text("The library did not answer. Try again.");
+                return;
+            }
             let slot = page.show_results(relevant.ok(), docs);
             drop(page);
             if let Some(articles) = articles

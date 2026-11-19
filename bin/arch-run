@@ -6,14 +6,30 @@ cd "$(dirname "$0")/.."
 command -v arch-chroot >/dev/null || { echo 'Install arch-install-scripts first.' >&2; exit 1; }
 (( $# )) || { echo 'Usage: bin/arch-run <command> [arguments...]' >&2; exit 1; }
 architecture=$(uname -m)
+command -v gpg >/dev/null || { echo 'Install gnupg first.' >&2; exit 1; }
+# Each distribution's release signer, by fingerprint: Arch's (Pierre Schmitz) and the Arch Linux ARM Build System.
 case "$architecture" in
-  x86_64) url=https://geo.mirror.pkgbuild.com/iso/latest/archlinux-bootstrap-x86_64.tar.zst ;;
-  aarch64) url=https://ca.us.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz ;;
+  x86_64) url=https://geo.mirror.pkgbuild.com/iso/latest/archlinux-bootstrap-x86_64.tar.zst
+    signer=3E80CA1A8B89F69CBA57D98A76A5EF9054449A5C ;;
+  aarch64) url=https://ca.us.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
+    signer=68B3537F39A313B3E574D06777193F152BDBE6A6 ;;
   *) echo "Unsupported architecture: $architecture" >&2; exit 1 ;;
 esac
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 curl --fail --location --retry 3 "$url" -o "$work/root.tar"
+# The root is unpacked only if the pinned signer signed it. The key itself comes from a keyserver, into a keyring of
+# its own, and counts only by its fingerprint.
+curl --fail --silent --show-error --location --retry 3 "$url.sig" -o "$work/root.tar.sig"
+curl --fail --silent --show-error --location --retry 3 \
+  "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x$signer" -o "$work/signer.asc"
+mkdir -m 700 "$work/gnupg"
+gpg --homedir "$work/gnupg" --batch --quiet --import "$work/signer.asc"
+signature=$(gpg --homedir "$work/gnupg" --batch --status-fd 1 --verify "$work/root.tar.sig" "$work/root.tar" 2>/dev/null) || true
+if ! grep -qE "^\[GNUPG:\] VALIDSIG( [^ ]+){9} $signer\$" <<< "$signature" || grep -qE '^\[GNUPG:\] (REVKEYSIG|EXPKEYSIG) ' <<< "$signature"; then
+  echo "The Arch root from $url is not signed by $signer (or that key expired or was revoked); nothing was unpacked." >&2
+  exit 1
+fi
 mkdir "$work/root"
 tar --extract --file "$work/root.tar" --directory "$work/root" --numeric-owner
 rm "$work/root.tar"
@@ -36,6 +52,7 @@ fi
 rm -f "$root/etc/resolv.conf"
 cp -L /etc/resolv.conf "$root/etc/resolv.conf"
 mount -t tmpfs -o mode=0755 tmpfs /run
+# Its standard input is closed: this script itself is being read from ours.
 arch-chroot "$root" bash -euc '
   sed -i "/^\[options\]$/a DisableSandbox" /etc/pacman.conf
   pacman-key --init
@@ -43,7 +60,7 @@ arch-chroot "$root" bash -euc '
   pacman -Syu --noconfirm --needed curl gnupg shadow diffutils
   useradd -m builder
   chown -R builder:builder /output /cargo
-'
+' </dev/null
 # arch-chroot creates a PID namespace after mounting /proc. D-Bus needs the
 # process IDs in /proc to match that namespace, notably for daemon tests.
 arch-chroot "$root" unshare --mount --mount-proc env -u SUDO_USER -u SUDO_UID -u SUDO_GID LASTBOOK_ARCH_ROOT=1 CARGO_HOME=/cargo HOME=/root USER=root \

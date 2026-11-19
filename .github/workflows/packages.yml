@@ -18,11 +18,11 @@ jobs:
     # The PKGBUILD compiles llama.cpp (Vulkan and every CPU variant) as well as the window.
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Cache Cargo downloads
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             dist/cargo-${{ matrix.arch }}/registry/index
@@ -37,7 +37,7 @@ jobs:
           sudo apt-get install -y arch-install-scripts zstd
       - name: Build and scan the package
         run: sudo bin/arch-run bin/build-packages '${{ matrix.arch }}' /output
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lastbook-for-omarchy-${{ matrix.arch }}
           path: |

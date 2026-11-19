@@ -85,7 +85,7 @@ impl<'a> Reader<'a> {
         self.fixed(n)
     }
     fn fixed(&mut self, n: usize) -> Option<&'a [u8]> {
-        let s = self.b.get(self.p..self.p + n)?;
+        let s = self.b.get(self.p..self.p.checked_add(n)?)?;
         self.p += n;
         Some(s)
     }

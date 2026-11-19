@@ -74,13 +74,19 @@ add_signed_repo() {
       END { if (!added) print repo_include }
     ' /etc/pacman.conf > "$temporary"
     if ! cmp -s "$temporary" /etc/pacman.conf; then
-      $sudo tee /etc/pacman.conf < "$temporary" >/dev/null
+      # Whole or not at all: a new file beside it, renamed over it. Where that
+      # cannot be (pacman.conf is itself a mount), written in place as before.
+      local new=/etc/pacman.conf.new.$$
+      if ! { $sudo install -m 644 "$temporary" "$new" && $sudo mv -f "$new" /etc/pacman.conf; } 2>/dev/null; then
+        $sudo rm -f "$new" 2>/dev/null || true
+        $sudo tee /etc/pacman.conf < "$temporary" >/dev/null
+      fi
     fi
     rm -f "$temporary"
   }
   restore_repo_include "$include"
   user="${SUDO_USER:-${USER:-$(id -un)}}"
-  home="$(getent passwd "$user" | cut -d: -f6)"
+  home="$(getent passwd "$user" | cut -d: -f6)" || home=''   # no such account: no hook
   if [[ -n $home && -d $home/.config/omarchy ]]; then
     # The home is the user's: write there as them, so a symlink in it cannot
     # turn root's write onto a system file.
@@ -154,6 +160,11 @@ else
     sudo pacman -Syu --needed --noconfirm "${packages[@]}"
   fi
 fi
+# omarchy-pkg-add can skip a package it cannot find and still succeed.
+if ! pacman -Q "$PACKAGE" >/dev/null 2>&1; then
+  echo "$PACKAGE was not installed. Run this installer again; if it still fails, run: omarchy update" >&2
+  exit 1
+fi
 
 # The agent skill (how an AI agent on this computer uses the `lastbook`
 # commands) is the desktop user's own file, ~/.agents/skills/lastbook, so it is
@@ -162,7 +173,7 @@ install_skill() {
   local user uid home as_user=()
   user="${SUDO_USER:-${USER:-$(id -un)}}"
   uid="$(id -u "$user" 2>/dev/null)" || uid=''
-  home="$(getent passwd "$user" | cut -d: -f6)"
+  home="$(getent passwd "$user" | cut -d: -f6)" || home=''
   if [[ -z $uid || $uid == 0 || -z $home ]]; then
     echo 'For AI agents, as your desktop user: lastbook skill install'
     return 0

@@ -248,6 +248,7 @@ impl MapPage {
             if let Some(me) = me.upgrade() {
                 me.style.replace(Style::from(t));
                 me.tiles.borrow_mut().clear();
+                me.order.borrow_mut().clear();
                 me.area.queue_draw();
             }
         });

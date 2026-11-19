@@ -100,8 +100,11 @@ impl Browse {
         let Some(app) = self.app.upgrade() else { return };
         let (engine, me) = (app.engine.clone(), Rc::downgrade(self));
         glib::spawn_future_local(async move {
-            let Ok(shelves) = engine.get("/api/shelves").await else { return };
+            let shelves = engine.get("/api/shelves").await;
             let Some(me) = me.upgrade() else { return };
+            let Ok(shelves) = shelves else {
+                return clear(&me.library);   // empty again, so the next visit asks again
+            };
             let grid = cards::grid(3, 8);
             for s in shelves.as_array().into_iter().flatten() {
                 let (read, video) = (s["read"].as_u64().unwrap_or(0), s["video"].as_u64().unwrap_or(0));
@@ -163,7 +166,7 @@ impl Browse {
             self.saved.append(&l);
         }
         let mut items = items;
-        items.sort_by_key(|s| -s.at);
+        items.sort_by_key(|s| std::cmp::Reverse(s.at));
         for s in items {
             let c = card(&s.title, "", &s.sub, None);
             if let Some(mut r) = Route::from_key(&s.key) {
@@ -185,6 +188,8 @@ impl Browse {
             let lib = engine.get("/api/library").await.unwrap_or_default();
             let st = engine.get("/api/assistant/status").await.unwrap_or_default();
             let Some(me) = me.upgrade() else { return };
+            clear(&me.about);   // opened twice before the answers came: one set of cards
+            title("About this library", "", &me.about);
             let gb = lib["document_bytes"].as_f64().unwrap_or(0.0) / 1e9;
             me.about.append(&card(
                 "What's in it",

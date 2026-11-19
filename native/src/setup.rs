@@ -37,6 +37,7 @@ pub struct SetupPage {
     ai: Cell<bool>,
     folder: RefCell<Option<String>>,
     polling: Cell<bool>,
+    poll_turn: Cell<u32>,
     /// The local AI's model was found (in the library or the Hugging Face cache), so there is nothing to download.
     ai_present: Cell<bool>,
 }
@@ -65,6 +66,7 @@ impl SetupPage {
             ai: Cell::new(false),
             folder: RefCell::new(None),
             polling: Cell::new(false),
+            poll_turn: Cell::new(0),
             ai_present: Cell::new(false),
         })
     }
@@ -455,9 +457,15 @@ impl SetupPage {
         if self.polling.replace(true) {
             return;
         }
+        // Each start has its own number, so a timer from the start before stops, however soon this one follows.
+        let turn = self.poll_turn.get() + 1;
+        self.poll_turn.set(turn);
         let me = Rc::downgrade(self);
         glib::timeout_add_local(Duration::from_secs(1), move || {
             let Some(me) = me.upgrade() else { return glib::ControlFlow::Break };
+            if me.poll_turn.get() != turn {
+                return glib::ControlFlow::Break;
+            }
             let (engine, weak) = (me.engine.clone(), Rc::downgrade(&me));
             glib::spawn_future_local(async move {
                 if let Ok(job) = engine.get("/api/setup/job").await
@@ -561,6 +569,10 @@ pub fn restart_on_notice(app: &gtk::Application, engine: &Arc<Engine>) {
                 }
                 return;
             }
+        }
+        // The engine's output closed and this window is still here: nothing can answer any more.
+        if let Some(window) = app.upgrade().and_then(|a| a.active_window()) {
+            gtk::AlertDialog::builder().modal(true).message("Lastbook's library engine stopped").detail("Close Lastbook and open it again.").build().show(Some(&window));
         }
     });
 }

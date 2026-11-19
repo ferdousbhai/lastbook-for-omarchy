@@ -58,14 +58,14 @@ def main():
     packs = list(src.get('packs') or [])
     if not packs:
         sys.exit(f'no packs: {a.packs} is missing or empty')
-    out = {'version': 1, 'published': src.get('published') or time.strftime('%Y-%m-%d'), 'packs': packs, 'maps': list(src.get('maps') or []),
-           'address_indexes': list(src.get('address_indexes') or []),
-           'models': [model_entry(measure(a.measure) if a.measure else MEASURED_MEMORY)]}
+    out = {'version': 1, 'published': src.get('published') or time.strftime('%Y-%m-%d'), 'packs': packs,
+           'models': [model_entry(measure(a.measure) if a.measure else MEASURED_MEMORY)],   # the committed file's order
+           'maps': list(src.get('maps') or []), 'address_indexes': list(src.get('address_indexes') or [])}
     if manifest.validate(out) is None:
         bad = [f.get('url') for p in packs for f in p.get('files', []) if not download.url_allowed(f.get('url'))]
         sys.exit('the manifest does not pass engine/setup/manifest.validate' + (f'; addresses not allowed: {bad}' if bad else ''))
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(a.out).write_text(json.dumps(out, indent=1) + '\n', encoding='utf-8')
+    Path(a.out).write_text(json.dumps(out, indent=2) + '\n', encoding='utf-8')
     print(f'{a.out}: {len(out["maps"])} maps, {len(packs)} packs ({", ".join(p["id"] + ("" if p.get("available") else " later") for p in packs)}), 1 model')
 
 

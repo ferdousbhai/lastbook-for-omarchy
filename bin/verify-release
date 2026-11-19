@@ -19,4 +19,10 @@ LASTBOOK_RELEASES="$download" bash "$work/install.sh"
 pacman -Qkk "$pkgname" >/dev/null
 # The engine imports with the packaged libzim and pypdfium2 (no network, no library).
 (cd /usr/lib/"$pkgname" && python3 -I -B -c 'import sys; sys.path[:0] = [".", "lib"]; import libzim, pypdfium2, server')
-echo "Verified: $pkgname ${tag#v} on $(uname -m)"
+# The address people are told to run must serve this release's installer, byte for byte.
+site=https://ferdousbhai.com/lastbook/install.sh
+curl -fsSL "$site" -o "$work/site-install.sh" \
+  || { echo "$site is missing or unreachable: publish this release's install.sh there." >&2; exit 1; }
+cmp -s "$work/install.sh" "$work/site-install.sh" \
+  || { echo "$site differs from the install.sh of $tag: publish the release's copy there." >&2; exit 1; }
+echo "Verified:$pkgname ${tag#v} on $(uname -m)"

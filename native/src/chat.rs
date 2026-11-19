@@ -6,7 +6,7 @@
 //! and the sources it cited, each opening where it came from. Chats are kept in the user's data folder.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     path::PathBuf,
     rc::{Rc, Weak},
     time::Duration,
@@ -79,6 +79,8 @@ pub struct ChatPage {
     chats: RefCell<Vec<Conversation>>,
     current: RefCell<Option<String>>,
     pending_about: RefCell<Option<String>>,
+    /// A look at the local AI's state is already due in a second.
+    watching: Cell<bool>,
     live: RefCell<Option<Live>>,
 }
 
@@ -175,6 +177,7 @@ impl ChatPage {
             chats: RefCell::new(chats),
             current: RefCell::new(None),
             pending_about: RefCell::new(None),
+            watching: Cell::new(false),
             live: RefCell::new(None),
         });
 
@@ -305,10 +308,12 @@ impl ChatPage {
                 _ => "No local AI on this computer: questions show the matching pages instead.".into(),
             };
             me.status.set_text(&line);
-            if matches!(state, "loading" | "checking" | "measuring") {
+            // One chain of looks while the AI gets ready, however often Chat is opened meanwhile.
+            if matches!(state, "loading" | "checking" | "measuring") && !me.watching.replace(true) {
                 let me = Rc::downgrade(&me);
                 glib::timeout_add_local_once(Duration::from_secs(1), move || {
                     if let Some(me) = me.upgrade() {
+                        me.watching.set(false);
                         me.refresh_status();
                     }
                 });
@@ -319,7 +324,7 @@ impl ChatPage {
     fn fill_list(&self) {
         clear(&self.list);
         let mut chats = self.chats.borrow().clone();
-        chats.sort_by_key(|c| -c.updated);
+        chats.sort_by_key(|c| std::cmp::Reverse(c.updated));
         for c in chats.iter().take(200) {
             let row = gtk::ListBoxRow::new();
             row.add_css_class("sidebar-row");
@@ -612,17 +617,19 @@ impl ChatPage {
     }
 
     async fn finish(self: &Rc<Self>, mut msg: Msg) {
-        let Some(l) = self.live.take() else { return };
-        // Without a model the engine answers with an error and no pages: show the matching pages instead.
+        let Some(chat) = self.live.borrow().as_ref().map(|l| l.chat.clone()) else { return };
+        // Without a model the engine answers with an error and no pages: show the matching pages instead. The answer
+        // stays the live one while they are fetched, so no second question starts in between.
         if msg.content.is_empty()
             && msg.sources.is_empty()
             && let Some(app) = self.app.upgrade()
         {
-            let q = self.chats.borrow().iter().find(|c| c.id == l.chat).and_then(|c| c.messages.iter().rev().find(|m| m.role == "user").map(|m| m.content.clone())).unwrap_or_default();
+            let q = self.chats.borrow().iter().find(|c| c.id == chat).and_then(|c| c.messages.iter().rev().find(|m| m.role == "user").map(|m| m.content.clone())).unwrap_or_default();
             if let Ok(r) = app.engine.get(&query("/api/retrieve", &[("q", &q), ("k", "6")])).await {
                 msg.sources = r["results"].as_array().cloned().unwrap_or_default();
             }
         }
+        let Some(l) = self.live.take() else { return };
         clear(&l.shown.steps);
         l.shown.note.set_text("");
         self.fill_answer(&l.shown, &msg);

@@ -157,8 +157,11 @@ impl Videos {
         let engine = app.engine.clone();
         let me = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let Ok(rails) = engine.get("/api/videos").await else { return };
+            let rails = engine.get("/api/videos").await;
             let Some(me) = me.upgrade() else { return };
+            let Ok(rails) = rails else {
+                return me.loaded.set(false);   // the next visit asks again
+            };
             clear(&me.rails);
             for rail in rails.as_array().into_iter().flatten() {
                 let items: Vec<Value> = rail["items"].as_array().cloned().unwrap_or_default();
@@ -274,8 +277,15 @@ impl Videos {
         let (engine, id) = (app.engine.clone(), id.to_owned());
         let me = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let Ok(rec) = engine.get(&format!("/api/doc/{}", urlencoding::encode(&id))).await else { return };
+            let rec = engine.get(&format!("/api/doc/{}", urlencoding::encode(&id))).await;
             let Some(me) = me.upgrade() else { return };
+            let Ok(rec) = rec else {
+                me.title.set_text("This video is not in the library.");
+                me.meta.set_text("");
+                me.video.set_media_stream(gtk::MediaStream::NONE);
+                me.current.replace(None);
+                return;
+            };
             let Some(app) = me.app.upgrade() else { return };
             let title = rec["title"].as_str().unwrap_or_default().to_owned();
             app.report_title("watch", &title);

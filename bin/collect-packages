@@ -14,12 +14,13 @@ for architecture in "${arch[@]}"; do
   found=("$directory/"*.pkg.tar.zst)
   (( ${#found[@]} == 1 )) || { echo "Expected exactly one $architecture package" >&2; exit 1; }
   metadata=$(bsdtar -xOf "${found[0]}" .PKGINFO)
-  grep -qxF "pkgname = $pkgname" <<< "$metadata"
-  grep -qxF "arch = $architecture" <<< "$metadata"
+  grep -qxF "pkgname = $pkgname" <<< "$metadata" || { echo "The $architecture package is not $pkgname" >&2; exit 1; }
+  grep -qxF "arch = $architecture" <<< "$metadata" || { echo "The $architecture package was built for another architecture" >&2; exit 1; }
   actual_version=$(sed -n 's/^pkgver = //p' <<< "$metadata")
   version=${version:-$actual_version}
   [[ $actual_version == "$version" ]] || { echo "Versions differ: $actual_version, expected $version" >&2; exit 1; }
-  [[ $(basename "${found[0]}") == "$pkgname-$version-$architecture.pkg.tar.zst" ]]
+  [[ $(basename "${found[0]}") == "$pkgname-$version-$architecture.pkg.tar.zst" ]] \
+    || { echo "Unexpected $architecture package name: $(basename "${found[0]}")" >&2; exit 1; }
   files+=("${found[0]}")
 done
 mkdir -p "$output"

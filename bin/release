@@ -15,38 +15,68 @@ remote=$(git remote -v | awk -v repo="$gh_repo" '$3 == "(push)" && $2 ~ ("github
 [[ -n $remote ]] || { echo "No git remote points at $gh_repo." >&2; exit 1; }
 git fetch -q "$remote" main --tags
 git merge-base --is-ancestor "$remote/main" HEAD || { echo "HEAD does not contain $remote/main; rebase first." >&2; exit 1; }
-! git rev-parse -q --verify "refs/tags/$tag" >/dev/null || { echo "$tag already exists." >&2; exit 1; }
+# This tag's releases on GitHub, one line each: "true" for a draft, "false" for a published one.
+release_states() { gh api "repos/$gh_repo/releases" --paginate --jq ".[] | select(.tag_name == \"$tag\") | .draft"; }
+# A run that failed after tagging (the CI build, the watch, signing, the upload) is resumed by running this again on
+# the same commit: nothing is bumped or tagged twice, and a finished or running CI build is reused.
+resume=0
+if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+  if [[ $(git rev-parse "$tag^{commit}") != "$(git rev-parse HEAD)" || $(cat VERSION) != "$version" ]]; then
+    echo "$tag already exists and is not this commit. Choose a newer version; or, if $tag was never published," >&2
+    echo "delete the tag here and on $remote, then run this again." >&2
+    exit 1
+  fi
+  states=$(release_states)
+  ! grep -qx false <<< "$states" || { echo "$tag is already published." >&2; exit 1; }
+  resume=1
+  echo "Resuming the release of $tag."
+fi
 grep -qF "$tag" packaging/release-notes.md || { echo "Write packaging/release-notes.md for $tag first." >&2; exit 1; }
 fingerprint=$(sed -n 's/^SIGNING_KEY_FINGERPRINT=//p' install.sh)
 gpg --batch --list-secret-keys "$fingerprint" >/dev/null
 export GPGKEY=$fingerprint
-# Setup's pinned roots must still cover every download host. It needs the network, so it runs here and not in bin/check.
-python3 -I -B packaging/check_tls_roots.py
+if (( ! resume )); then
+  # Setup's pinned roots must still cover every download host. It needs the network, so it runs here and not in bin/check.
+  python3 -I -B packaging/check_tls_roots.py
 
-echo "$version" > VERSION
-sed -i "0,/^version = .*/s//version = \"$version\"/" native/Cargo.toml
-cargo update --workspace --offline --manifest-path native/Cargo.toml
-bin/check
-# Named paths only: other work in this checkout stays out of the release commit.
-if ! git diff --quiet -- VERSION native/Cargo.toml native/Cargo.lock; then
-  git commit -q -m "Release $tag" -- VERSION native/Cargo.toml native/Cargo.lock
+  echo "$version" > VERSION
+  sed -i "0,/^version = .*/s//version = \"$version\"/" native/Cargo.toml
+  cargo update --workspace --offline --manifest-path native/Cargo.toml
+  bin/check
+  # Named paths only: other work in this checkout stays out of the release commit.
+  if ! git diff --quiet -- VERSION native/Cargo.toml native/Cargo.lock; then
+    git commit -q -m "Release $tag" -- VERSION native/Cargo.toml native/Cargo.lock
+  fi
+  [[ -z $(git status --porcelain) ]] || { echo 'The checks left changes behind; nothing was tagged.' >&2; exit 1; }
+  git tag -a "$tag" -m "Lastbook for Omarchy $version"
 fi
-[[ -z $(git status --porcelain) ]] || { echo 'The checks left changes behind; nothing was tagged.' >&2; exit 1; }
-git tag -a "$tag" -m "Lastbook for Omarchy $version"
 source_commit=$(git rev-parse HEAD)
 # workflow_dispatch runs only workflows that exist on the default branch, so main gets the release commit first.
-git push -q "$remote" HEAD:main "$tag"
-gh workflow run packages.yml --repo "$gh_repo" --ref "$tag"
+# Both or neither; when resuming, this changes nothing that is already there.
+git push -q --atomic "$remote" HEAD:main "$tag"
+# This tag and commit's builds, newest first, as the jq filter given picks from them.
+find_run() {
+  gh run list --repo "$gh_repo" --workflow packages.yml --event workflow_dispatch \
+    --branch "$tag" --commit "$source_commit" --limit 20 --json databaseId,status,conclusion --jq "$1"
+}
 run_id=''
-for _ in {1..60}; do
-  run_id=$(gh run list --repo "$gh_repo" --workflow packages.yml --event workflow_dispatch \
-    --branch "$tag" --commit "$source_commit" --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-  [[ -z $run_id ]] || break
-  sleep 10
-done
-[[ -n $run_id ]] || { echo "Native CI did not start; the tag remains for inspection." >&2; exit 1; }
+if (( resume )); then   # a build that passed, else one still running
+  run_id=$(find_run '[.[] | select(.conclusion == "success")][0].databaseId // empty')
+  [[ -n $run_id ]] || run_id=$(find_run '[.[] | select(.status != "completed")][0].databaseId // empty')
+fi
+if [[ -z $run_id ]]; then
+  newest=$(find_run '[.[].databaseId] | max // 0')
+  gh workflow run packages.yml --repo "$gh_repo" --ref "$tag"
+  for _ in {1..60}; do
+    run_id=$(find_run "[.[] | select(.databaseId > $newest)][0].databaseId // empty")
+    [[ -z $run_id ]] || break
+    sleep 10
+  done
+fi
+[[ -n $run_id ]] || { echo "Native CI did not start. Run bin/release $version again to resume." >&2; exit 1; }
 gh run watch "$run_id" --repo "$gh_repo" --exit-status \
-  || { echo "Native CI failed; no release was published. Inspect run $run_id." >&2; exit 1; }
+  || { echo "Native CI failed or could not be watched; no release was published. Inspect run $run_id." >&2
+       echo "If the build passed or is still running, run bin/release $version again to resume." >&2; exit 1; }
 # Revalidate the completed run, not just its search result or filename.
 run_valid=$(gh run view "$run_id" --repo "$gh_repo" \
   --json headSha,headBranch,event,status,conclusion \
@@ -77,6 +107,10 @@ done
   cp ../../install.sh install.sh
 )
 
+# A draft left behind by an upload that failed is replaced, never published as it is; the tag stays.
+while states=$(release_states); grep -qx true <<< "$states"; do
+  gh release delete "$tag" --repo "$gh_repo" --yes
+done
 gh release create "$tag" dist/release/* --repo "$gh_repo" --title "Lastbook for Omarchy $tag" \
   --notes-file packaging/release-notes.md --verify-tag --latest
 echo "Published https://github.com/$gh_repo/releases/tag/$tag; installation verification runs in CI."

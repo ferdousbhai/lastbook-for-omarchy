@@ -155,6 +155,8 @@ impl Reader {
         }
         self.doc.replace(None);
         self.picture.set_paintable(gdk::Paintable::NONE);
+        self.entry.set_text("");
+        self.total.set_text("");
         self.meta.set_text("");
         self.note.set_visible(false);
         let Some(app) = self.app.upgrade() else { return };
@@ -198,6 +200,9 @@ impl Reader {
             let Some(doc) = pdf::document(&file) else {
                 return me.fail("The file could not be opened.");
             };
+            if doc.n_pages() == 0 {
+                return me.fail("This document has no pages.");
+            }
             me.total.set_text(&format!("of {}", doc.n_pages()));
             me.doc.replace(Some((id, doc)));
             me.go_to(page);
@@ -269,7 +274,8 @@ impl Reader {
         // Fit the width up to a comfortable reading size, then zoom from there.
         let logical = ((f64::from(avail)).min(980.0) * self.zoom.get()).round() as i32;
         let scale = self.picture.scale_factor();
-        if let Some((tex, (w, h))) = pdf::render(doc, self.page.get() - 1, logical * scale) {
+        // Sharp on a dense screen, but never a picture of hundreds of megabytes at full zoom.
+        if let Some((tex, (w, h))) = pdf::render(doc, self.page.get() - 1, (logical * scale).min(4096)) {
             self.picture.set_paintable(Some(&tex));
             self.picture.set_size_request(logical, (f64::from(logical) * h / w).round() as i32);
         }
