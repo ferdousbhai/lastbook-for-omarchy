@@ -1,7 +1,7 @@
 """The optional local AI: Gemma 4 26B A4B run on this computer by lastbook-llm, a program of ours that speaks only through pipes.
 
-Nothing here opens a socket or reaches past this computer. The model is a file the person downloads from the website, outside the
-app. Lastbook finds it inside the selected library or an explicitly configured model folder, checks the published file, asks llama.cpp
+Nothing here opens a socket or reaches past this computer. The model is a file setup downloads from Hugging Face when the
+person asks for it (engine/setup/). Lastbook finds it inside the selected library or an explicitly configured model folder, checks the published file, asks llama.cpp
 whether it fits this computer's memory, and starts it when someone asks a question. It stops after IDLE_STOP seconds unused,
 when turned off, and when the app quits (the program leaves when its standard input closes).
 

@@ -23,6 +23,8 @@ options=('!debug' '!lto' '!strip')
 source=("llama.cpp::git+https://github.com/ggml-org/llama.cpp.git#tag=${_llama}")
 sha256sums=('SKIP')
 # Not in the Arch repositories: the ZIM reader and PDFium's bindings, as published on PyPI (pinned files, checked here).
+# libzim stays below 4: 4.0.0 renamed getResults and getEstimatedMatches, which engine/library.py calls. pypdfium2's
+# bitmap.to_numpy() is why the engine needs numpy (server.py draws PDF pages through it).
 source_x86_64=("https://files.pythonhosted.org/packages/31/f3/16820fa6041ecbf6c6b54d1b3dcc23e3489f71447870f36a3d2779092434/libzim-3.13.1-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
   "https://files.pythonhosted.org/packages/4f/a3/c9cc797fc8bdfb8f37b9b0f8b9d02a5fc196b2015f408d53624cab5b0519/pypdfium2-5.14.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl")
 sha256sums_x86_64=('bc29b54e91690de33706d765605d3ca9a63e066ce70175f51bf1169ba63bef70'

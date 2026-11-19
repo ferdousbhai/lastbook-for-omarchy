@@ -1,7 +1,0 @@
-# The engine's Python packages. The window (native/) is Rust and needs none of them.
-# Below 4: libzim 4.0.0 renamed getResults and getEstimatedMatches, which engine/library.py calls.
-libzim==3.13.1
-# server.py renders PDF pages through bitmap.to_numpy().
-numpy==2.4.6
-beautifulsoup4==4.15.0
-pypdfium2==5.14.0

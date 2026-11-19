@@ -5,8 +5,10 @@ stays correct, and never sends anything anywhere.
 
 ## Set up
 
-1. Clone the repository on Omarchy, install Rust, and use the system's Python 3 (`/usr/bin/python3`, which the window starts).
-2. Install `packaging/requirements.txt` into a folder of its own (README, "Run from source"), and build the window with `cargo build --manifest-path native/Cargo.toml`.
+1. Clone the repository on Omarchy, install Rust, and use the system's Python 3 (`/usr/bin/python3`, which the window starts),
+   with `python-numpy` and `python-beautifulsoup4` from pacman.
+2. Build the window with `cargo build --manifest-path native/Cargo.toml`. `bin/test-deps` fetches the two Python packages
+   Arch does not carry (README, "Run from source").
 3. Get a data folder: run the window (README, "Run from source") and let setup download the Small pack, or unzip a pack
    from lastbook.org. Point the app at it with `--data` or `LASTBOOK_DATA`.
 

@@ -55,7 +55,7 @@ def zim_problem(lib, ref):
             ARCHIVES[name] = Archive(path)
         return None if ARCHIVES[name].has_entry_by_path(entry) else 'no such entry'
     except ImportError:
-        return 'libzim is not installed (it is in the requirements file for your platform)'
+        return 'libzim is not installed (PYTHONPATH=$(bin/test-deps) has it)'
     except Exception as e:
         return type(e).__name__              # libzim's own messages carry the full file path
 

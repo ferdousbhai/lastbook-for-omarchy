@@ -1,4 +1,4 @@
-"""Local retrieval service shared by the web app and the assistant.
+"""Local retrieval service shared by the window's search and the assistant.
 
 Keyword search (the library's own FTS5/BM25 index, read only) + meaning-based search fused with reciprocal-rank fusion.
 Meaning-based search uses the embedding model that Recall for Omarchy already runs on this computer (EmbeddingGemma, on the

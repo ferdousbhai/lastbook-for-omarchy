@@ -4,10 +4,10 @@ An offline survival library for Omarchy (Arch Linux with Hyprland, on x86_64 and
 manuals, videos, encyclopedias, an offline map and short practical guides on one computer. After setup, it works offline. The
 desktop sidebar opens Videos, Map and Chat. Chat answers questions from the library, encyclopedias included, and cites its sources.
 
-A hard fork of [Lastbook](https://github.com/Immortal-Protocols/lastbook) (<https://lastbook.org>), made Omarchy-only: the macOS,
-Windows and iPad apps, the websites and the update checker are gone; meaning-based search uses
+A hard fork of [Lastbook](https://github.com/Immortal-Protocols/lastbook) (<https://lastbook.org>), made Omarchy-only, with one native window: the macOS,
+Windows and iPad apps, the browser interface, the websites, the pack-building tools and the update checker are gone; meaning-based search uses
 [Recall for Omarchy](https://github.com/ferdousbhai/recall-for-omarchy)'s embedding model; Chat reads the encyclopedias. The
-download packs are Lastbook's own, from `downloads.lastbook.org`.
+download packs are Lastbook's own, pre-built, from `downloads.lastbook.org`; the map is made on your computer in setup.
 
 > MIT License ([LICENSE](LICENSE)), as upstream. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -30,7 +30,7 @@ cd packaging/arch && makepkg -si
 For meaning-based search, install Recall for Omarchy as well (`curl -fsSL https://ferdousbhai.com/recall/install.sh | sudo bash`).
 Without it everything works, and search matches words only.
 
-Open Lastbook from the application menu. First-run setup downloads your chosen library, state map and optional local AI.
+Open Lastbook from the application menu. First-run setup downloads your chosen library, makes the map and, if you want it, downloads the local AI.
 The window is a native GTK 4 program (`lastbook`); it uses the system's WebKitGTK, Poppler and GStreamer codecs, and runs
 the Python engine as its own child process. Your library and settings stay in your home folder
 (`~/.local/share/Lastbook`, `~/.config/Lastbook`, `~/.cache/Lastbook`). Updates come from pacman (`omarchy update`).
@@ -48,13 +48,13 @@ the Python engine as its own child process. Your library and settings stay in yo
   15,000+). The person picks the areas in setup; Lastbook never detects location. Nothing is hosted by Lastbook: setup
   cuts the map on the person's computer from Protomaps' newest daily OpenStreetMap build (HTTPS range requests, only the
   tiles wanted) and builds place search from GeoNames (`engine/setup/maps.py`; the area list is
-  `packaging/arch/map-regions.json`, made by `tools/make_region_list.py`). The US library maps (state maps, addresses,
-  terrain) still work where installed.
+  `packaging/arch/map-regions.json`, made by `tools/make_region_list.py`). Where a library holds upstream's US map files,
+  the window does not draw them, but US place and street-address search still use them ([docs/MAPS.md](docs/MAPS.md)).
 - **Optional local AI.** Ask questions in plain words and get answers that cite library pages, from a model that runs on
   the computer itself (see "The local AI" below). Without it, Chat still finds the right pages.
 - **One-download setup.** On first run, setup defaults to Small and selects local AI when the computer can run it.
-  The person can choose Small, Medium or All, selects a state map, and starts the checked downloads. A library already on the
-  computer (a folder or a pack zip) can be used instead of downloading.
+  The person can choose Small, Medium or All, picks the world map and any street-level regions, and starts the checked
+  downloads. A library already on the computer (a folder or a pack zip) can be used instead of downloading.
 
 ## Privacy and network use
 
@@ -64,11 +64,12 @@ the Python engine as its own child process. Your library and settings stay in yo
   EmbeddingGemma over a local Unix socket in the user's runtime folder; nothing of it leaves the computer.
 - **One use of the network, started by the person.** Setup's downloader (`engine/setup/`), when the person starts or
   resumes a download. It goes through `engine/setup/download.py`, the only module that opens a connection: HTTPS on port
-  443 only, to allow-listed hosts only (`downloads.lastbook.org` for packs, maps and the manifest; Hugging Face's download
-  hosts for the AI model), no proxy from the system, and a redirect is followed only to another allowed host.
+  443 only, to allow-listed hosts only (`downloads.lastbook.org` for upstream's packs and the manifest; Hugging Face's
+  download hosts for the AI model; Protomaps' build hosts for the map; `download.geonames.org` for place names), no proxy
+  from the system, and a redirect is followed only to another allowed host.
 - **Pinned trust.** The downloader trusts only the root certificates in `engine/setup/roots.pem` (11 roots from Mozilla's
-  bundle), never the system's trust store. The builds refuse to finish if those roots no longer cover the allowed hosts
-  (`packaging/check_tls_roots.py`).
+  bundle), never the system's trust store. `python3 -I -B packaging/check_tls_roots.py` checks by hand that those roots
+  still cover the allowed hosts; run it before a release.
 - **Checked files.** Every download is checked against the SHA-256 in the manifest before it is used. Zips are checked
   for unsafe paths, links and sizes before anything is written.
 - **Nothing else.** The window blocks all web loads, there is no telemetry, no account, and nothing runs on a timer or at
@@ -76,7 +77,7 @@ the Python engine as its own child process. Your library and settings stay in yo
 - **A working library is never broken.** New data is unpacked beside the old one, checked, and then switched in with a
   single rename. A failure at any step leaves the old library as it was.
 
-The setup contract, including state maps, is in [docs/SETUP-API.md](docs/SETUP-API.md); the engine side is described in
+The setup contract is in [docs/SETUP-API.md](docs/SETUP-API.md); the engine side is described in
 [engine/setup/README.md](engine/setup/README.md).
 
 ## What's where
@@ -85,28 +86,28 @@ The setup contract, including state maps, is in [docs/SETUP-API.md](docs/SETUP-A
 |---|---|
 | `native/` | The desktop window: a Rust crate (binary `lastbook`, app id `io.github.ferdousbhai.Lastbook`) on GTK 4, WebKitGTK 6 and Poppler. It starts the engine as a child process. |
 | `app/` | The engine's side of the app: the pipe the window talks to (`engine_pipe.py`), library lookup and setup hooks (`main.py`), the no-port bridge (`bridge.py`), and tests (`app/tests/`). |
-| `engine/` | Paths and data-folder lookup, library access, saved pages, offline address search (`address_search.py`) and first-run setup (`engine/setup/`). |
+| `engine/` | Paths, the request handler's base and file rules (`library.py`), saved pages, offline address search (`address_search.py`) and setup (`engine/setup/`, which also makes the map). |
 | `server.py`, `assistant.py`, `retrieval.py`, `encyclopedia.py`, `llm_local.py` | The engine: request handler, the assistant and its citation checks, keyword plus meaning-based search (through Recall), encyclopedia articles as passages, and the local AI (model pins, fit check, runner control). |
 | `content/` | The curated guides (`topics/*.json`) and what curators looked for and did not find (`gaps.json`). Format: `content/SCHEMA.md`. |
-| `packaging/` | The Arch package (`arch/`: PKGBUILD, the pack manifest it ships, the package scan), the desktop entry (`linux/`), icons (`icon/`), release manifest, TLS roots tools, and `packaging/llm/` (the local AI runner). |
+| `packaging/` | The Arch package (`arch/`: PKGBUILD, the manifest and map region list it ships, the package scan), the desktop entry (`linux/`), the icon (`icon/`), release manifest, TLS roots tools, and `packaging/llm/` (the local AI runner). |
 | `tools/` | Curator helpers (`libq.py`, `validate_topics.py`), the map area list's maker (`make_region_list.py`), and the retrieval check (`eval/`). |
-| `docs/` | The setup contract (`SETUP-API.md`), how the offline map is put together (`MAPS.md`) and notes on the library server version (`LIBRARY-SERVER.md`). |
+| `docs/` | How the window and the engine talk (`ENGINE.md`), the setup contract (`SETUP-API.md`) and how the offline map is put together (`MAPS.md`). |
 
 ## Run from source
 
-You need Python 3.11 or later, Rust, the GTK 4, WebKitGTK 6 and Poppler development files (the Arch packages in the
+You need Arch's Python 3.14 (the pinned libzim and pypdfium2 wheels are built for it), `python-numpy` and
+`python-beautifulsoup4` from pacman, Rust, the GTK 4, WebKitGTK 6 and Poppler development files (the Arch packages in the
 PKGBUILD's `depends`), and a **data folder**. A data folder holds `library-data/catalog.json` (the library) and gets a
-`derived/` folder for indexes, caches and logs. Get one by running the app once and letting setup download a pack, or by
-unzipping a pack from lastbook.org.
+`derived/` folder for the map, indexes, caches and logs. Get one by running the app once and letting setup download a
+pack, or by unzipping a pack from lastbook.org.
 
 ```bash
-python3 -m pip install --target .deps -r packaging/requirements.txt     # for /usr/bin/python3, the Python the window starts
 cargo build --manifest-path native/Cargo.toml
-LASTBOOK_DEV=1 PYTHONPATH=$PWD/.deps native/target/debug/lastbook --data /path/to/LastbookData
+LASTBOOK_DEV=1 PYTHONPATH=$(bin/test-deps) native/target/debug/lastbook --data /path/to/LastbookData
 ```
 
-`LASTBOOK_DEV=1` lets the engine (`/usr/bin/python3 app/engine_pipe.py`, started by the window) take its dependencies from
-`PYTHONPATH`. Without `--data`, the engine checks `LASTBOOK_DATA`, the folder chosen last time, and its own data folder.
+`bin/test-deps` unpacks the two wheels the PKGBUILD pins and prints their folder. `LASTBOOK_DEV=1` lets the engine
+(`/usr/bin/python3 app/engine_pipe.py`, started by the window) take its dependencies from `PYTHONPATH`. Without `--data`, the engine checks `LASTBOOK_DATA`, the folder chosen last time, and its own data folder.
 Existing libraries elsewhere are accessed when the person chooses them. If no library is available, it opens setup.
 The full order is in `app/main.py`.
 
@@ -138,14 +139,15 @@ built package with `python3 packaging/arch/scan_package.py <package>`. Releases:
 `packaging/release-notes.md` written first) tags, builds both architectures natively in CI (`.github/workflows/packages.yml`,
 `bin/build-packages`), signs the packages and repository databases locally and publishes them with `install.sh`.
 
-## Packs, state maps and the local AI
+## Packs and the local AI
 
 - **Packs** are data folders: a library plus its catalog, search index and US map data. They come pre-built from
   upstream Lastbook, on `downloads.lastbook.org`; nothing here builds them. Setup downloads the one the person picks and
   checks it against `setup/manifest-v1.json` (`packaging/arch/manifest-v1.json`; a newer copy is fetched from
   `downloads.lastbook.org` when setup opens and used only if it validates).
-- **State maps** are upstream's detailed map set and address index for one US state. Setup still installs and repairs
-  them where a library has one, and address search uses the index; the window draws its own map of the world instead.
+- **State maps** are upstream's detailed map set and address index for one US state. The window does not offer or draw
+  them (it draws its own map of the world); the engine still installs and repairs them where a library has one, and
+  address search uses the index.
 - **The local AI** is optional: Gemma 4 26B A4B (Unsloth's `gemma-4-26B-A4B-it-UD-Q4_K_M.gguf`, about 17 GB). The file
   name, size, SHA-256 and Hugging Face revision are pinned in `llm_local.py`. Setup offers it only where the measured fit
   says it fits (about 18 GB of memory for model and context, plus a reserve) and says why in plain words when it does not.
@@ -160,7 +162,7 @@ built package with `python3 packaging/arch/scan_package.py <package>`. Releases:
 - **The library** (`library-data/`): hundreds of gigabytes of third-party manuals, videos and encyclopedias, each under
   its own terms. It is distributed as packs, with a Sources and permissions page in each pack.
 - **Models and maps** (GGUF, map data): large, and published by their makers or built from public data. Setup
-  fetches them, and the checksums and pins are here.
+  fetches the model (its checksum and pin are here) and makes the map on the person's computer.
 - **Generated data** (`derived/`, builds): indexes, caches and logs the engine makes as it runs, and build output.
 - **Release and signing material**: signing keys, deploy settings and the release folders.
 - **Private data**: a household's own home area, the private word lists the scans use, machine

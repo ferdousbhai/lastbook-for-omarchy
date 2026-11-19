@@ -71,7 +71,7 @@ def main(a):
             from libzim.reader import Archive
             from libzim.search import Searcher, Query
         except ImportError:
-            sys.exit('libzim is not installed (it is in the requirements file for your platform).')
+            sys.exit('libzim is not installed (PYTHONPATH=$(bin/test-deps) has it).')
         files = sorted((LIB/'collections').glob('*.zim'))
         if not files: print('This library holds no ZIM files.')
         for path in files:

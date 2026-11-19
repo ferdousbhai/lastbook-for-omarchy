@@ -3,9 +3,8 @@
 
   python3 -I -B packaging/setup_roots.py <path to certifi's cacert.pem>
 
-Setup does not use the system's trust store: the Windows build's CPython 3.12.10 lacks the eMudhra key denylist
-(CVE-2026-115557), and OpenSSL ignores Windows' own distrust lists. So it trusts only the roots that the allowed hosts' chains
-end in today, plus the sibling roots of those same CAs, so a routine rotation does not break downloads. Taken from Mozilla's
+Setup does not use the system's trust store: a download must not depend on what a computer happens to trust, or on a root
+added to it. So it trusts only the roots that the allowed hosts' chains end in today, plus the sibling roots of those same CAs, so a routine rotation does not break downloads. Taken from Mozilla's
 bundle as certifi ships it. Chains checked 12 Nov 2026:
   downloads.lastbook.org (Cloudflare)    Google Trust Services, GTS Root R4
   pub-….r2.dev                           Let's Encrypt, ISRG Root X2 (cross-signed by X1)

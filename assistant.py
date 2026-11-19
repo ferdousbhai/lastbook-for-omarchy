@@ -1,7 +1,8 @@
-"""Source-grounded assistant: hybrid retrieval + local DeepSeek with bounded, read-only library tools.
+"""Source-grounded assistant: hybrid retrieval + a model on this computer with bounded, read-only library tools.
 
-Used by server.py (/api/retrieve, /api/chat, /api/assistant/status). The model is only ever called server-side at
-MODEL_URL; clients never see it. Tools can read the public survival library (catalog ids, pages, transcripts, map
+Used by server.py (/api/retrieve, /api/chat, /api/assistant/status). The model is the local AI (llm_local.py, over pipes);
+with LASTBOOK_LOCAL_AI set to anything else it is an OpenAI-compatible server at MODEL_URL, which must be a loopback
+address. Tools can read the public survival library (catalog ids, pages, transcripts, map
 gazetteer) and nothing else: no file paths, URLs or shell input are accepted from the model.
 """
 import base64, json, re, socket, time, urllib.error, urllib.request
@@ -32,7 +33,7 @@ MAX_ROUNDS = 2  # tool rounds; then the model must answer with what it has
 S = None        # server module, set by init()
 INDEX = None    # retrieval.Index
 ENC = None      # encyclopedia.Encyclopedias: ZIM articles as citable passages
-# The optional local AI (llm_local.py): on in the desktop app, off in the server version unless LASTBOOK_LOCAL_AI=1.
+# The optional local AI (llm_local.py): app/engine_pipe.py sets LASTBOOK_LOCAL_AI=1 unless the environment says otherwise.
 # When it is installed and fits, it answers; otherwise a model server on this computer at BASE, if one runs.
 LOCAL = None
 
@@ -537,7 +538,7 @@ def _fit_prompt(msgs, tools, llm_local):
 
 
 def chat(messages, about, emit, cancelled):
-    """Run one assistant turn. emit(event: dict) streams to the browser; cancelled() -> True stops early."""
+    """Run one assistant turn. emit(event: dict) streams to the window; cancelled() -> True stops early."""
     t0 = time.time()
     sess = Session()
     msgs = [{'role': 'system', 'content': SYSTEM}]
@@ -631,7 +632,7 @@ def chat(messages, about, emit, cancelled):
             try:
                 result, summary = run_tool(c['name'], args if isinstance(args, dict) else {}, sess, extra)
             except Exception as e:
-                result, summary = f'Tool failed: {type(e).__name__}', {'error': type(e).__name__}  # sent to the browser: no paths
+                result, summary = f'Tool failed: {type(e).__name__}', {'error': type(e).__name__}  # sent to the window: no paths
             tool_log.append({'name': c['name'], 'args': args, 'summary': summary})
             emit({'type': 'tool', 'name': c['name'], 'args': args, 'phase': 'done', 'summary': summary})
             msgs.append({'role': 'tool', 'tool_call_id': c['id'] or f'call_{i}', 'content': result})

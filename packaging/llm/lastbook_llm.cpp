@@ -379,7 +379,7 @@ int main(int argc, char ** argv) {
     }
     llama_log_set(log_to_stderr, nullptr);
     common_log_set_verbosity_thold(LOG_LEVEL_WARN);
-    ggml_backend_load_all();               // the backends beside this program, when they are separate files (Windows)
+    ggml_backend_load_all();               // the backends beside this program: separate .so files (GGML_BACKEND_DL)
     llama_backend_init();
 
     Inbox in;

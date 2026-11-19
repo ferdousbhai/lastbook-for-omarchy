@@ -9,13 +9,14 @@ The contract is `docs/SETUP-API.md`. This package fills it in.
 | `manifest.py` | Loads the bundled `setup/manifest-v1.json`, plus one fetch of `https://downloads.lastbook.org/manifest-v1.json` when setup opens. The fetched copy is used only if it validates and every URL is allowed. |
 | `hardware.py` | Reads RAM, unified memory, GPUs and VRAM (from `/proc` and `/sys`) and free space per disk. It estimates whether the AI fits, or measures it with `lastbook-llm --measure` and `llm_local.judge`. |
 | `install.py` | Checks a zip before writing anything: zip-slip, absolute paths, links, case clashes, encryption and the size against `installed_bytes`. Unpacks so that a stopped unpack can resume. Does the one-rename switch, keeps the old library, and rolls back if the new one does not open. |
+| `maps.py` | Makes the map on the person's computer: cuts `world.mbtiles` and `regions-<id>.mbtiles` out of Protomaps' newest daily OpenStreetMap build (PMTiles, range requests through `download.py`) and builds `world-places.sqlite` from GeoNames. The region list is the bundled `setup/map-regions.json`. |
 | `api.py` | Handles `/api/setup/*`, runs the job (`job.json`, pause, resume, cancel and retry), recognizes files already on the computer, makes the recommendation, and provides setup mode's `SetupServer` for the bridge. |
 
 ## How it runs
 
 - **Setup mode.** `app/main.py` finds no library. `app/engine_pipe.py` puts `SetupServer` behind the bridge, with no socket: it answers `/api/setup/*` only. The job downloads into `<parent>/LastbookData.setup/downloads/` and unpacks into `.../unpack/LastbookData`. Then it writes `pending.json`. `finish` answers `{ok, folder}`; `engine_pipe.py` remembers the target in `settings.json` and sends the window `{"restart": folder}`, which starts the engine again. On the next start, `api.startup()` makes the switch before the engine opens anything. After the engine starts, `api.opened()` marks the model checked (`llm_local.mark_checked`), removes the work folder and deletes the old library (below).
-- **Normal mode.** `server.py` hands `/api/setup/` to `api.handle()`. `main.py` configures a manage-mode `Setup` for that. The setup page is at `/ui/setup.html`. An upgrade is staged the same way and switches on relaunch, so nothing is renamed while files are open. Adding only the AI moves the model into the open library and marks it checked at once.
-- Only this computer gets answers: the bridge, or loopback when running as `server.py`.
+- **Normal mode.** `app/engine_pipe.py` configures a manage-mode `Setup` for the open library, and `server.py` hands `/api/setup/` to `api.handle()`. The screens are the window's own (`native/src/setup.rs`, under Library → Library and local AI). An upgrade is staged the same way and switches when the engine restarts, so nothing is renamed while files are open. Adding only the AI moves the model into the open library and marks it checked at once; map files made without a pack go straight into the open library.
+- Requests arrive only through the pipe and the bridge. Nothing listens.
 - **The old library after an upgrade.** The switch renames it to `LastbookData.old-<date>` and `pending.json` remembers it, so `apply_pending` can put it back if the new library does not open. `api.opened()` runs only after the engine has opened the new library: it removes `pending.json`, then deletes the old folder in a background thread. `install.is_old_of` decides what may be deleted: a real folder (never a link) directly beside the open library, named `<library>.old-<8 digits>` with an optional `-<n>`, and listed by setup itself (this switch, or `old` in `setup.json` from an earlier one). A folder stays in that list until it is gone, so a delete cut short carries on at the next start.
 
 ## Routes added beyond the contract table
@@ -29,11 +30,11 @@ The contract is `docs/SETUP-API.md`. This package fills it in.
 The tests use a local HTTPS test server, which exists only in the test file. It can cut the connection, send corrupt bytes, change the ETag, ignore Range and redirect to bad hosts. The tests also cover kill and restart mid-download and mid-unpack, unpack guards, switching, rollback, upgrades, recommendations, and the bridge:
 
 ```bash
-python3 -W ignore -B app/tests/test_setup.py
+PYTHONPATH=$(bin/test-deps) python3 -W ignore -B -m unittest app.tests.test_setup app.tests.test_maps
 ```
 
-The bundled manifest is built from `derived/release/manifest-v1.json` (publish-packs), plus the model constants in `llm_local.py`:
+`bin/test` runs these with the rest. The manifest the package ships is `packaging/arch/manifest-v1.json`; its packs are upstream's, and `packaging/release_manifest.py` rewrites it so the model entry matches the constants in `llm_local.py`:
 
 ```bash
-python3 -I -B packaging/release_manifest.py --small-from derived/release/1.0.0-20261104-1507
+python3 -I -B packaging/release_manifest.py
 ```

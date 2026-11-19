@@ -58,7 +58,7 @@ _TAG = re.compile(r'<[^>]+>')
 # within its memory limit, around 150 KB of real content.
 _BLANK_ROW = re.compile(rb'<tr>(?:<td><small>[A-Z]+\d+</small>\s*</td>)+</tr>')
 MAX_TAG = 64 * 1024     # no real tag is this long. One that is gets left as it is.
-# WebKit opens a socket for preconnect even with a Content-Security-Policy of default-src 'none'. The window has its own switches for these; a browser over HTTP does not.
+# WebKit opens a socket for preconnect even with a Content-Security-Policy of default-src 'none'. The window has its own switches for these as well.
 _LINK = re.compile(rb'<link\b[^>]*>', re.I)
 _HINT_REL = re.compile(rb"""\brel\s*=\s*(?:"[^"]*|'[^']*|[^\s>]+)""", re.I)
 _HINT = re.compile(rb'preconnect|dns-prefetch|prefetch|prerender', re.I)

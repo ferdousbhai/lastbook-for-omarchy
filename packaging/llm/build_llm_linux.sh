@@ -57,7 +57,7 @@ MIT licence, LICENSE-llama.cpp.txt. Built with $(gcc --version | head -1) on $(.
 Uses the system's libstdc++, libgcc, libgomp (GCC runtime library exception) and libvulkan (Apache-2.0), not shipped here.
 EOF
 
-# What each file needs. Every library it names must be beside it or a package of the system (listed for the .deb Depends).
+# What each file needs. Every library it names must be beside it or a package of the system (the PKGBUILD's depends).
 bad=0
 : > "$O/deps.txt"
 for f in "$O"/lastbook-llm "$O"/*.so*; do
