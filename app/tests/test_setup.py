@@ -1336,9 +1336,8 @@ class Through(Base):
                 def head(self, status, reason, headers):
                     self.status = status
 
-                def data(self, chunk, ack):
+                def data(self, chunk):
                     self.body += chunk
-                    ack()
 
                 def finish(self, ok):
                     self.done.set()

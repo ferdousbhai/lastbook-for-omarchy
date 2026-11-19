@@ -61,13 +61,12 @@ class PipeSink:
         self.text = ctype.startswith('text/') or any(t in ctype for t in ('json', 'javascript', 'xml', 'svg', 'event-stream'))
         send({'id': self.rid, 'head': status, 'type': ctype})
 
-    def data(self, chunk, ack):
+    def data(self, chunk):
         if chunk:
             if self.text:
                 send({'id': self.rid, 'chunk': chunk.decode('utf-8', 'replace')})
             else:
                 send({'id': self.rid, 'b64': base64.b64encode(chunk).decode('ascii')})
-        ack()
 
     def finish(self, ok):
         send({'id': self.rid, 'end': bool(ok)})

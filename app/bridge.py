@@ -1,14 +1,13 @@
 """No-port transport between the app's window and the engine. Nothing in here opens a socket.
 
 A request from the window runs the engine's unchanged request Handler on a worker thread, over in-memory streams.
-engine_pipe.py (the native window's engine process) calls start(...), which feeds a Sink piece by piece, with backpressure.
+engine_pipe.py (the native window's engine process) calls start(...), which feeds a Sink piece by piece. The Sink's write to the
+window's pipe blocks while the window is behind, and that is all that holds an answer back.
 
 What holds:
-  - Lanes. The app's own small requests, page renders, chat and large files each have their own workers
-    and their own byte budget, so a flood of one never takes a worker or a byte from another. The small lane also adds workers
+  - Lanes. The app's own small requests, page renders, chat and large files each have their own workers,
+    so a flood of one never takes a worker from another. The small lane also adds workers
     when a request has waited, because a slow answer mostly sleeps: it must not hold up a quick one behind it.
-  - In flight. LANES below sums to TOTAL_INFLIGHT, the most bytes this process can be holding between the engine and
-    the web view. What the web view keeps after it has them is its own, and has to be measured in the real window.
   - The flood gate. An answer over BIG_BODY is refused before any of it moves: the window holds a whole answer in memory.
   - No PDF ever reaches the web view. A PDF can carry scripts and the system's viewers run them, so what arrives is a page of images PDFium has drawn (_answer_pdf).
 """
@@ -30,18 +29,16 @@ CHUNK = MiB                         # largest piece handed to a stream Sink
 VIDEO_PIECE = 8 * MiB               # most bytes one video Range answer holds. The player asks for the rest.
 BIG_BODY = 64 * MiB                 # the largest answer handed over whole. The largest real saved page is 44 MB.
 WHOLE_MAX = 256 * MiB               # above this the refusal says 413, not 403. PDFs and videos come in pieces.
-PER_REQUEST = 8 * MiB               # most unacknowledged bytes for one request
 MAX_POST = 256 * 1024               # the engine's own limit on a chat request is 200,000 bytes
 
-# name: (workers, most waiting, byte budget). Budgets are separate on purpose: one shared pool would let large files starve /api/.
+# name: (workers, most waiting)
 LANES = {
-    'small': (8, 5000, 24 * MiB),    # the app's own files and /api/
-    'render': (2, 500, 8 * MiB),     # PDF page images: PDFium runs one at a time anyway, so more workers would only sit waiting
-    'chat': (8, 32, 8 * MiB),        # long-lived: must not hold a small worker for the length of an answer
-    'large': (6, 1000, 64 * MiB),    # video, PDF, saved pages, encyclopedia entries
+    'small': (8, 5000),     # the app's own files and /api/
+    'render': (2, 500),     # PDF page images: PDFium runs one at a time anyway, so more workers would only sit waiting
+    'chat': (8, 32),        # long-lived: must not hold a small worker for the length of an answer
+    'large': (6, 1000),     # video, PDF, saved pages, encyclopedia entries
 }
-TOTAL_INFLIGHT = sum(v[2] for v in LANES.values())
-GROW_TO = {'small': 48}                 # most workers once requests are kept waiting. The byte budgets above do not grow with them.
+GROW_TO = {'small': 48}                 # most workers once requests are kept waiting
 GROW_AFTER = 0.05                       # seconds a request waits before a lane adds workers for what is waiting
 SHRINK_AFTER = 10                       # seconds an added worker sits idle before it goes
 
@@ -67,63 +64,16 @@ class Sink:
     def head(self, status, reason, headers):
         """headers: a list of (name, value)."""
 
-    def data(self, chunk, ack):
-        """chunk: bytes, at most CHUNK. Call ack() once the web view has them, or when dropping them. Until then they
-        count against the lane's budget. Calling ack twice, or after a cancel, is harmless."""
+    def data(self, chunk):
+        """chunk: bytes, at most CHUNK. Taking as long as the window needs is how a fast answer is slowed to its pace."""
 
     def finish(self, ok):
         """The last call. ok False: the answer stopped short."""
 
 
-class _Budget:
-    def __init__(self, cap, per_request=None):
-        self.cap, self.per_request = cap, per_request
-        self.used = self.peak = 0
-        self.cond = threading.Condition()
-
-    def _fits(self, n, ex):
-        if self.used + n > self.cap and self.used:   # `and self.used`: a piece bigger than the whole budget goes alone
-            return False
-        return not (self.per_request and ex.held and ex.held + n > self.per_request)
-
-    def _take(self, n, ex):
-        self.used += n
-        ex.held += n
-        self.peak = max(self.peak, self.used)
-
-    def acquire(self, n, ex):
-        with self.cond:
-            while not ex.stopped and not self._fits(n, ex):
-                self.cond.wait(0.25)
-            if ex.stopped:
-                raise BrokenPipeError
-            self._take(n, ex)
-
-    def try_acquire(self, n, ex):
-        with self.cond:
-            if ex.stopped or not self._fits(n, ex):
-                return False
-            self._take(n, ex)
-            return True
-
-    def release(self, n, ex):
-        with self.cond:
-            n = min(n, ex.held)
-            self.used -= n
-            ex.held -= n
-            self.cond.notify_all()
-
-    def release_all(self, ex):
-        with self.cond:
-            self.used -= ex.held
-            ex.held = 0
-            self.cond.notify_all()
-
-
 class _Lane:
-    def __init__(self, name, workers, max_waiting, budget_bytes, per_request, grow_to=None):
+    def __init__(self, name, workers, max_waiting, grow_to=None):
         self.name, self.workers, self.max_waiting = name, workers, max_waiting
-        self.budget = _Budget(budget_bytes, per_request)
         self.waiting = deque()
         self.cond = threading.Condition()
         self.grow_to = max(workers, grow_to or 0)
@@ -215,10 +165,8 @@ class Exchange:
 
     def __init__(self, bridge, method, target, raw, lane):
         self.b, self.method, self.target, self.raw, self.lane = bridge, method, target, raw, lane
-        self.budget = lane.budget if lane else None
         self.path = urllib.parse.unquote(target.split('?', 1)[0])
         self.stopped = False
-        self.held = 0
         self.hbuf = bytearray()
         self.head_done = False
         self.status = None
@@ -232,12 +180,10 @@ class Exchange:
         self.t0 = time.time()
 
     def cancel(self):
-        """The web view gave up on this request. The Handler stops at its next write, and a worker waiting on the budget wakes at once."""
+        """The window gave up on this request. The Handler stops at its next write."""
         if self.stopped:
             return
         self.stopped = True
-        if self.budget:
-            self.budget.release_all(self)
         self.b._log_end(self, 'cancelled')
 
     # ---- worker side
@@ -401,18 +347,9 @@ class _Streamed(Exchange):
 
     def _send(self, b):
         for i in range(0, len(b), CHUNK):
-            piece = b[i:i + CHUNK]
-            self.budget.acquire(len(piece), self)
-            self.sink.data(piece, self._acker(len(piece)))
-
-    def _acker(self, n):
-        state = [n]
-
-        def ack():
-            taken, state[0] = state[0], 0
-            if taken:
-                self.budget.release(taken, self)
-        return ack
+            if self.stopped:     # a cancel stops a write midway, not only at the Handler's next one
+                raise BrokenPipeError
+            self.sink.data(b[i:i + CHUNK])
 
     def _end(self):
         if self.stopped:
@@ -430,12 +367,12 @@ class _Streamed(Exchange):
 
 
 class Bridge:
-    def __init__(self, server_module, log=None, lanes=None, per_request=PER_REQUEST):
+    def __init__(self, server_module, log=None, lanes=None):
         """server_module: the imported engine, after server.init(). log: a function taking one dict per request."""
         self.server, self.origin = server_module, ORIGIN
         self.logger = log
         self.Handler = _make_handler(server_module.Handler)
-        self.lanes = {n: _Lane(n, w, q, b, per_request, GROW_TO.get(n)) for n, (w, q, b) in (lanes or LANES).items()}
+        self.lanes = {n: _Lane(n, w, q, GROW_TO.get(n)) for n, (w, q) in (lanes or LANES).items()}
         self.waiting_now = threading.Event()
         threading.Thread(target=self._grow_lanes, daemon=True, name='lane-grow').start()
         self.counts = {}
@@ -452,8 +389,7 @@ class Bridge:
         if refused:
             status, reason, hs, text = refused
             sink.head(status, reason, hs)
-            ack = lambda: None
-            sink.data(text, ack)
+            sink.data(text)
             sink.finish(True)
             return None
         target, raw, lane = prepared
@@ -462,7 +398,7 @@ class Bridge:
             self.count('queue-full')
             status, reason, hs, text = _plain(503, 'Busy', b'too many requests')
             sink.head(status, reason, hs)
-            sink.data(text, lambda: None)
+            sink.data(text)
             sink.finish(True)
             return None
         self.waiting_now.set()

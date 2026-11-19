@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The bridge with no window: Range forms, streaming, cancel, lanes, the in-flight cap, every refusal.
+"""The bridge with no window: Range forms, streaming, cancel, lanes, every refusal.
 
   python3 -B app/tests/test_bridge.py [-v]
 
@@ -122,9 +122,11 @@ MOD = types.SimpleNamespace(Handler=TestHandler, catalog=server.catalog, render_
 
 
 class Rec(B.Sink):
-    def __init__(self, auto=True):
-        self.auto, self.status, self.reason, self.hs = auto, None, None, {}
-        self.parts, self.acks, self.times = [], [], []
+    """hold: an Event. Once `after` pieces are in, data() waits for it, as a write to a window that has stopped reading would."""
+
+    def __init__(self, hold=None, after=1):
+        self.hold, self.after, self.status, self.reason, self.hs = hold, after, None, None, {}
+        self.parts, self.times = [], []
         self.ok = None
         self.done = threading.Event()
         self.first = threading.Event()
@@ -133,14 +135,12 @@ class Rec(B.Sink):
         self.status, self.reason, self.hs = status, reason, {k.lower(): v for k, v in headers}
         self.raw_hs = headers
 
-    def data(self, chunk, ack):
+    def data(self, chunk):
         self.parts.append(chunk)
         self.times.append(time.time())
         self.first.set()
-        if self.auto:
-            ack()
-        else:
-            self.acks.append(ack)
+        if self.hold and len(self.parts) >= self.after:
+            self.hold.wait(30)
 
     def finish(self, ok):
         self.ok = ok
@@ -432,7 +432,6 @@ class Both:
         self.assertFalse(r.ok)
         self.assertLessEqual(len(r.body), B.BIG_BODY + MiB)
         self.assertEqual(self.b.counts['unknown-length'], 1)
-        self.assertEqual(self.b.lanes['large'].budget.used, 0)
 
     # ---- what stays the engine's
     def no_code(self, r, sandbox='sandbox;'):
@@ -638,22 +637,19 @@ class NothingGoesOut(unittest.TestCase):
 class StreamTests(Both, unittest.TestCase):
 
     def test_cancel_mid_body_stops_the_handler(self):
-        b = B.Bridge(MOD, per_request=4 * MiB)
-        r = Rec(auto=False)
-        ex = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r)
+        b = B.Bridge(MOD)
+        hold = threading.Event()
+        r = Rec(hold, after=4)
+        ex = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r)   # one piece of video: 8 chunks
         self.assertTrue(wait_until(lambda: len(r.parts) == 4))
         lane = b.lanes['large']
-        self.assertEqual(lane.budget.used, 4 * MiB)
         self.assertEqual(lane.active, 1)
         ex.cancel()
         self.assertTrue(ex.stopped)
-        self.assertEqual(lane.budget.used, 0)
+        hold.set()
         self.assertTrue(wait_until(lambda: lane.active == 0))
         self.assertFalse(r.done.is_set())
-        self.assertEqual(len(r.parts), 4)
-        for a in r.acks:   # acks that arrive late must not count twice
-            a()
-        self.assertEqual(lane.budget.used, 0)
+        self.assertEqual(len(r.parts), 4)     # the write stopped midway: the other four chunks never came
 
     def test_chunks_are_bounded(self):
         r = Rec()
@@ -675,9 +671,9 @@ class StreamTests(Both, unittest.TestCase):
                 events.append('head')
                 super().head(*a)
 
-            def data(self, c, ack):
+            def data(self, c):
                 events.append('data')
-                super().data(c, ack)
+                super().data(c)
 
             def finish(self, ok):
                 events.append('finish')
@@ -719,87 +715,31 @@ class StreamTests(Both, unittest.TestCase):
         self.assertFalse(r.done.is_set())
         self.assertTrue(wait_until(lambda: self.b.lanes['chat'].active == 0))
 
-    def test_cancel_while_waiting_on_the_budget(self):
-        tiny = {**B.LANES, 'large': (2, 10, 2 * MiB)}
-        b = B.Bridge(MOD, lanes=tiny, per_request=8 * MiB)
-        r1, r2 = Rec(auto=False), Rec(auto=False)
-        e1 = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r1)
-        e2 = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r2)
-        lane = b.lanes['large']
-        self.assertTrue(wait_until(lambda: lane.budget.used == 2 * MiB and lane.active == 2))
-        time.sleep(0.2)
-        t = time.time()
-        e1.cancel()
-        e2.cancel()
-        self.assertTrue(wait_until(lambda: lane.active == 0, 2))
-        OBSERVED['cancel to worker free, while blocked on the budget'] = f'{(time.time() - t) * 1000:.0f} ms'
-        self.assertEqual(lane.budget.used, 0)
-
     def test_cancel_while_queued_never_runs(self):
-        lanes = {**B.LANES, 'large': (1, 10, 64 * MiB)}
+        lanes = {**B.LANES, 'large': (1, 10)}
         b = B.Bridge(MOD, lanes=lanes)
-        r1, r2 = Rec(auto=False), Rec()
+        hold = threading.Event()
+        r1, r2 = Rec(hold), Rec()
         e1 = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r1)
         self.assertTrue(r1.first.wait(5))
         e2 = b.start('GET', b.origin + '/videos/a.mp4', {}, None, r2)
         e2.cancel()
         e1.cancel()
+        hold.set()
         self.assertTrue(wait_until(lambda: b.lanes['large'].done >= 2))
         self.assertIsNone(r2.status)
         self.assertFalse(r2.done.is_set())
 
-    def test_cap_holds_and_work_resumes(self):
-        cap, per = 4 * MiB, 2 * MiB
-        lanes = {**B.LANES, 'large': (6, 100, cap)}
-        b = B.Bridge(MOD, lanes=lanes, per_request=per)
-        recs = [Rec(auto=False) for _ in range(12)]
-        for r in recs:
-            b.start('GET', b.origin + '/videos/a.mp4', {'Range': 'bytes=0-3145727'}, None, r)   # 3 MiB each
-        lane = b.lanes['large']
-        self.assertTrue(wait_until(lambda: lane.budget.used == cap))
-        time.sleep(0.3)
-        self.assertEqual(lane.budget.used, cap)
-        self.assertEqual(lane.budget.peak, cap)
-        self.assertEqual(lane.active, 6)
-        self.assertEqual(sum(len(r.parts) for r in recs), 4)    # 4 MiB out, the rest held back at the source
-        small = call(b, 'GET', '/api/health')     # the large budget is full; the small lane does not care
-        self.assertEqual(small.status, 200)
-        deadline = time.time() + 20
-        while time.time() < deadline and not all(r.done.is_set() for r in recs):
-            for r in recs:
-                acks, r.acks = r.acks, []
-                for a in acks:
-                    a()
-            time.sleep(0.005)
-        self.assertTrue(all(r.done.is_set() for r in recs))
-        for r in recs:
-            self.assertEqual(r.body, pat(0, 3 * MiB))
-            for a in r.acks:
-                a()
-        self.assertLessEqual(lane.budget.peak, cap)
-        self.assertEqual(lane.budget.used, 0)
-
-    def test_per_request_limit(self):
+    def test_small_stays_quick_under_a_flood_of_large(self):
         b = B.Bridge(MOD)
-        r = Rec(auto=False)
-        ex = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r)
-        self.assertTrue(wait_until(lambda: len(r.parts) == B.PER_REQUEST // MiB))
-        time.sleep(0.2)
-        self.assertEqual(len(r.parts), B.PER_REQUEST // MiB)
-        ex.cancel()
-
-    def test_default_cap_under_flood(self):
-        b = B.Bridge(MOD)
-        recs = [Rec(auto=False) for _ in range(300)]
+        hold = threading.Event()
+        recs = [Rec(hold) for _ in range(300)]
         exs = [b.start('GET', b.origin + '/videos/huge.mkv', {'Range': f'bytes={i * 1000}-'}, None, r) for i, r in enumerate(recs)]
         lane = b.lanes['large']
-        self.assertTrue(wait_until(lambda: lane.budget.used >= 6 * B.PER_REQUEST))
+        self.assertTrue(wait_until(lambda: lane.active == 6))
         time.sleep(0.2)
-        self.assertTrue(wait_until(lambda: lane.budget.used == lane.budget.cap))   # a piece fits the per-request limit, so finished requests can hold bytes too
-        time.sleep(0.2)
-        self.assertEqual(lane.budget.used, lane.budget.cap)
-        self.assertEqual(lane.budget.peak, lane.budget.cap)
         self.assertEqual(lane.active, 6)
+        self.assertEqual(sum(len(r.parts) for r in recs), 6)     # each worker is held at its first chunk; nothing else has been read
         self.assertGreater(len(lane.waiting), 280)
         times = []
         for _ in range(200):
@@ -809,28 +749,30 @@ class StreamTests(Both, unittest.TestCase):
         t = time.perf_counter()
         self.assertEqual(call(b, 'GET', '/ui/app.js').status, 200)
         ui = time.perf_counter() - t
-        OBSERVED['stream, small during large flood (300 videos, nothing acknowledged)'] = f'/api/health median {statistics.median(times) * 1000:.2f} ms, max {max(times) * 1000:.2f} ms over 200; /ui/app.js {ui * 1000:.1f} ms; large budget used {lane.budget.used / MiB:.0f} MiB of {lane.budget.cap / MiB:.0f}'
+        OBSERVED['stream, small during large flood (300 videos, the window not reading)'] = f'/api/health median {statistics.median(times) * 1000:.2f} ms, max {max(times) * 1000:.2f} ms over 200; /ui/app.js {ui * 1000:.1f} ms'
         self.assertLess(max(times), 1.0)
         for e in exs:
             e.cancel()
+        hold.set()
         self.assertTrue(wait_until(lambda: lane.active == 0 and not lane.waiting))
-        self.assertEqual(lane.budget.used, 0)
 
     def test_queue_full(self):
-        lanes = {**B.LANES, 'large': (1, 2, 64 * MiB)}
+        lanes = {**B.LANES, 'large': (1, 2)}
         b = B.Bridge(MOD, lanes=lanes)
-        recs = [Rec(auto=False) for _ in range(3)]
-        exs = [b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r) for r in recs]
-        self.assertTrue(recs[0].first.wait(5))
-        wait_until(lambda: b.lanes['large'].active == 1)
+        hold = threading.Event()
+        recs = [Rec(hold) for _ in range(3)]
+        exs = [b.start('GET', b.origin + '/videos/huge.mkv', {}, None, recs[0])]
+        self.assertTrue(recs[0].first.wait(5))     # one running, held
+        exs += [b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r) for r in recs[1:]]     # two waiting
+        self.assertNotIn(None, exs)
         extra = [Rec() for _ in range(3)]
         got = [b.start('GET', b.origin + '/videos/a.mp4', {}, None, r) for r in extra]
-        self.assertIn(None, got)
-        self.assertEqual(sum(r.status == 503 for r in extra), got.count(None))
-        self.assertGreaterEqual(b.counts['queue-full'], 1)
-        for e in exs + got:
-            if e:
-                e.cancel()
+        self.assertEqual(got, [None] * 3)
+        self.assertEqual([r.status for r in extra], [503] * 3)
+        self.assertEqual(b.counts['queue-full'], 3)
+        for e in exs:
+            e.cancel()
+        hold.set()
 
     def test_redirect_becomes_a_page_that_moves_itself(self):
         r = self.get('/documents/t/redirect')
@@ -879,8 +821,7 @@ class WholeProcess(unittest.TestCase):
     def test_nothing_written_to_the_real_library(self):
         self.assertTrue(str(server.LIB).startswith(str(DATA)))
 
-    def test_budgets_add_up(self):
-        self.assertEqual(B.TOTAL_INFLIGHT, 104 * MiB)
+    def test_video_piece_size(self):
         self.assertGreater(B.VIDEO_PIECE, 2.38e6)     # the largest request seen from a player
         self.assertGreaterEqual(B.VIDEO_PIECE, 4 * MiB)
         self.assertLessEqual(B.VIDEO_PIECE, 8 * MiB)

@@ -34,8 +34,8 @@ def note(name, ok, detail=''):
 
 
 class Rec(B.Sink):
-    def __init__(self, keep=True, ack_delay=0):
-        self.keep, self.ack_delay = keep, ack_delay
+    def __init__(self, keep=True):
+        self.keep = keep
         self.h = hashlib.sha256()
         self.n = 0
         self.parts = []
@@ -46,14 +46,11 @@ class Rec(B.Sink):
     def head(self, status, reason, headers):
         self.status, self.hs = status, {k.lower(): v for k, v in headers}
 
-    def data(self, chunk, ack):
+    def data(self, chunk):
         self.n += len(chunk)
         self.h.update(chunk)
         if self.keep:
             self.parts.append(chunk)
-        if self.ack_delay:
-            time.sleep(self.ack_delay)
-        ack()
 
     def finish(self, ok):
         self.ok = ok
@@ -120,7 +117,7 @@ if zims:
     loc = h.get('location')
     note('ZIM root', s == 200 and b'refresh' in d, f'{s} {loc or d[:70]}')
 
-# A page asking for video as fast as it can, 16 at a time, with a web view that drains at about 200 MB/s per worker.
+# Video asked for as fast as it can be, with a window that takes about 200 MB/s per worker.
 b = B.Bridge(server)
 base = rss()
 N, count = 400, [0]
@@ -138,8 +135,8 @@ class Drain(Rec):
     def finish(self, ok):
         one_done()
 
-    def data(self, chunk, ack):
-        threading.Timer(0.005, ack).start()
+    def data(self, chunk):
+        time.sleep(0.005)
 
 t = time.time()
 for i in range(N):
@@ -153,8 +150,8 @@ while not done.wait(0.05):
     worst_small = max(worst_small, time.perf_counter() - t1)
 time.sleep(0.2)
 lane = b.lanes['large']
-note(f'flood of {N} video pieces', lane.budget.peak <= lane.budget.cap and lane.budget.used == 0,
-     f'{time.time() - t:.1f} s; budget peak {lane.budget.peak / MiB:.0f} of {lane.budget.cap / MiB:.0f} MiB; process RSS {base / MiB:.0f} -> peak {peak[0] / MiB:.0f} MiB; worst /api/health during it {worst_small * 1000:.1f} ms')
+note(f'flood of {N} video pieces', lane.active == 0 and not lane.waiting,
+     f'{time.time() - t:.1f} s; process RSS {base / MiB:.0f} -> peak {peak[0] / MiB:.0f} MiB; worst /api/health during it {worst_small * 1000:.1f} ms')
 
 LSOF = shutil.which('lsof') or 'lsof'
 files = subprocess.run([LSOF, '-nP', '-p', str(os.getpid())], capture_output=True, text=True).stdout.lower()
