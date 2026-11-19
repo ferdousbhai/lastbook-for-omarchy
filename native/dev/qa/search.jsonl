@@ -1,0 +1,45 @@
+# Search from the keyboard, a result opened, saved with Ctrl+D, found in Saved, and un-saved again.
+# native/dev/qa.sh native/dev/qa/search.jsonl [shots-dir]
+
+{"do":"wait","role":"window","name":"Guides — Lastbook"}
+{"do":"key","keys":"<Control>f"}
+{"do":"wait","role":"window","name":"Search — Lastbook"}
+{"do":"wait","role":"search-box","name":"What do you need? A word, a question, a model number…","focused":true}
+{"do":"type","text":"boil water"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"label","name":"Documents (1)","visible":true}
+{"do":"wait","role":"generic","name":"Safe water at home, Preview Press · page 2 of 2","visible":true}
+{"do":"shot","path":"search.png"}
+
+# A kind of result: Manuals & pages alone.
+{"do":"click","role":"toggle-button","name":"Manuals & pages"}
+{"do":"wait","role":"toggle-button","name":"Manuals & pages","checked":true}
+{"do":"wait","role":"toggle-button","name":"Everything","checked":false}
+{"do":"wait","role":"generic","name":"Safe water at home, Preview Press · page 2 of 2","visible":true}
+{"do":"click","role":"toggle-button","name":"Everything"}
+{"do":"wait","role":"toggle-button","name":"Everything","checked":true}
+
+# The second page's result opens on its page; Ctrl+D saves it.
+{"do":"focus","role":"generic","name":"Safe water at home, Preview Press · page 2 of 2"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"window","name":"Safe water at home — Lastbook"}
+{"do":"wait","role":"text-box","name":"Page number","text":"2"}
+{"do":"key","keys":"<Control>d"}
+{"do":"wait","role":"button","name":"Saved — click to remove (Ctrl+D)","visible":true}
+{"do":"select","role":"list-item","name":"Saved"}
+{"do":"wait","role":"window","name":"Saved — Lastbook"}
+{"do":"wait","role":"generic","name":"Safe water at home, Page 2","visible":true}
+{"do":"shot","path":"saved.png"}
+
+# Opened from Saved, and un-saved there with Ctrl+D: Saved no longer lists it.
+{"do":"focus","role":"generic","name":"Safe water at home, Page 2"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"window","name":"Safe water at home — Lastbook"}
+{"do":"wait","role":"text-box","name":"Page number","text":"2"}
+{"do":"key","keys":"<Control>d"}
+{"do":"wait","role":"button","name":"Save this (Ctrl+D)","visible":true}
+{"do":"select","role":"list-item","name":"Saved"}
+{"do":"wait","role":"window","name":"Saved — Lastbook"}
+{"do":"wait","role":"generic","name":"Safe water at home, Page 2","visible":false}
+{"do":"shot","path":"saved-empty.png"}
+{"do":"quit"}

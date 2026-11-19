@@ -1,0 +1,60 @@
+# Every screen the sidebar and the footer reach, a picture of each, and the history from the keyboard.
+# native/dev/qa.sh native/dev/qa/browse.jsonl [shots-dir]
+
+# Guides, and a guide opened from its card.
+{"do":"wait","role":"window","name":"Guides — Lastbook"}
+{"do":"wait","role":"grid-cell","name":"Get safe drinking water","visible":true}
+{"do":"wait","role":"button","name":"Back (Alt+Left)","sensitive":false}
+{"do":"shot","path":"guides.png"}
+{"do":"click","role":"grid-cell","name":"Get safe drinking water"}
+{"do":"wait","role":"window","name":"Get safe drinking water — Lastbook"}
+{"do":"wait","role":"button","name":"Ask about this guide","visible":true}
+{"do":"wait","role":"button","name":"Save this (Ctrl+D)","visible":true}
+{"do":"shot","path":"guide.png"}
+
+# Alt+Left goes back to the guides, Alt+Right forward to the guide again.
+{"do":"key","keys":"<Alt>Left"}
+{"do":"wait","role":"window","name":"Guides — Lastbook"}
+{"do":"wait","role":"button","name":"Forward (Alt+Right)","sensitive":true}
+{"do":"key","keys":"<Alt>Right"}
+{"do":"wait","role":"window","name":"Get safe drinking water — Lastbook"}
+{"do":"wait","role":"button","name":"Forward (Alt+Right)","sensitive":false}
+
+# The library, a shelf, and a manual from it by the keyboard.
+{"do":"select","role":"list-item","name":"Library"}
+{"do":"wait","role":"window","name":"Library — Lastbook"}
+{"do":"wait","role":"grid-cell","name":"Water & sanitation","visible":true}
+{"do":"shot","path":"library.png"}
+{"do":"click","role":"grid-cell","name":"Water & sanitation"}
+{"do":"wait","role":"window","name":"Water & sanitation — Lastbook"}
+{"do":"shot","path":"shelf.png"}
+{"do":"focus","role":"generic","name":"Safe water at home, PDF · Preview Press · 2 pages"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"window","name":"Safe water at home — Lastbook"}
+{"do":"wait","role":"text-box","name":"Page number","text":"1"}
+{"do":"click","role":"button","name":"Next page (Right, Page Down)"}
+{"do":"wait","role":"text-box","name":"Page number","text":"2"}
+{"do":"shot","path":"reader.png"}
+{"do":"click","role":"button","name":"Back (Alt+Left)"}
+{"do":"wait","role":"window","name":"Water & sanitation — Lastbook"}
+
+# Videos (the made-up library has none), the map (no map data in it), About and the library's downloads, unstarted.
+{"do":"select","role":"list-item","name":"Videos"}
+{"do":"wait","role":"window","name":"Videos — Lastbook"}
+{"do":"wait","role":"search-box","name":"Search video titles","visible":true}
+{"do":"shot","path":"videos.png"}
+{"do":"select","role":"list-item","name":"Map"}
+{"do":"wait","role":"window","name":"Map — Lastbook"}
+{"do":"wait","role":"search-box","name":"Find a place, town or address","visible":true}
+{"do":"click","role":"button","name":"Zoom in (+)"}
+{"do":"shot","path":"map.png"}
+{"do":"click","role":"button","name":"About"}
+{"do":"wait","role":"window","name":"About — Lastbook"}
+{"do":"wait","role":"generic","name":"Privacy","visible":true}
+{"do":"shot","path":"about.png"}
+{"do":"focus","role":"generic","name":"Library and downloads"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"window","name":"Library and downloads — Lastbook"}
+{"do":"wait","role":"radio","name":"Keep the library as it is","checked":true}
+{"do":"shot","path":"manage.png"}
+{"do":"quit"}

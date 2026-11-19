@@ -25,6 +25,11 @@ rusqlite = "0.43.0"
 flate2 = "1.1.11"
 pangocairo = "0.22"
 
+[features]
+# Scripted QA (dev/qa.sh, run by bin/test): OMUI_QA=1 drives the window from JSON lines on stdin. Release builds leave it
+# off.
+qa = ["omui/qa"]
+
 [profile.release]
 lto = "thin"
 codegen-units = 4

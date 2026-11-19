@@ -20,7 +20,10 @@ The README explains the layout.
 bin/test
 ```
 
-Run it before you open a pull request. If you change the packaging, also run the build: it ends
+Run it before you open a pull request. It also drives the window through the scripts in `native/dev/qa` over a small
+made-up library, on a broadway display of its own (`gtk4-broadwayd`, part of `gtk4`), so no window opens: a change to
+what the window shows or how it is reached may need one of them changed, and `native/dev/qa.sh <script> <folder>` keeps
+the pictures they take. If you change the packaging, also run the build: it ends
 with a package scan, and that scan must pass. If you change a guide in `content/`, run `tools/validate_topics.py`
 against a library, so every id, page and encyclopedia path it cites still exists:
 
