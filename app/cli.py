@@ -121,7 +121,7 @@ def head(S, r):
     return out
 
 
-def document(S, A, doc_id):
+def document(A, doc_id):
     r = A.record(doc_id)
     if not r or r['kind'] == 'metadata':
         raise Failed(f'No document with id {doc_id!r} in the library. Find ids with: lastbook search')
@@ -134,7 +134,7 @@ def search(S, A, a):
 
 
 def read(S, A, a):
-    r = document(S, A, a.doc_id)
+    r = document(A, a.doc_id)
     if r['kind'] == 'article':
         _, text = A.ENC.read(a.doc_id, (a.section or '')[:80], ARTICLE_CHARS)
         return {**head(S, r), 'section': a.section or None, 'texts': [{'text': text}]}
@@ -153,7 +153,7 @@ def read(S, A, a):
 
 
 def page(S, A, a):
-    r = document(S, A, a.doc_id)
+    r = document(A, a.doc_id)
     if r['kind'] != 'pdf':
         raise Failed(f'{a.doc_id} is not a PDF: only PDF pages can be drawn')
     if a.page > (r.get('pages') or 1):
@@ -269,7 +269,7 @@ def status(S, A, a):
     except (OSError, ValueError):
         summary = {}
     zims = S.zim_names()
-    # The local AI as its saved state says, without checking the file or starting anything: `ask` does that.
+    # The local AI by whether its file is here, without checking the file or starting anything: `ask` does that.
     local = llm_local.LOCAL
     model = next((str(f / llm_local.FILE) for f in llm_local.places() if (f / llm_local.FILE).is_file()), None)
     ai = 'no runtime' if not local.runner else 'installed' if model else 'absent'
@@ -296,7 +296,7 @@ def open_route(S, A, a):
     kind = target.split(':', 1)[0]
     if kind in ROUTES and ':' in target:
         return target if a.at is None else f'{target}:{a.at}'
-    r = document(S, A, target)
+    r = document(A, target)
     at = a.at or ''
     if at and not at.isdigit():
         print('lastbook: open DOC_ID takes a page number (a video: seconds)', file=sys.stderr)

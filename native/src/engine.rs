@@ -195,8 +195,12 @@ impl Engine {
         (id, rx)
     }
 
+    /// Stops request `id`. The engine sends nothing more for it, so its answer ends here.
     pub fn cancel(&self, id: u64) {
         let _ = self.stdin.lock().unwrap().write_all(format!("{{\"cancel\":{id}}}\n").as_bytes());
+        if let Some(tx) = self.waiters.lock().unwrap().remove(&id) {
+            let _ = tx.send_blocking(Piece::End);
+        }
     }
 
     /// The whole answer to a GET, read as JSON.

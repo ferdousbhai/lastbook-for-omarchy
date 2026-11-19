@@ -32,6 +32,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # The installer's scenarios run in a user namespace of their own, which Ubuntu's AppArmor refuses by default.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: |
+          set -o pipefail
           git ls-files bin '*.sh' packaging/arch/PKGBUILD | xargs -n1 bash -n
           tests/install_test.sh

@@ -29,7 +29,7 @@ if [[ ${LASTBOOK_INSTALL_TEST_INNER:-} != 1 ]]; then
   fi
   if ! unshare -rm true 2>/dev/null; then
     echo "skip install_test: unprivileged user namespaces are unavailable" >&2
-    exit 0
+    exit ${CI:+1}   # skipped on a computer that cannot run them; in CI a skip is a failure
   fi
   rm -rf "${work:?}"
   exec env LASTBOOK_INSTALL_TEST_INNER=1 unshare -rm "$root/tests/install_test.sh"

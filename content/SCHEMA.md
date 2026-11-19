@@ -6,7 +6,8 @@ Each file is one "need" in the app. The app shows, in order:
 3. **limits** — when the source itself says to stop, get help, or that a professional/trained person is needed,
 4. **prepare** — readings for getting ready before it happens,
 5. **learn** — full manuals, videos, encyclopedia articles for deeper study,
-6. for learning tracks, an ordered **route** of beginner-to-advanced steps.
+6. for learning tracks, an ordered **route** of beginner-to-advanced steps,
+7. **what this guide does not cover** — from `content/gaps.json` (below).
 
 Source facts (publisher, edition, date, file type, page count, video length, transcript) are filled in
 automatically from `catalog.json` — do not copy them into the topic file.
@@ -57,3 +58,14 @@ Rules
   Hesperian/MSF/USDA/extension sources; mention in `note` if a source is old (e.g. 1980s civil defense) or written for
   health workers or trained responders.
 - Favour fewer, better items: 1–4 readings per choice, 3–8 in prepare, 4–10 in learn.
+- A choice that belongs to another guide has `"goto": "<guide id>/<choice id>"` in place of `read`: the app links to that guide.
+
+# What a guide does not cover (`content/gaps.json`)
+
+One entry per guide id, shown at the end of the guide. `missing` lists what curators looked for and did not find;
+`disagree` lists where the sources give different answers. Both are plain sentences.
+
+```json
+{"water": {"missing": ["No current CDC or EPA page on disinfecting drinking water."],
+           "disagree": ["Sources give different bleach drop counts."]}}
+```

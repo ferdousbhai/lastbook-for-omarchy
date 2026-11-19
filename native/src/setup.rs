@@ -81,7 +81,7 @@ impl SetupPage {
             // With a library open, the assistant knows whether its model is on this computer (setup only looks in the library).
             let local = engine.get("/api/assistant/status").await.ok().map(|s| s["local"]["state"].as_str().unwrap_or_default().to_owned());
             if let Some(me) = me.upgrade() {
-                me.ai_present.set(local.as_deref().is_some_and(|s| matches!(s, "ready" | "stopped" | "loading" | "checking" | "measuring")));
+                me.ai_present.set(local.as_deref().is_some_and(|s| matches!(s, "ready" | "stopped" | "loading" | "checking" | "measuring" | "error" | "too_big")));
                 me.draw(st);
             }
         });
@@ -122,6 +122,12 @@ impl SetupPage {
 
         // Packs
         self.body.append(&crate::cards::section("Library"));
+        // Nothing suggested (no library fits the disk, or none is ready): the engine says why.
+        if first && rec["pack"].is_null() && let Some(why) = rec["why"].as_str() {
+            let l = label(why, "meta");
+            l.add_css_class("error");
+            self.body.append(&l);
+        }
         let need = &rec["need_bytes"];
         let mut group: Option<gtk::CheckButton> = None;
         for p in st["manifest"]["packs"].as_array().into_iter().flatten() {
@@ -276,7 +282,7 @@ impl SetupPage {
         self.body.append(&self.job_box);
         self.state.replace(st.clone());
         self.draw_job(&st["job"]);
-        if st["job"]["state"].as_str().is_some_and(|s| !matches!(s, "done" | "failed" | "cancelled")) {
+        if st["job"]["state"].as_str().is_some_and(|s| !matches!(s, "done" | "failed")) {
             self.poll();
         }
     }
@@ -428,7 +434,7 @@ impl SetupPage {
             let r = engine.post(&path, &body).await;
             let Some(me) = me.upgrade() else { return };
             match r {
-                Ok(v) if v.get("error").is_some() => {
+                Ok(v) if v["error"].is_string() => {   // a job's answer carries "error": null
                     me.status.set_text(v["error"].as_str().unwrap_or("Setup could not start."));
                     me.status.add_css_class("error");
                 }
@@ -458,7 +464,7 @@ impl SetupPage {
                     && let Some(me) = weak.upgrade()
                 {
                     me.draw_job(&job);
-                    if job["state"].as_str().is_none_or(|s| matches!(s, "done" | "failed" | "cancelled")) {
+                    if job["state"].as_str().is_none_or(|s| matches!(s, "done" | "failed")) {
                         me.polling.set(false);
                     }
                 }
@@ -468,6 +474,10 @@ impl SetupPage {
     }
 
     fn draw_job(self: &Rc<Self>, job: &Value) {
+        // The state kept for a redraw has the job as it now is, not as it was when the page opened.
+        if let Some(st) = self.state.borrow_mut().as_object_mut() {
+            st.insert("job".into(), job.clone());
+        }
         clear(&self.job_box);
         let Some(items) = job["items"].as_array().filter(|i| !i.is_empty()) else { return };
         self.job_box.append(&crate::cards::section("Progress"));
@@ -514,6 +524,7 @@ impl SetupPage {
         };
         match state {
             "done" => add("Open the library", "/api/setup/finish", true),
+            "failed" if job["error"]["code"] == "cancelled" => {}   // the person's own cancel: nothing to try again
             "failed" => {
                 add("Try again", "/api/setup/retry", true);
                 add("Cancel", "/api/setup/cancel", false);
@@ -522,7 +533,6 @@ impl SetupPage {
                 add("Resume", "/api/setup/resume", true);
                 add("Cancel", "/api/setup/cancel", false);
             }
-            "cancelled" => {}
             _ => {
                 add("Pause", "/api/setup/pause", false);
                 add("Cancel", "/api/setup/cancel", false);

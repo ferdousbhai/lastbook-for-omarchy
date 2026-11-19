@@ -534,7 +534,8 @@ impl App {
         self.update_star();
     }
 
-    /// Replaces the current history entry and shows it (a document that turned out to be a web page, a new chat's id).
+    /// Replaces the current history entry, and shows it if asked (a document that turned out to be a web page; a new
+    /// chat's id and a turned page change the entry only).
     pub fn replace_route(self: &Rc<Self>, route: Route, show: bool) {
         let pos = self.pos.get();
         if let Some(r) = self.history.borrow_mut().get_mut(pos) {

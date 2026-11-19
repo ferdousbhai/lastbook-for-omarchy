@@ -150,11 +150,11 @@ def measure_ai(llm_local, model_path, timeout=180):
         return None
     try:
         fit, _ = llm_local.measure(runner, model_path, timeout)
-    except (OSError, subprocess.SubprocessError, ValueError):
+        j = llm_local.judge(fit) if fit else None
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, AttributeError):
         return None
-    if not fit:
+    if not j:
         return None
-    j = llm_local.judge(fit)
     return {'fits': bool(j['fits']), 'needs_bytes': int(j['needs']), 'estimate': False,
             'why': j.get('why') or f'Measured on this computer: the local AI needs about {_gb(j["needs"])} of memory, and it fits.'}
 

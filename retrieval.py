@@ -360,7 +360,7 @@ class Index:
             return [(None, t, txt) for t, txt in vtt_windows(LIB / how[2])]
         return [(None, None, c) for c in chunks_of((LIB / how[2]['path']).read_text(encoding='utf-8', errors='replace'))]
 
-    def update(self, budget_s=None):
+    def update(self):
         """Embed new/changed documents. Returns number of documents processed, -1 when another process is indexing."""
         lockf = open(IDX / 'indexer.lock', 'w')
         try:
@@ -381,7 +381,7 @@ class Index:
                 self.status.pop('recall', None)
                 self._reconcile(db)
                 self._load(truncate=True, db=db)
-                return self._update_with(db, budget_s)
+                return self._update_with(db)
             finally:
                 db.close()
         finally:
@@ -424,7 +424,7 @@ class Index:
                     self.active[i - 1] = False
         return len(ids)
 
-    def _update_with(self, db, budget_s):
+    def _update_with(self, db):
         known = dict(db.execute('SELECT doc_id, sig FROM docstate').fetchall())
         srcs = self.sources()
         excl = self.excluded()
@@ -441,8 +441,6 @@ class Index:
         self.status.update(state='indexing' if todo else 'up to date', pending=len(todo), pruned_last=pruned)
         t0, done, nchunks = time.time(), 0, 0
         for doc_id, sig, _, how in todo:
-            if budget_s and time.time() - t0 > budget_s:
-                break
             gap = None
             try:
                 parts = self._texts(doc_id, how)
@@ -502,7 +500,7 @@ class Index:
         while True:
             wait = every
             try:
-                n = self.update(budget_s=None)
+                n = self.update()
                 if n >= 0:  # a successful pass clears any earlier error
                     self.status.pop('error', None)
                     self.status['last_ok'] = time.strftime('%Y-%m-%dT%H:%M:%S')

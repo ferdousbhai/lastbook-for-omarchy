@@ -77,7 +77,7 @@ def main(data):
                {'id': 'rope', 'kind': 'html', 'path': 'pages/rope.html', 'title': 'Rope', 'publisher': 'Preview Press',
                 'category': 'skills', 'collection': 'Manuals'}]
     (lib / 'catalog.json').write_text(json.dumps(records))
-    (lib / 'summary.json').write_text('{"resources": 3, "pdfs": 2, "pdf_pages": 4, "web_pages": 1}')
+    (lib / 'summary.json').write_text('{"pdfs": 2, "pdf_pages": 4, "web_pages": 1, "videos": 0, "collections": 1, "document_bytes": 0}')
     con = sqlite3.connect(lib / 'search.sqlite')
     con.execute('CREATE VIRTUAL TABLE pages USING fts5(doc_id UNINDEXED,title,collection,category,path UNINDEXED,'
                 'page UNINDEXED,body,tokenize="unicode61")')

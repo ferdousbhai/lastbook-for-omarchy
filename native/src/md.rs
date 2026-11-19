@@ -27,7 +27,7 @@ fn cite_links(escaped: &str, cited: &dyn Fn(&str) -> bool) -> String {
         };
         let inner = &after[..end];
         let keys: Vec<&str> = inner.split([',', ';']).map(str::trim).collect();
-        let all_keys = !keys.is_empty() && keys.iter().all(|k| k.len() >= 2 && matches!(&k[..1], "S" | "M") && k[1..].chars().all(|c| c.is_ascii_digit()));
+        let all_keys = !keys.is_empty() && keys.iter().all(|k| k.len() >= 2 && k.starts_with(['S', 'M']) && k[1..].chars().all(|c| c.is_ascii_digit()));
         if all_keys {
             for k in keys {
                 let label = k.trim_start_matches('S');
@@ -221,8 +221,8 @@ mod tests {
 
     #[test]
     fn brackets_that_are_not_citations_stay() {
-        let b = blocks("See [the manual] and [S] and [S1x].", &|_| true);
+        let b = blocks("See [the manual] and [S] and [S1x] at 60 [°C] or […].", &|_| true);
         let Block::Para(m) = &b[0] else { panic!() };
-        assert_eq!(m, "See [the manual] and [S] and [S1x].");
+        assert_eq!(m, "See [the manual] and [S] and [S1x] at 60 [°C] or […].");
     }
 }

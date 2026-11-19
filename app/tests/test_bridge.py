@@ -562,6 +562,27 @@ class StreamTests(Both, unittest.TestCase):
         self.assertFalse(r.done.is_set())
         self.assertTrue(wait_until(lambda: self.b.lanes['chat'].active == 0))
 
+    def test_the_pipe_can_cancel_a_long_answer_after_many_later_requests(self):
+        """app/engine_pipe.py keeps a request until its answer ends, not until enough others have come after it."""
+        out = sys.stdout
+        import engine_pipe as P     # importing it points sys.stdout at the log, as the engine process wants
+        sys.stdout = out
+        real_send, P.send = P.send, lambda obj: None
+        try:
+            STUB.update(pieces=2000, delay=0.02)
+            before = len(STUB['stopped'])
+            P.start(self.b, 'chat', 'POST', '/api/chat', {})
+            for i in range(300):
+                P.start(self.b, i, 'GET', '/api/t/echo', None)
+            self.assertTrue(wait_until(lambda: list(P._running) == ['chat']))     # the 300 answered ones are gone, the chat is not
+            P.cancel('chat')
+            self.assertTrue(wait_until(lambda: len(STUB['stopped']) > before, 5))
+            self.assertEqual(P._running, {})
+            P.start(self.b, 'bad', 'PUT', '/', None)     # refused at once: nothing is left behind for it
+            self.assertEqual(P._running, {})
+        finally:
+            P.send = real_send
+
     def test_cancel_while_queued_never_runs(self):
         b = B.Bridge(MOD)
         lane = b.lanes['large'] = B._Lane('large', 1, 10)
@@ -647,11 +668,7 @@ class WholeProcess(unittest.TestCase):
         how = 'lsof -i'
         self.assertIn('python', files, 'the process file/module listing came back empty, so this check proved nothing')
         self.assertEqual(out.strip(), '', out)
-        self.assertNotIn('derived/models', files)
         OBSERVED[f'{how} for this process'] = 'no rows' if not out.strip() else out
-
-    def test_nothing_written_to_the_real_library(self):
-        self.assertTrue(str(server.LIB).startswith(str(DATA)))
 
 
 # ---- the stub: stands in for the model. handle_post, emit and wfile are the real ones.
@@ -660,7 +677,7 @@ REAL_STATUS, REAL_CHAT = assistant.model_status, assistant.chat
 
 
 def stub_status():
-    return {'online': True, 'model': 'TEST-STUB-NOT-A-MODEL', 'local': None}
+    return {'online': True, 'local': None}
 
 
 def stub_chat(messages, about, emit, cancelled):

@@ -30,7 +30,7 @@ the engine starts in setup and answers `/api/setup/*` only ([SETUP-API.md](SETUP
 | `/api/places?q=` | Place search: addresses, ZIP codes, towns and named places (US data from an upstream pack), and the world's countries, regions and towns (GeoNames, built in setup) |
 | `/api/library`, `/api/assistant/status` | What this library holds; the state of the model and of the search index |
 | `POST /api/chat` | One assistant turn, streamed as server-sent events |
-| `POST /api/assistant/local` `{action: "warm"}` | Chat is open: the local AI starts loading before the question comes |
+| `POST /api/assistant/local` | Chat is open: the local AI starts loading before the question comes |
 | `/api/setup/*` | About → Library and downloads ([SETUP-API.md](SETUP-API.md)) |
 | `/zim/<file>/<article>` | An encyclopedia article, its scripts and web links taken out (`engine/saved_pages.py`) |
 | `/documents/…`, `/pages/…`, `/videos/…` and the other library folders | A file of the library. A saved web page is rewritten to run no code; a PDF comes as a page of pictures PDFium has drawn, never as the file; of a video only the first 8 MiB come (the window plays the library's videos from disk, not through here) |

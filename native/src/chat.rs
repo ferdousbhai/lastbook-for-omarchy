@@ -246,8 +246,11 @@ impl ChatPage {
         let exists = id.is_some_and(|id| self.chats.borrow().iter().any(|c| c.id == id));
         self.current.replace(if exists { id.map(str::to_owned) } else { None });
         self.pending_about.replace(about.map(str::to_owned));
+        // A chat begun about a page stays about it: the bar says so, and its X ends that.
+        let current = self.current.borrow().clone();
+        let about = about.map(str::to_owned).or_else(|| self.chats.borrow().iter().find(|c| Some(&c.id) == current.as_ref()).and_then(|c| c.about.clone()));
         self.about_bar.set_visible(about.is_some());
-        if let Some(a) = about {
+        if let Some(a) = &about {
             self.describe_about(a);
         }
         self.fill_list();
@@ -298,7 +301,7 @@ impl ChatPage {
                 "stopped" => String::new(),
                 "checking" | "measuring" => "Checking the local AI's model file…".into(),
                 "too_big" => format!("The local AI doesn't fit this computer: {}", local["message"].as_str().unwrap_or_default()),
-                "error" => format!("The local AI could not start; your next question tries again. {}", local["message"].as_str().unwrap_or_default()),
+                "error" => format!("The local AI could not start{} {}", if s["online"].as_bool().unwrap_or(false) { "; your next question tries again." } else { "." }, local["message"].as_str().unwrap_or_default()),
                 _ => "No local AI on this computer: questions show the matching pages instead.".into(),
             };
             me.status.set_text(&line);
@@ -371,7 +374,7 @@ impl ChatPage {
                 hello.append(&b);
             }
             self.convo.append(&hello);
-            self.send.set_label("Ask");
+            self.send.set_label(if self.live.borrow().is_some() { "Stop" } else { "Ask" });
             return;
         };
         for m in &chat.messages {
@@ -383,6 +386,11 @@ impl ChatPage {
                 self.convo.append(&w.frame);
             }
         }
+        // An answer still being written belongs under its question again.
+        if let Some(l) = self.live.borrow().as_ref().filter(|l| l.chat == chat.id) {
+            self.convo.append(&l.shown.frame);
+        }
+        self.send.set_label(if self.live.borrow().is_some() { "Stop" } else { "Ask" });
         self.scroll_to_end();
     }
 
@@ -483,7 +491,7 @@ impl ChatPage {
         glib::spawn_future_local(async move {
             let mut buf = String::new();
             let mut msg = Msg { role: "assistant".into(), ..Default::default() };
-            let mut status = 0u16;
+            let (mut status, mut ended) = (0u16, false);
             while let Ok(piece) = rx.recv().await {
                 let Some(me) = me.upgrade() else { return };
                 match piece {
@@ -497,6 +505,7 @@ impl ChatPage {
                                 if let Some(data) = line.strip_prefix("data: ")
                                     && let Ok(ev) = serde_json::from_str::<Value>(data)
                                 {
+                                    ended |= matches!(ev["type"].as_str(), Some("done" | "error" | "stopped"));
                                     me.on_event(&ev, &mut msg, &thinking);
                                 }
                             }
@@ -508,6 +517,13 @@ impl ChatPage {
             let Some(me) = me.upgrade() else { return };
             if status != 200 && msg.error.is_none() && msg.content.is_empty() {
                 msg.error = Some(format!("The engine refused the question ({status})."));
+            }
+            // Stopped by the person (the engine says nothing more once told to stop): keep what was written so far.
+            if !ended && msg.error.is_none() {
+                msg.error = Some("Stopped.".into());
+                if msg.content.is_empty() {
+                    msg.content = me.live.borrow().as_ref().map(|l| l.text.clone()).unwrap_or_default();
+                }
             }
             me.finish(msg).await;
         });

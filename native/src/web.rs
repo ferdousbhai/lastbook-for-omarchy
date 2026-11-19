@@ -40,6 +40,12 @@ fn register_scheme(engine: Arc<Engine>) {
     ctx.register_uri_scheme("lastbook", move |req| {
         let uri = req.uri().map(|u| u.to_string()).unwrap_or_default();
         let path = uri.strip_prefix(ORIGIN).unwrap_or("/").to_owned();
+        // A page is given the library's files, never the engine's own routes: those are the window's to call, and one of
+        // them (setup's state) goes online.
+        if path.starts_with("/api/") || urlencoding::decode(&path).is_ok_and(|p| p.starts_with("/api/")) {
+            let mut e = glib::Error::new(gio::IOErrorEnum::PermissionDenied, "not for pages");
+            return req.finish_error(&mut e);
+        }
         let engine = engine.clone();
         let req = req.clone();
         glib::spawn_future_local(async move {

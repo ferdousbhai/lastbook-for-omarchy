@@ -132,12 +132,9 @@ def public(r):
         return None
     t, _ = trust(r)
     out = {'id': r['id'], 'title': clean_title(r), 'kind': r['kind'], 'kindLabel': kind_label(r),
-           'publisher': r.get('publisher'), 'collection': r.get('collection'), 'path': r['path'],
-           'pages': r.get('pages') or r.get('slides'), 'duration': r.get('duration'), 'year': year_of(r),
-           'trust': t, 'bytes': r.get('bytes')}
+           'publisher': r.get('publisher'), 'path': r['path'],
+           'pages': r.get('pages') or r.get('slides'), 'duration': r.get('duration'), 'year': year_of(r), 'trust': t}
     if r['kind'] == 'video':
-        tx = catalog()['video_tx'].get(r['path'])
-        out['transcript'] = bool(tx or r.get('captions'))
         th = catalog()['thumbs'].get(r['path'])
         out['thumb'] = th if th and (LIB / th).is_file() else None
     return out
@@ -436,8 +433,7 @@ def shelf(sid):
     groups = {}
     for r in rs:
         groups.setdefault(r.get('collection') or 'Other', []).append(r)
-    return {'total': len(rs), 'collections': [{'collection': c, 'count': len(v), 'trust': trust(v[0])[0], 'items': [public(x) for x in v]}
-                                              for c, v in groups.items()]}
+    return {'collections': [{'collection': c, 'count': len(v), 'items': [public(x) for x in v]} for c, v in groups.items()]}
 
 
 # ------------------------------------------------------------------ videos ----
@@ -455,8 +451,7 @@ VROWS = [  # (id, title, exact catalog categories) — practical first, hobby ch
     ('primitive', 'Primitive Technology', 'creator-primitive-technology'),
     ('courses', 'Courses, lectures & more', ''),
 ]
-VROW_NOTE = {'coalcracker': 'Hobbyist channel', 'corporals': 'Hobbyist channel', 'canterbury': 'Hobbyist channel',
-             'primitive': 'Hobbyist channel — no narration', 'courses': 'University lectures (MIT and others)'}
+NEWEST_FIRST = {'coalcracker', 'corporals', 'canterbury', 'primitive'}   # one channel each: its videos by date, not A–Z
 
 
 def vrow_of(r):
@@ -469,7 +464,7 @@ def vrow_of(r):
 
 def vcard(r):
     p = public(r)
-    return {k: p.get(k) for k in ('id', 'title', 'publisher', 'duration', 'thumb', 'transcript', 'trust', 'year')}
+    return {k: p.get(k) for k in ('id', 'title', 'publisher', 'duration', 'thumb')}
 
 
 def vsort(r):
@@ -496,13 +491,13 @@ def videos_home():
         if r['kind'] == 'video':
             rows.setdefault(vrow_of(r), []).append(r)
     picked = guide_videos()
-    res = [{'id': 'guides', 'title': 'Picked for the guides', 'note': 'Chosen to go with the survival guides', 'count': len(picked), 'items': picked}]
+    res = [{'title': 'Picked for the guides', 'count': len(picked), 'items': picked}]
     for vid, title, _ in VROWS:
         rs = sorted(rows.get(vid, []), key=vsort)
-        if VROW_NOTE.get(vid, '').startswith('Hobbyist'):
-            rs.sort(key=lambda r: r.get('upload_date') or '', reverse=True)  # channels: newest first, not A–Z
+        if vid in NEWEST_FIRST:
+            rs.sort(key=lambda r: r.get('upload_date') or '', reverse=True)
         if rs:
-            res.append({'id': vid, 'title': title, 'note': VROW_NOTE.get(vid), 'count': len(rs), 'items': [vcard(r) for r in rs]})
+            res.append({'title': title, 'count': len(rs), 'items': [vcard(r) for r in rs]})
     return res
 
 

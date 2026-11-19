@@ -115,6 +115,7 @@ class Local:
         self.warming = False
         self.next_id = 0
         self.failed_loads = 0     # loads in a row that ended before the model was ready
+        self.spawns = 0           # starts made so far (ensure_running's since)
         self.saved = _load()
         self.runner = runner_path()
         self._started = False
@@ -227,7 +228,7 @@ class Local:
     def _measure(self):
         """llama.cpp's fitting decides where each part of the model goes; this then checks the whole fits this computer."""
         with self.lock:
-            self.state, self.pct, self.message = 'measuring', None, ''
+            self.state, self.pct, self.message, self.fit = 'measuring', None, '', None
         try:
             fit, out = measure(self.runner, self.path)
         except (OSError, subprocess.SubprocessError, ValueError) as e:
@@ -239,7 +240,12 @@ class Local:
                 if out is not None:
                     print('local AI: measure output:', out.stdout[-2000:], out.stderr[-3000:], flush=True)
                 return
-            self.fit = judge(fit)
+            print('local AI: measured', json.dumps(fit), flush=True)
+            try:
+                self.fit = judge(fit)
+            except (TypeError, ValueError, KeyError, AttributeError) as e:   # a measure that is not in the shape expected
+                self.state, self.message = 'error', f'The local AI program gave a measure Lastbook could not read ({type(e).__name__}).'
+                return
             print('local AI: fit', json.dumps(self.fit), flush=True)
             if self.fit['fits']:
                 self.state, self.message = 'stopped', ''
@@ -247,8 +253,10 @@ class Local:
                 self.state, self.message = 'too_big', self.fit['why']
 
     # -- running ----------------------------------------------------------------------------------------------------------
-    def ensure_running(self, on_wait=None, cancelled=lambda: False):
-        """Starts the model if it is stopped and waits until it is ready. Returns None when ready, else a sentence why not."""
+    def ensure_running(self, on_wait=None, cancelled=lambda: False, since=None):
+        """Starts the model if it is stopped and waits until it is ready. Returns None when ready, else a sentence why not.
+        since: self.spawns as the caller read it earlier. If a start has been made since then (warm() made it, for the same
+        question) and it failed, this does not make another: one start a question."""
         with self.lock:
             if self.state == 'ready' and self.proc and self.proc.poll() is None:
                 self.last_used = time.time()
@@ -256,6 +264,8 @@ class Local:
             if self.state not in ('stopped', 'loading', 'error') or not self.path or not (self.fit or {}).get('fits'):
                 return self.message or 'The local AI is not set up on this computer.'
             if self.state != 'loading':
+                if since is not None and self.spawns != since:
+                    return self.message or 'The local AI did not start.'
                 short = not_enough_free(self.fit)
                 if short:
                     return short
@@ -278,6 +288,7 @@ class Local:
 
     def _spawn(self):
         import queue
+        self.spawns += 1
         self.state, self.pct, self.message = 'loading', 0, ''
         logs = paths.DATA / 'derived' / 'logs'
         logs.mkdir(parents=True, exist_ok=True)
@@ -356,10 +367,11 @@ class Local:
             if self.warming or self.state not in ('stopped', 'ready') or not self.path or not (self.fit or {}).get('fits'):
                 return False
             self.warming = True
+            since = self.spawns
 
         def run():
             try:
-                if self.ensure_running() is None and prefix and self.gen_lock.acquire(blocking=False):
+                if self.ensure_running(since=since) is None and prefix and self.gen_lock.acquire(blocking=False):
                     self.gen_lock.release()   # free now: read the prefix (a real question arriving meanwhile simply waits for it)
                     try:
                         self.generate(prefix, 1, lambda: False, lambda t: None)
@@ -491,17 +503,13 @@ def judge(fit):
     on Apple Silicon (Asahi Linux) the two are one memory; elsewhere the part placed on the graphics card is not in it."""
     total = fit.get('ram_total') or 0
     dev, host = fit.get('device_bytes') or 0, fit.get('host_bytes') or 0
-    devices = [m for m in fit.get('memory') or [] if m.get('kind') == 'device']
     unified = unified_memory()
     # Not unified: weights left in the mapped file (not on a graphics card, not repacked) are outside llama.cpp's count, yet in use
     # while answering. Measured with no GPU: the fit said 9.6 GB, the program held 16.5 to 26 GB.
     mapped = 0 if unified else max(0, SIZE - sum(m.get('model') or 0 for m in fit.get('memory') or []))
     in_ram = dev + host if unified else host + mapped
     needs = in_ram + RESERVE
-    placement = [{'device': m.get('desc') or m.get('name'), 'bytes': m['model'] + m['context'] + m['compute'], 'free': m.get('free')} for m in devices]
-    placement.append({'device': 'memory' if unified else 'computer memory', 'bytes': host + mapped})
-    out = {'status': fit.get('status'), 'ram_total': total, 'device_bytes': dev, 'host_bytes': host, 'needs': int(needs),
-           'model_bytes': dev + host, 'placement': placement, 'host_overrides': fit.get('host_overrides'), 'n_gpu_layers': fit.get('n_gpu_layers')}
+    out = {'needs': int(needs)}
     if fit.get('status') != 'fits':
         out['fits'] = False
         out['why'] = 'The model does not fit this computer’s graphics memory together with its own memory.'

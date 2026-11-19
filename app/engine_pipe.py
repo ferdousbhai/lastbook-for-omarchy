@@ -34,7 +34,7 @@ OUT = sys.stdout
 sys.stdout = sys.stderr          # anything the engine prints goes to the log, never into the protocol
 _out_lock = threading.Lock()
 _open = threading.Condition()
-_open_ids = set()
+_running = {}    # id: the Exchange of a request still being answered (None until it has one), for {"cancel": id}. Under _open.
 
 
 def send(obj):
@@ -51,7 +51,7 @@ class PipeSink:
         self.rid = rid
         self.text = True
         with _open:
-            _open_ids.add(rid)
+            _running[rid] = None
 
     def head(self, status, reason, headers):
         ctype = next((v for k, v in headers if k.lower() == 'content-type'), '')
@@ -68,8 +68,25 @@ class PipeSink:
     def finish(self, ok):
         send({'id': self.rid, 'end': bool(ok)})
         with _open:
-            _open_ids.discard(self.rid)
+            _running.pop(self.rid, None)
             _open.notify_all()
+
+
+def start(bridge, rid, method, path, body):
+    """One request from the window. It stays in _running until its answer ends or it is cancelled, however many come after."""
+    ex = bridge.start(method, path, json.dumps(body).encode() if body is not None else None, PipeSink(rid))
+    with _open:
+        if rid in _running:     # not answered already
+            _running[rid] = ex
+
+
+def cancel(rid):
+    """{"cancel": id}: the Handler stops at its next write. Nothing more is sent for a cancelled request, so it ends here."""
+    with _open:
+        ex = _running.pop(rid, None)
+        _open.notify_all()
+    if ex:
+        ex.cancel()
 
 
 def options(app_main):
@@ -116,27 +133,17 @@ def main():
         setup_api.configure(mode='manage', current=data, **options(app_main))
         bridge = B.Bridge(server)
         send({'ready': {'setup': False, 'data': str(data), 'library': str(server.LIB), 'version': app_main.version()}})
-    running = {}
     for line in sys.stdin:
         try:
             req = json.loads(line)
         except ValueError:
             continue
         if 'cancel' in req:
-            ex = running.pop(req['cancel'], None)
-            if ex:
-                ex.cancel()
-            continue
-        rid, method, path = req.get('id'), req.get('method', 'GET'), req.get('path', '/')
-        body = req.get('body')
-        ex = bridge.start(method, path, json.dumps(body).encode() if body is not None else None, PipeSink(rid))
-        if ex:
-            running[rid] = ex
-            if len(running) > 256:   # finished ones are dropped lazily; cancelling a finished exchange does nothing
-                for k in list(running)[:128]:
-                    running.pop(k, None)
+            cancel(req['cancel'])
+        else:
+            start(bridge, req.get('id'), req.get('method', 'GET'), req.get('path', '/'), req.get('body'))
     with _open:   # the window has gone: finish what it asked for, then leave
-        _open.wait_for(lambda: not _open_ids, timeout=30)
+        _open.wait_for(lambda: not _running, timeout=30)
     return 0
 
 

@@ -34,8 +34,7 @@ def local_on():
 def model_status():
     """online: a question can be answered. local: the local AI's own state (llm_local.Local.status), None when there is none."""
     local = LOCAL.status() if LOCAL else None
-    return {'model': local['name'] if local else None, 'online': local_on(), 'local': local,
-            'index': dict(INDEX.status)}
+    return {'online': local_on(), 'local': local, 'index': dict(INDEX.status)}
 
 
 # --------------------------------------------------------------- retrieval --
@@ -433,6 +432,7 @@ def chat(messages, about, emit, cancelled):
     ctx = context_for(about, sess)
     if ctx:
         msgs.append({'role': 'system', 'content': ctx})
+    starts = LOCAL.spawns if LOCAL else 0
     warm_local()   # the model loads while the library is searched, not after
     for m in messages[-12:]:
         if m.get('role') in ('user', 'assistant') and isinstance(m.get('content'), str):
@@ -471,7 +471,7 @@ def chat(messages, about, emit, cancelled):
         if pct != shown[0]:
             shown[0] = pct
             emit({'type': 'state', 'state': 'starting', 'pct': pct})
-    why = LOCAL.ensure_running(loading, cancelled)
+    why = LOCAL.ensure_running(loading, cancelled, since=starts)   # if warm_local's start failed meanwhile, not a second one
     if why == 'stopped':
         emit({'type': 'stopped'})
         return

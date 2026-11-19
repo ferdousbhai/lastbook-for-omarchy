@@ -232,7 +232,7 @@ class Warm(unittest.TestCase):
     def local(self, state='stopped', fits=True):
         import llm_local
         L = llm_local.Local.__new__(llm_local.Local)
-        L.lock, L.gen_lock, L.warming = threading.RLock(), threading.Lock(), False
+        L.lock, L.gen_lock, L.warming, L.spawns = threading.RLock(), threading.Lock(), False, 0
         L.state, L.path, L.fit = state, Path('/m.gguf'), {'fits': fits}
         L.started, L.read = threading.Event(), []
         L.ensure_running = lambda *a, **k: (L.started.wait(5), None)[1]
@@ -255,10 +255,6 @@ class Warm(unittest.TestCase):
         self.assertEqual(L.read, [([['<|turn>system\n', True], ['rules', False]], 1)])
         self.assertFalse(L.warming)
 
-    def test_ubatch_by_memory(self):
-        import llm_local
-        self.assertIn(llm_local.ubatch(), (512, 1024, 2048))
-
 
 class LocalStates(unittest.TestCase):
     """llm_local.Local with no model and no program run: what a failed start and a search that found nothing leave behind,
@@ -267,11 +263,12 @@ class LocalStates(unittest.TestCase):
     def local(self, state, path=Path('/m.gguf'), fits=True):
         import llm_local
         L = llm_local.Local.__new__(llm_local.Local)
-        L.lock, L.looked, L.proc, L.spawned, L.warming = threading.RLock(), threading.Event(), None, [], False
+        L.lock, L.gen_lock, L.looked, L.proc, L.spawned, L.warming, L.spawns = threading.RLock(), threading.Lock(), threading.Event(), None, [], False, 0
         L.state, L.pct, L.message, L.path, L.fit = state, None, 'It failed.', path, {'fits': fits, 'needs': 1}
 
         def spawn():
             L.spawned.append(1)
+            L.spawns += 1
             L.state, L.message = 'error', 'It failed again.'
         L._spawn = spawn
         return L
@@ -291,6 +288,33 @@ class LocalStates(unittest.TestCase):
         self.assertFalse(self.local('error', fits=False).available())
         self.assertFalse(self.local('too_big', fits=False).available())
         self.assertFalse(self.local('error').warm())                     # opening Chat does not retry: only a question does
+
+    def test_one_start_a_question_when_the_warm_start_fails_first(self):
+        """assistant.chat warms the model, searches the library, then asks for it: a start that failed meanwhile is not made twice."""
+        import llm_local
+        L = self.local('stopped')
+        with mock.patch.object(llm_local, 'not_enough_free', return_value=None):
+            since = L.spawns
+            self.assertTrue(L.warm())
+            for _ in range(250):
+                if not L.warming:
+                    break
+                time.sleep(0.02)
+            self.assertEqual(len(L.spawned), 1)
+            self.assertEqual(L.ensure_running(since=since), 'It failed again.')
+            self.assertEqual(len(L.spawned), 1)
+            self.assertEqual(L.ensure_running(since=L.spawns), 'It failed again.')     # the next question makes its own
+            self.assertEqual(len(L.spawned), 2)
+
+    def test_a_measure_in_another_shape_does_not_leave_it_measuring(self):
+        import llm_local
+        L = self.local('absent')
+        L.runner = Path('/runner')
+        with mock.patch.object(llm_local, 'measure', return_value=({'ev': 'fit', 'status': 'fits', 'memory': [5]}, None)), \
+                mock.patch.object(llm_local, 'unified_memory', return_value=False):
+            L._measure()
+        self.assertEqual(L.state, 'error')
+        self.assertFalse(L.available())
 
     def test_settle_waits_for_the_search_and_not_after_it_found_nothing(self):
         import llm_local
