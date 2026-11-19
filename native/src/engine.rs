@@ -61,7 +61,7 @@ impl std::fmt::Display for EngineError {
 }
 
 /// Where the engine's program files are: LASTBOOK_ENGINE, else beside the installed binary, else this checkout's app/.
-fn engine_script() -> PathBuf {
+pub fn engine_script() -> PathBuf {
     if let Some(p) = std::env::var_os("LASTBOOK_ENGINE") {
         return PathBuf::from(p);
     }

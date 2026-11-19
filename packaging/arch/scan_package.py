@@ -26,7 +26,7 @@ TEST_MARKERS = [b'TEST-STUB', b'mac_offscreen', b'stub_chat', b'stub-chat']
 P = 'usr/lib/lastbook-for-omarchy/'
 USER_PATH = re.compile(rb'/Users/[A-Za-z0-9._-]+|/home/(?!runner\b|user\b)[a-z_][a-z0-9_.-]*')   # one-letter names too
 OUR_PY = re.compile(r'^usr/lib/lastbook-for-omarchy/(server|retrieval|encyclopedia|assistant|llm_local)\.py$|^usr/lib/lastbook-for-omarchy/(app|engine)/.*\.py$')
-FIRST_PARTY = re.compile(r'^usr/lib/lastbook-for-omarchy/(content|app|engine|setup)/|^usr/lib/lastbook-for-omarchy/[^/]+\.py$')
+FIRST_PARTY = re.compile(r'^usr/lib/lastbook-for-omarchy/(content|app|engine|setup|skills)/|^usr/lib/lastbook-for-omarchy/[^/]+\.py$')
 NET_MODULES = {'socket', 'ssl', 'http.client', 'urllib.request', 'http.server', 'socketserver', 'asyncio', 'ftplib', 'smtplib', 'xmlrpc', 'requests', 'urllib3'}
 NET_ALLOWED = {
     P + 'engine/setup/download.py',   # setup's downloader: HTTPS to the allowlist, roots.pem only
@@ -139,7 +139,7 @@ def main():
         for u, where in user_paths.items():
             if u.startswith('/Users/') or any(FIRST_PARTY.search(w) or w == WINDOW for w in where):
                 problems.append(f'path of a person\'s folder {u} in {where[:3]}')
-        for need in [P + f for f in ('engine/setup/roots.pem', 'app/engine_pipe.py', 'app/main.py', 'app/bridge.py', 'setup/manifest-v1.json',
+        for need in [P + f for f in ('engine/setup/roots.pem', 'app/engine_pipe.py', 'app/main.py', 'app/bridge.py', 'app/cli.py', 'skills/lastbook/SKILL.md', 'setup/manifest-v1.json',
                                       'VERSION', 'encyclopedia.py', 'server.py')] + [WINDOW, f'usr/share/applications/{APP_ID}.desktop']:
             if need not in packaged:
                 problems.append(f'missing from the package: {need}')

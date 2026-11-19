@@ -7,7 +7,7 @@ _llama=b12032                 # packaging/llm/build_llm_linux.sh checks the comm
 _python=3.14                  # the wheels below are built for this Python; a new Arch Python needs new wheels
 pkgver=$_version
 pkgrel=1
-pkgdesc='Offline survival library for Omarchy: manuals, videos, encyclopedias, offline maps and a local AI that cites its sources'
+pkgdesc='Offline survival library for Omarchy: manuals, videos, encyclopedias, offline maps and a local AI that cites its sources, with a CLI and agent skill'
 arch=('x86_64' 'aarch64')
 url='https://github.com/ferdousbhai/lastbook-for-omarchy'
 license=('MIT')
@@ -61,7 +61,9 @@ package() {
   cd "$srcdir/lastbook"
   local lib="$pkgdir/usr/lib/$pkgname"
   install -d "$lib/app" "$lib/engine/setup" "$lib/setup" "$lib/lib" "$lib/llm"
-  install -m644 app/engine_pipe.py app/main.py app/bridge.py "$lib/app/"
+  # app/cli.py answers `lastbook COMMAND`; the skill (also inside the program, for `lastbook skill`) tells agents how to use it.
+  install -m644 app/engine_pipe.py app/main.py app/bridge.py app/cli.py "$lib/app/"
+  install -Dm644 skills/lastbook/SKILL.md "$lib/skills/lastbook/SKILL.md"
   install -m644 server.py retrieval.py encyclopedia.py assistant.py llm_local.py VERSION "$lib/"
   install -m644 engine/__init__.py engine/paths.py engine/library.py engine/saved_pages.py engine/address_search.py "$lib/engine/"
   install -m644 engine/setup/*.py engine/setup/roots.pem "$lib/engine/setup/"

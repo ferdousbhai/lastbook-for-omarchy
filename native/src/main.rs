@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 //! Lastbook for Omarchy: the native window (Rust, GTK 4) over the Python engine (app/engine_pipe.py).
 //!
-//!   lastbook [--data FOLDER]
+//!   lastbook [--data FOLDER]              the window
+//!   lastbook COMMAND ...                  the library as JSON, for scripts and agents (cli.rs, app/cli.py)
 //!
 //! The engine finds the library (--data, LASTBOOK_DATA, the folder chosen last time, or the app's own data folder) and
 //! answers over pipes; this window reads the library's files (PDFs, thumbnails, videos) directly.
 
 mod cards;
 mod chat;
+mod cli;
 mod engine;
 mod guides;
 mod library;
@@ -28,18 +30,29 @@ use gtk::{gdk, gio, glib, prelude::*};
 pub const APP_ID: &str = "io.github.ferdousbhai.Lastbook";
 
 fn main() -> glib::ExitCode {
-    let mut data: Option<String> = None;
-    let mut args = std::env::args().skip(1);
-    while let Some(a) = args.next() {
-        match a.as_str() {
-            "--data" => data = args.next(),
-            "--version" => {
-                println!("lastbook {}", env!("CARGO_PKG_VERSION"));
-                return glib::ExitCode::SUCCESS;
-            }
-            _ => {}
+    // A command is answered before anything of GTK starts: only the window needs a display.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let data = match cli::start(&args) {
+        cli::Start::Window(data) => data,
+        cli::Start::Help => {
+            println!("{}", cli::HELP);
+            return glib::ExitCode::SUCCESS;
         }
-    }
+        cli::Start::Version => {
+            println!("lastbook {}", env!("CARGO_PKG_VERSION"));
+            return glib::ExitCode::SUCCESS;
+        }
+        cli::Start::Skill(rest) => std::process::exit(cli::skill(&rest)),
+        cli::Start::Engine(args) => {
+            eprintln!("lastbook: could not start the engine: {}", cli::run_engine(&args));
+            std::process::exit(1);
+        }
+        cli::Start::Unknown(arg) => {
+            eprintln!("lastbook: unknown command {arg:?} (see: lastbook --help)");
+            std::process::exit(2);
+        }
+    };
+    cli::refresh_skill();
     glib::set_prgname(Some(APP_ID));
     glib::set_application_name("Lastbook");
     // NON_UNIQUE: the library's own lock (the engine) decides whether a second window may start.
