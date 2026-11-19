@@ -25,4 +25,4 @@ If you can, add a screenshot or the last lines of `LastbookData/derived/logs/las
 Before you post, remove anything personal: your name, your home area or address, folder paths with your user name,
 and the names of your computers.
 
-A security or privacy problem? Don't post it here. Email hello@lastbook.org.
+A security or privacy problem? Don't post it here. Email ferdous@hey.com.

@@ -66,7 +66,7 @@ language.
 
 ## Reporting a security or privacy problem
 
-Do not open a public issue. Email hello@lastbook.org with what you found and how to reproduce it.
+Do not open a public issue. Email ferdous@hey.com with what you found and how to reproduce it.
 
 ## Code of conduct
 

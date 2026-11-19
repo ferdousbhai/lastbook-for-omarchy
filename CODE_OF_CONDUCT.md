@@ -21,7 +21,7 @@ background, identity, experience or country.
 
 ## Reporting
 
-Email hello@lastbook.org. Reports are kept confidential. The maintainers will look at every report, respond, and act
+Email ferdous@hey.com. Reports are kept confidential. The maintainers will look at every report, respond, and act
 fairly. They may warn someone, remove content, or remove someone from the project.
 
 ## Scope
