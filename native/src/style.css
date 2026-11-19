@@ -5,7 +5,7 @@
 /* ------------------------------------------------------------------------------------------- header and sidebar -- */
 button.sidebar-toggle { color: @om_accent; }
 
-/* "Works offline": a line of text, where omui's footer is a button. */
+/* "Works offline" and the way in to About, where omui's footer is one button. */
 box.sidebar-footer {
   color: @om_dim_text;
   font-size: 0.88em;
@@ -166,5 +166,5 @@ popover entry { margin: 2px 2px 6px; }
   padding: 1px 6px;
 }
 .map-results > row { padding: 2px 8px; }
-.sidebar-footer button { color: @lb_dim_text; padding: 2px 8px; min-height: 0; }
-.sidebar-footer button:hover { color: @lb_text; background: alpha(@lb_text, 0.06); }
+.sidebar-footer button { color: @om_dim_text; padding: 2px 8px; min-height: 0; }
+.sidebar-footer button:hover { color: @om_text; background: alpha(@om_text, 0.06); }
