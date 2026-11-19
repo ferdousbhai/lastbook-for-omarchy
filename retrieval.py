@@ -113,7 +113,7 @@ class Recall:
                 rows = np.asarray(vecs, dtype=np.float32)
                 if rows.ndim != 2 or not np.isfinite(rows).all() or (out and rows.shape[1] != out[0].shape[1]):
                     raise ValueError
-            except (ValueError, TypeError):     # not numbers, not rows of one width: search goes on by keyword
+            except (ValueError, TypeError, OverflowError):     # not numbers (or an integer too large for one), not rows of one width: search goes on by keyword
                 raise RecallUnavailable('invalid embedding batch') from None
             out.append(rows)
         return np.concatenate(out) if out else np.zeros((0, 0), dtype=np.float32)

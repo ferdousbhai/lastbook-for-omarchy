@@ -113,7 +113,8 @@ class Semantic(unittest.TestCase):
         "by keyword only", never an error of another kind."""
         r = retrieval.Recall(TMP / 'no-such.sock')
         for bad in ([{'vector': ['a', 'b']}], [{'vector': [[1, 2]]}], [{'vector': 'ab'}], [{'vector': 7}], [{'vector': {'x': 1}}],
-                    [{'vector': [1, None]}], [{'vector': [float('nan'), 1]}], [{'vector': []}], [{}], [5], 'ab', {'x': 1}):
+                    [{'vector': [1, None]}], [{'vector': [float('nan'), 1]}], [{'vector': []}], [{}], [5], 'ab', {'x': 1},
+                    [{'vector': [json.loads('1' + '0' * 400), 1]}]):     # a JSON integer too large for a float: OverflowError
             with self.subTest(bad), mock.patch.object(r, 'call', return_value={'api': 1, 'embeddings': bad}), self.assertRaises(retrieval.RecallUnavailable):
                 r.embed(['one'])
         with mock.patch.object(r, 'call', return_value={'api': 1, 'embeddings': [{'vector': [0.6, 0.8]}]}):

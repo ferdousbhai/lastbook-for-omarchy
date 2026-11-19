@@ -38,7 +38,8 @@ that may open a connection, to allow-listed hosts with the pinned roots.
   before anything is kept.
 - The regions offered are Geofabrik's: countries, and parts of large countries, 554 in all, each with a bounding box.
   The list ships with the app (`packaging/arch/map-regions.json`); `tools/make_region_list.py` makes it from Geofabrik's
-  index. Only names and boxes are taken from Geofabrik.
+  index. Only names and boxes are taken from Geofabrik. A region across the antimeridian (Alaska, Fiji, New Zealand, the
+  Russian Far East) is two boxes, one each side of ±180, and its street map is cut from their union.
 - The person picks the areas in setup (`native/src/setup.rs`; `POST /api/setup/start {world, regions}` in
   [SETUP-API.md](SETUP-API.md)). Lastbook never detects location.
 - These files belong to no pack. An upgrade to another pack keeps them (`maps.ours`).

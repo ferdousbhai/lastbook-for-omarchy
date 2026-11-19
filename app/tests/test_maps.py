@@ -68,6 +68,56 @@ class MapsTests(unittest.TestCase):
             else:
                 self.assertLess(len(runs), 8 * most)
 
+    def test_a_box_the_wrong_way_round_is_refused(self):
+        with self.assertRaises(ValueError):
+            maps.cover(10, 0, 3, 5, 4)          # west of east, as a box across the antimeridian: it once came back empty
+        with self.assertRaises(ValueError):
+            maps.cover(0, 6, 3, 5, 4)
+
+    def test_cover_union_holds_each_tile_once(self):
+        z = 6
+        for boxes, most in ((((3, 5, 20, 30), (10, 10, 40, 40)), 4096), (((0, 0, 5, 63), (60, 0, 63, 63)), 4096),
+                            (((2, 2, 50, 50), (2, 2, 50, 50)), 4096), (((1, 1, 60, 40), (30, 20, 62, 62)), 8)):
+            want = {maps.zxy_to_id(z, x, y) for x0, y0, x1, y1 in boxes for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)}
+            with mock.patch.object(maps, 'cover', functools.partial(maps.cover, most=most)):
+                runs = maps.cover_union(boxes, z)
+            self.assertTrue(all(a[1] <= b[0] for a, b in zip(runs, runs[1:])), boxes)     # in order, no id twice
+            got = [t for lo, hi, keep in runs for t in range(lo, hi)
+                   if keep is None or any(b[0] <= maps.id_to_zxy(t)[1] <= b[2] and b[1] <= maps.id_to_zxy(t)[2] <= b[3] for b in keep)]
+            self.assertEqual(sorted(got), sorted(want), boxes)
+
+    def test_regions_across_the_antimeridian_are_two_boxes(self):
+        """Each region's boxes stay off the other side of the world: none is the width of the world but Antarctica."""
+        crossing = {r['id'] for r in maps.regions() if r['bbox'][0] > r['bbox'][2]}
+        self.assertLessEqual({'us/alaska', 'us-pacific', 'far-eastern-fed-district', 'new-zealand', 'american-oceania', 'fiji', 'kiribati', 'tuvalu'}, crossing)
+        for r in maps.regions():
+            boxes = maps.region_boxes(r)
+            self.assertTrue(all(b[0] <= b[2] and b[1] <= b[3] for b in boxes), r['id'])
+            if r['id'] != 'antarctica':
+                self.assertLess(sum(b[2] - b[0] for b in boxes), 300, r['id'])
+            if r['id'] in crossing:
+                self.assertEqual(len(boxes), 2, r['id'])
+                self.assertEqual((boxes[0][0], boxes[1][2]), (r['bbox'][0], r['bbox'][2]))       # east side, then west side
+        alaska = maps.region_boxes(maps.region('us/alaska'))
+        self.assertEqual(sum(b[2] - b[0] for b in alaska) // 1, 58)        # 171.76..180 and -180..-129.8, not 360 degrees
+        self.assertEqual(maps.region_boxes({'bbox': [170, -20, -175, -10]}), [[170, -20, 180.0, -10], [-180.0, -20, -175, -10]])
+
+    def test_the_region_list_finds_the_short_way_round(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('make_region_list', Path(__file__).resolve().parents[2] / 'tools' / 'make_region_list.py')
+        tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tool)
+        sq = lambda w, s, e, n: [[[w, s], [e, s], [e, n], [w, n], [w, s]]]
+        fiji = {'type': 'MultiPolygon', 'coordinates': [sq(172.7, -25, 180, -9.7), sq(-180, -24.3, -176.2, -13.9)]}
+        self.assertEqual(tool.boxes(fiji), [[172.7, -25, 180, -9.7], [-180, -24.3, -176.2, -13.9]])
+        self.assertEqual(tool.bbox(fiji), [172.7, -25, -176.2, -9.7])
+        oceania = {'type': 'MultiPolygon', 'coordinates': [sq(-174, -17, -165, -10), sq(141, 9, 169, 22), sq(-179.9, -3, -160, 6)]}
+        self.assertEqual(tool.boxes(oceania), [[141, 9, 169, 22], [-179.9, -17, -160, 6]])
+        europe = {'type': 'MultiPolygon', 'coordinates': [sq(-32, 29, 10, 81), sq(5, 40, 46, 70)]}
+        self.assertEqual(tool.boxes(europe), [[-32, 29, 46, 81]])
+        band = {'type': 'Polygon', 'coordinates': sq(-180, -90, 180, -60)}
+        self.assertEqual(tool.bbox(band), [-180, -90, 180, -60])
+
     def test_tile_range_covers_bali(self):
         x0, y0, x1, y1 = maps.tile_range(114.4, -8.9, 115.7, -8.0, 9)
         self.assertLessEqual(x0, x1)
@@ -220,6 +270,23 @@ class CutTests(unittest.TestCase):
         want = self.wanted(bbox)
         self.assertEqual(self.written(c.dest)[0], want)
         self.assertEqual((c.tiles, c.total), (len(want), sum(len(b) for b in set(want.values()))))
+
+    def test_a_region_of_several_boxes_holds_their_tiles_once(self):
+        """Across the antimeridian (a box west > east, or its two boxes) and boxes that overlap: each tile written once,
+        and nothing of the world between."""
+        for name, bbox, parts in (('across', (150.0, 30.0, -160.0, 60.0), [(150.0, 30.0, 180.0, 60.0), (-180.0, 30.0, -160.0, 60.0)]),
+                                  ('two', [(150.0, 30.0, 180.0, 60.0), (-180.0, 40.0, -160.0, 50.0)], None),
+                                  ('overlapping', [(0.0, 0.0, 40.0, 40.0), (20.0, 20.0, 60.0, 60.0)], None)):
+            c = self.cut(bbox, minzoom=0, name=name)
+            want = {}
+            for part in parts or bbox:
+                want.update(self.wanted(part, minzoom=0))
+            total = c.measure()
+            self.assertEqual(c.tiles, len(want), name)
+            self.assertEqual(total, sum(len(b) for b in set(want.values())), name)
+            self.assertEqual(c.disk, sum(len(b) + maps.ROW_BYTES for b in want.values()), name)     # one row a tile, each its own copy
+            c.run()
+            self.assertEqual(self.written(c.dest)[0], want, name)
 
     def test_only_the_directories_and_bytes_needed_are_asked_for(self):
         c = self.cut((100.0, -20.0, 130.0, 10.0))

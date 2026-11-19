@@ -88,6 +88,11 @@ def _bring(src, dest, control, progress=lambda done, total: None):
     tmp = dest.with_name(dest.name + '.partial')
     tmp.unlink(missing_ok=True)
     try:
+        if os.path.samefile(src, dest):
+            return          # already there (a repair that found the library's own model whole): nothing to bring
+    except OSError:
+        pass
+    try:
         try:
             os.link(src, tmp)
         except OSError:
@@ -108,6 +113,24 @@ def _bring(src, dest, control, progress=lambda done, total: None):
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _clear_partials(lib):
+    """Removes a models/<file>.partial that _bring left beside the finished <file> (an earlier version left one after a
+    repair that found nothing wrong). Only with the model itself there: nothing but a leftover copy is removed."""
+    models = Path(lib) / 'models'
+    try:
+        found = [p for p in models.iterdir() if p.name.endswith('.partial')]
+    except OSError:
+        return
+    for p in found:
+        model = p.with_name(p.name[:-len('.partial')])
+        if p.is_file() and not p.is_symlink() and model.is_file():
+            try:
+                p.unlink()
+                print('setup: removed a leftover', p.name, flush=True)
+            except OSError:
+                pass
 
 
 def _same_disk(a, b):
@@ -575,6 +598,8 @@ class Setup:
             s = self._settings()
             s['work'] = str(work)
             self._save_settings(s)
+        for lib in dict.fromkeys(x for x in (Path(target), self.current) if x):
+            _clear_partials(lib)
         _tag_sources(self.job)
         self._save_job()
         self._run()
@@ -944,7 +969,7 @@ class Setup:
         install._write_json(lib / 'setup-pack.json', {'pack': pack['id'], 'installed': _now(), 'files': [f['name'] for f in pack['files']]})
         for path, ours in got:
             if ours:
-                os.unlink(path)
+                download.remove(path)
 
     def _do_map(self, it, plan, work, control):
         """A state map: download, check, unpack (map files only) into unpack-map/. With a pack, it replaces the staged library's own
@@ -970,7 +995,7 @@ class Setup:
             plan['map_new'] = str(lib)
         for path, ours in got:
             if ours:
-                os.unlink(path)
+                download.remove(path)
 
     def _do_addresses(self, it, plan, work, control):
         entry = plan['addresses']
@@ -1002,7 +1027,7 @@ class Setup:
         install._write_json(destination.with_suffix('.json'), {'files': {file['name']: file['sha256'] for file in entry['files']}})
         for path, ours in got:
             if ours:
-                os.unlink(path)
+                download.remove(path)
 
     def _do_osm(self, it, plan, work, control):
         """The world map, place search, or one street-level region, made here from OpenStreetMap (engine/setup/maps.py).
@@ -1021,13 +1046,14 @@ class Setup:
             cut = maps.Cut(geo / maps.WORLD_FILE, None, 0, maps.WORLD_MAXZOOM, 'World', control, self.allowed, self.context)
         else:
             r = maps.region(it['id'])
-            cut = maps.Cut(geo / f'regions-{maps.file_id(r["id"])}.mbtiles', r['bbox'], maps.REGION_MINZOOM, maps.REGION_MAXZOOM,
+            cut = maps.Cut(geo / f'regions-{maps.file_id(r["id"])}.mbtiles', maps.region_boxes(r), maps.REGION_MINZOOM, maps.REGION_MAXZOOM,
                            r['name'], control, self.allowed, self.context)
         total = cut.measure()
         free, _ = hardware.disk_of(geo)
-        if free < total * 1.1 + 512 * 2 ** 20:
-            raise download.Failed('no_space', f'{it["title"]} needs {_gb(total)} free, and the disk has {_gb(free)}. Free some space, then try again.',
-                                  need_bytes=total, free_bytes=free)
+        need = int(cut.disk * maps.DISK_SLACK) + 512 * 2 ** 20     # the file, one row a tile: more than the bytes fetched
+        if free < need:
+            raise download.Failed('no_space', f'{it["title"]} needs {_gb(need)} free, and the disk has {_gb(free)}. Free some space, then try again.',
+                                  need_bytes=need, free_bytes=free)
         with self.lock:
             it['bytes_total'] = total
         cut.run(lambda done, total: tracker.progress(done, total))
@@ -1141,7 +1167,10 @@ def startup(settings_dir, only=None):
         return None, None        # opened with --data: a switch staged for another library waits for a normal start
     pend = _pending_file(settings_dir)
     try:
-        return install.apply_pending(pend, work)
+        lib, note = install.apply_pending(pend, work)
+        if note and note.get('failed'):
+            _record_failed(settings_dir, note.pop('failed'))
+        return lib, note
     except Exception as e:        # whatever is wrong with it, the app still starts, on the library as it is
         print('setup: the pending switch was not carried out:', type(e).__name__, e, flush=True)
         try:
@@ -1157,11 +1186,27 @@ def rolled_back(settings_dir):
     work = _read_settings(settings_dir).get('work')
     if not work or not isinstance(work, str):
         return None
+    kept = []
     try:
-        return install.roll_back(_pending_file(settings_dir), work)
+        said = install.roll_back(_pending_file(settings_dir), work, kept)
     except Exception as e:
         print('setup: the old library could not be put back:', type(e).__name__, e, flush=True)
         return None
+    if kept:
+        _record_failed(settings_dir, kept)
+    return said
+
+
+def _record_failed(settings_dir, paths):
+    """setup.json's `failed`: libraries roll_back set aside, deleted when a library next opens (opened)."""
+    with _SETTINGS:
+        s = _read_settings(settings_dir)
+        s['failed'] = _listed(s, 'failed') + [p for p in paths if p not in _listed(s, 'failed')]
+        try:
+            Path(settings_dir).mkdir(parents=True, exist_ok=True)
+            install._write_json(Path(settings_dir) / 'setup.json', s)
+        except OSError as e:
+            print('setup: could not save setup.json:', e, flush=True)
 
 
 _SETTINGS = threading.Lock()      # around a read-change-write of setup.json
@@ -1175,22 +1220,33 @@ def _read_settings(settings_dir):
         return {}
 
 
+def _listed(s, key):
+    """setup.json's `old` (the folders an upgrade moved aside) or `failed` (libraries that did not open, set aside by
+    roll_back): those still there, waiting to be deleted."""
+    v = s.get(key)
+    return [o for o in v if isinstance(o, str) and os.path.lexists(o)] if isinstance(v, list) else []
+
+
 def _old_listed(s):
-    """setup.json's `old`: the folders an upgrade moved aside that are still there, waiting to be deleted."""
-    old = s.get('old')
-    return [o for o in old if isinstance(o, str) and os.path.lexists(o)] if isinstance(old, list) else []
+    return _listed(s, 'old')
 
 
-def _delete_old(settings_dir, data, olds):
-    """Deletes the old libraries of `data` among olds, then drops from setup.json's list what is gone. Each is checked again
-    just before it goes (install.is_old_of): only a folder setup itself moved aside, beside the open library."""
-    for o in olds:
-        if install.is_old_of(o, data):
-            print('setup: deleting the old library', Path(o).name, flush=True)
-            shutil.rmtree(o, ignore_errors=True)
+def _deletable(data, olds, failed):
+    """Each folder checked just before it goes: only one setup itself set aside, beside the open library."""
+    return [o for o in olds if install.is_old_of(o, data)] + [f for f in failed if install.is_failed_of(f, data)]
+
+
+def _delete_old(settings_dir, data, olds, failed=()):
+    """Deletes the old libraries of `data` among olds and the libraries set aside as failed among `failed`, then drops
+    from setup.json's lists what is gone."""
+    for o in _deletable(data, olds, failed):
+        print('setup: deleting the set-aside library', Path(o).name, flush=True)
+        shutil.rmtree(o, ignore_errors=True)
     with _SETTINGS:
         s = _read_settings(settings_dir)
-        s['old'] = _old_listed(s)
+        s['old'] = _listed(s, 'old')
+        if 'failed' in s:
+            s['failed'] = _listed(s, 'failed')
         try:
             install._write_json(Path(settings_dir) / 'setup.json', s)
         except OSError:
@@ -1198,17 +1254,18 @@ def _delete_old(settings_dir, data, olds):
 
 
 def opened(settings_dir, data, note):
-    """The library opened. Mark the model checked, clear the work folder, and delete the old library an upgrade moved aside:
-    the new one has opened, so it is not needed to go back to. That runs in its own thread (many GB), which is returned (or
-    None); the folder stays listed in setup.json until it is gone, so a delete this program did not live to finish carries on
-    at the next start."""
+    """The library opened. Mark the model checked, clear the work folder, and delete the old library an upgrade moved aside
+    (the new one has opened, so it is not needed to go back to) and any library that did not open and was set aside
+    (roll_back) at an earlier start. That runs in its own thread (many GB), which is returned (or None); the folders stay listed in setup.json
+    until they are gone, so a delete this program did not live to finish carries on at the next start."""
     settings_dir = Path(settings_dir)
     with _SETTINGS:
         olds = _opened(settings_dir, note)
-    olds = [o for o in olds if install.is_old_of(o, data)]
-    if not olds:
+        # Not at the start that set one aside: the person has just been told the new library did not open.
+        failed = [] if note and note.get('rolled_back') else _listed(_read_settings(settings_dir), 'failed')
+    if not _deletable(data, olds, failed):
         return None
-    t = threading.Thread(target=_delete_old, args=(settings_dir, data, olds), daemon=True, name='setup-delete-old')
+    t = threading.Thread(target=_delete_old, args=(settings_dir, data, olds, failed), daemon=True, name='setup-delete-old')
     t.start()
     return t
 

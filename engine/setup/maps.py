@@ -52,7 +52,8 @@ _regions = None
 
 
 def regions():
-    """[{id, name, parent, bbox: [w, s, e, n]}] as bundled; [] if the list is missing."""
+    """[{id, name, parent, bbox: [w, s, e, n]}] as bundled; [] if the list is missing. A region across the antimeridian
+    has w > e and also `bboxes`, its real box each side of ±180 (region_boxes)."""
     global _regions
     if _regions is None:
         try:
@@ -64,6 +65,14 @@ def regions():
 
 def region(rid):
     return next((r for r in regions() if r['id'] == rid), None)
+
+
+def region_boxes(r):
+    """The boxes [w, s, e, n] a region's map is cut from: its `bboxes`, else its `bbox`, split at ±180 when w > e."""
+    if r.get('bboxes'):
+        return [list(b) for b in r['bboxes']]
+    w, s, e, n = r['bbox']
+    return [[w, s, e, n]] if w <= e else [[w, s, 180.0, n], [-180.0, s, e, n]]
 
 
 def file_id(rid):
@@ -183,7 +192,10 @@ def cover(x0, y0, x1, y1, z, most=4096):
     A square of the tile grid aligned to its own size is one unbroken run of ids on the Hilbert curve, so the box is cut
     into such squares, the largest that fit, and neighbouring runs are joined. whole False: the run also holds tiles
     outside the box (the caller leaves those out). That only happens for a box so large that following its edge tile by
-    tile would take more than about `most` squares; the squares along the edge then stop at a larger size instead."""
+    tile would take more than about `most` squares; the squares along the edge then stop at a larger size instead.
+    ValueError for a box the wrong way round (a west east of its east, as across the antimeridian: split it first)."""
+    if x0 > x1 or y0 > y1:
+        raise ValueError(f'tile box the wrong way round: {(x0, y0, x1, y1)}')
     acc = sum(4 ** i for i in range(z))
     small = 1
     while 2 * (x1 - x0 + y1 - y0 + 2) > most * small:
@@ -210,11 +222,37 @@ def cover(x0, y0, x1, y1, z, most=4096):
     return joined
 
 
-def _tiles(a, b, box):
-    """(z, x, y) of the tile ids a..b-1: all of them, or with a box (x0, y0, x1, y1) those inside it."""
+def cover_union(boxes, z):
+    """The tiles of several boxes (x0, y0, x1, y1) of zoom z as runs of tile ids, each id once however many boxes hold
+    it: [(lo, hi, boxes)] in id order, hi exclusive, boxes None when every id of the run is wanted, else the boxes whose
+    tiles in the run are (the caller leaves the rest out)."""
+    boxes = list(dict.fromkeys(tuple(b) for b in boxes))
+    runs = sorted((lo, hi, whole, box) for box in boxes for lo, hi, whole in cover(*box, z))
+    if len(boxes) == 1:
+        return [(lo, hi, None if whole else (box,)) for lo, hi, whole, box in runs]
+    # One box's runs never overlap, so at any id at most len(boxes) runs are open: a sweep over where runs start and end.
+    cuts = sorted({p for lo, hi, _, _ in runs for p in (lo, hi)})
+    out, open_, i = [], [], 0
+    for a, b in zip(cuts, cuts[1:]):
+        open_ = [r for r in open_ if r[1] > a]
+        while i < len(runs) and runs[i][0] <= a:
+            open_.append(runs[i])
+            i += 1
+        if not open_:
+            continue
+        keep = None if any(r[2] for r in open_) else tuple(sorted(r[3] for r in open_))
+        if out and out[-1][1] == a and out[-1][2] == keep:
+            out[-1] = (out[-1][0], b, keep)
+        else:
+            out.append((a, b, keep))
+    return out
+
+
+def _tiles(a, b, boxes):
+    """(z, x, y) of the tile ids a..b-1: all of them, or with boxes ((x0, y0, x1, y1), ...) those inside any of them."""
     for t in range(a, b):
         z, x, y = id_to_zxy(t)
-        if box is None or (box[0] <= x <= box[2] and box[1] <= y <= box[3]):
+        if boxes is None or any(box[0] <= x <= box[2] and box[1] <= y <= box[3] for box in boxes):
             yield z, x, y
 
 
@@ -296,6 +334,11 @@ PIECE = 16 * 1024 * 1024        # most of the archive fetched in one request
 GAP = 256 * 1024                # unwanted bytes between two wanted tiles that are fetched rather than asked around
 BATCH = 20_000                  # most archive entries written from one piece
 KEPT_BYTES = 32 * 1024 * 1024   # tiles used again far from where they are stored (open sea, empty land), kept for the next use
+# An MBTiles row costs about this much beside its tile's bytes (row header, key, index entry: measured 34-37 bytes for
+# small tiles). Partly filled SQLite pages add more for tiles of 1-3 KB (measured up to 1.4 times their bytes), so the
+# space check also leaves DISK_SLACK.
+ROW_BYTES = 40
+DISK_SLACK = 1.4
 
 
 def _full(e):
@@ -311,9 +354,14 @@ class Cut:
     size on disk still grow with the region."""
 
     def __init__(self, dest, bbox, minzoom, maxzoom, name, control, allowed=None, context=None):
+        """bbox: None for the world, a box [w, s, e, n] (w > e across the antimeridian), or a list of such boxes, cut as
+        their union."""
         self.dest, self.bbox, self.minzoom, self.maxzoom, self.name = Path(dest), bbox, minzoom, maxzoom, name
+        self.boxes = None
+        if bbox is not None:
+            self.boxes = [b for box in (bbox if isinstance(bbox[0], (list, tuple)) else [bbox]) for b in region_boxes({'bbox': box})]
         self.control, self.allowed, self.context = control, allowed, context
-        self.ranges, self.total, self.tiles, self.build = None, 0, 0, None
+        self.ranges, self.total, self.tiles, self.disk, self.build = None, 0, 0, 0, None
 
     def _entries(self):
         """(first id, one past the last, box or None, length, offset) for each archive entry holding wanted tile ids, in
@@ -327,7 +375,8 @@ class Cut:
                 yield max(tid, lo), min(tid + run, hi), box, length, offset
 
     def measure(self):
-        """The bytes run() will fetch (and sets .tiles, the number of tiles it will write)."""
+        """The bytes run() will fetch (and sets .tiles, the number of tiles it will write, and .disk, about the bytes the
+        file takes: one row a tile, each with its own copy of the bytes, however many tiles share them in the archive)."""
         self.build = newest_build(self.allowed, self.context)
         self.archive = Archive(self.build, self.control, self.allowed, self.context)
         if not self.archive.clustered:      # tiles stored in id order: every Protomaps build is, and reading in one pass needs it
@@ -337,17 +386,17 @@ class Cut:
         else:
             self.ranges = []
             for z in range(self.minzoom, self.maxzoom + 1):
-                box = tile_range(*self.bbox, z)
-                self.ranges += [(lo, hi, None if whole else box) for lo, hi, whole in cover(*box, z)]
+                self.ranges += cover_union([tile_range(*b, z) for b in self.boxes], z)
         # Bytes are counted once however many tiles use them: `starts`/`ends` are the stretches of the archive counted so
         # far (ids in order means offsets in order, so they only grow at the end), and `back` the tiles stored outside them.
-        tiles = total = high = 0
+        tiles = total = high = disk = 0
         starts, ends, back = [], [], set()
         for a, b, box, length, offset in self._entries():
             n = b - a if box is None else sum(1 for _ in _tiles(a, b, box))
             if not n:
                 continue
             tiles += n
+            disk += n * (length + ROW_BYTES)
             if offset >= high:
                 if ends and ends[-1] == offset:
                     ends[-1] = offset + length
@@ -361,7 +410,7 @@ class Cut:
                     total += length
                     if len(back) < 100_000:
                         back.add((offset, length))
-        self.total, self.tiles = total, tiles
+        self.total, self.tiles, self.disk = total, tiles, disk
         return self.total
 
     def run(self, progress=lambda done, total: None):
@@ -383,8 +432,9 @@ class Cut:
                 meta = {'name': self.name, 'format': 'pbf', 'type': 'baselayer', 'minzoom': str(self.minzoom if self.bbox else 0),
                         'maxzoom': str(self.maxzoom), 'attribution': '© OpenStreetMap contributors (ODbL), Protomaps',
                         'source': self.build.rsplit('/', 1)[-1], 'made': time.strftime('%Y-%m-%d')}
-                if self.bbox:
-                    meta['bounds'] = ','.join(f'{v:.4f}' for v in self.bbox)
+                if self.boxes:
+                    meta['bounds'] = ','.join(f'{v:.4f}' for v in (min(b[0] for b in self.boxes), min(b[1] for b in self.boxes),
+                                                                    max(b[2] for b in self.boxes), max(b[3] for b in self.boxes)))
                 db.executemany('INSERT OR REPLACE INTO metadata VALUES (?,?)', meta.items())
                 db.commit()
             finally:

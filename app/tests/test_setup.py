@@ -327,6 +327,43 @@ class Downloads(Base):
         self.assertEqual(Path(self.dl('model.gguf').run()).read_bytes(), self.model)
         self.assertEqual([name for name, _, _ in self.files.log], ['model.gguf'])
 
+    def test_a_file_once_matched_is_not_read_through_again(self):
+        """A resume (as while the All pack is unpacked) trusts the record of the earlier match only while the file is the
+        same: any change in size, time or inode, or a record for another checksum, and it is hashed again."""
+        p = self.dl('model.gguf').run()
+        hashed = []
+        real = download._sha256
+
+        def counted(path, control, progress):
+            hashed.append(path)
+            return real(path, control, progress)
+        with mock.patch.object(download, '_sha256', counted):
+            self.assertEqual(self.dl('model.gguf').run(), p)
+            self.assertEqual(hashed, [])
+            st = os.stat(p)
+            os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))       # touched: read through once more, then trusted
+            self.assertEqual(self.dl('model.gguf').run(), p)
+            self.assertEqual(self.dl('model.gguf').run(), p)
+            self.assertEqual(len(hashed), 1)
+            stamp = json.loads(Path(p + '.verified.json').read_text())
+            Path(p + '.verified.json').write_text(json.dumps({**stamp, 'sha256': '0' * 64}))
+            self.assertEqual(self.dl('model.gguf').run(), p)
+            self.assertEqual(len(hashed), 2)
+            Path(p).write_bytes(bytes(len(self.model)))         # other bytes behind a record that now names another time
+            self.assertEqual(Path(self.dl('model.gguf').run()).read_bytes(), self.model)
+        self.assertEqual(len(self.files.log), 2)
+        download.remove(p)
+        self.assertEqual(list(Path(p).parent.iterdir()), [])
+
+    def test_a_busy_server_is_asked_again(self):
+        """429 is busy, like 5xx: a download waits and asks again rather than failing."""
+        self.files.status['model.gguf'] = [429, 503]
+        with fast_backoff():
+            self.assertEqual(Path(self.dl('model.gguf').run()).read_bytes(), self.model)
+        self.files.status['model.gguf'] = [403]
+        with self.assertRaises(download.Failed):
+            self.dl('model.gguf', size=len(self.model) + 1).run()
+
     def test_a_part_request_is_asked_again_after_a_busy_answer(self):
         """The map cutter's range requests: 429 and 5xx are tried again like a broken connection; a plain refusal is not."""
         url = f'{self.base}/model.gguf'
@@ -968,6 +1005,84 @@ class Switching(Base):
                 engine_pipe.open_library(api, self.settings, None)
             self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData', 'LastbookData.failed'])
 
+    def test_a_rolled_back_switch_marks_no_model_and_its_library_goes_at_a_later_start(self):
+        """After a roll back the model the switch brought is not marked checked (the old library's is not that file), and
+        the library that did not open is listed in setup.json and deleted when a library opens at a later start."""
+        sys.path.insert(0, str(ROOT / 'app'))
+        out = sys.stdout
+        import engine_pipe
+        sys.stdout = out
+        cur, new = self.staged()
+        install.stage_switch(api._pending_file(self.settings), new, cur, str(cur / 'models' / 'model.gguf'), model_sha256='a' * 64)
+        lib, note = api.startup(self.settings)
+        self.assertEqual(note['model_sha256'], 'a' * 64)
+        marked = []
+
+        def init():
+            if (cur / 'library-data' / 'catalog.json').read_text() == 'new':
+                raise ValueError('a library that does not open')
+        llm = mock.Mock(mark_checked=lambda p, s: marked.append((p, s)))
+        with mock.patch.dict(sys.modules, {'server': mock.Mock(init=init), 'llm_local': llm}):
+            engine_pipe.open_library(api, self.settings, note)
+            self.assertEqual((note['model_file'], note['model_sha256']), (None, None))
+            failed = self.parent / 'LastbookData.failed'
+            self.assertEqual(json.loads((self.settings / 'setup.json').read_text())['failed'], [str(failed)])
+            self.assertIsNone(api.opened(self.settings, lib, note))      # this start: the person is told, nothing deleted
+            self.assertEqual(marked, [])
+            self.assertTrue(failed.is_dir())
+            api.opened(self.settings, lib, None).join(20)                # the next start
+        self.assertFalse(failed.exists())
+        self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData'])
+        self.assertTrue(self.theirs(cur))
+        self.assertEqual(json.loads((self.settings / 'setup.json').read_text())['failed'], [])
+
+    def test_a_library_that_does_not_open_after_a_roll_back_still_says_so(self):
+        """The old library, put back, fails too (a cause unrelated to the library): the window's start error carries the
+        notice, which would otherwise ride on a ready line never sent."""
+        sys.path.insert(0, str(ROOT / 'app'))
+        out = sys.stdout
+        import engine_pipe
+        sys.stdout = out
+        cur, new = self.staged()
+        lib, note = api.startup(self.settings)
+        with mock.patch.dict(sys.modules, {'server': mock.Mock(init=mock.Mock(side_effect=OSError('no memory')))}):
+            with self.assertRaises(OSError) as e:
+                engine_pipe.open_library(api, self.settings, note)
+        said = engine_pipe.failed_start(note, e.exception)
+        self.assertIn('put the old one back', said)
+        self.assertIn('no memory', said)
+        self.assertEqual((cur / 'library-data' / 'catalog.json').read_text(), 'old')
+        self.assertNotIn('put the old one back', engine_pipe.failed_start(None, OSError('x')))
+        import main as app_main
+        sent = []
+        with mock.patch.object(engine_pipe, 'send', sent.append), mock.patch.object(engine_pipe, 'open_library', side_effect=OSError('no memory')), \
+                mock.patch.object(sys, 'argv', ['engine_pipe', '--data', str(cur)]), mock.patch.dict(os.environ), \
+                mock.patch.object(app_main, 'app_folders', lambda: (self.settings, self.tmp / 'state')), \
+                mock.patch.object(app_main, 'open_log', lambda *a: None), mock.patch.object(app_main, 'check', lambda d: (d, None)), \
+                mock.patch.object(app_main, 'data_folder', lambda d: Path(d)), self.assertRaises(OSError):
+            engine_pipe.main()
+        self.assertEqual(sent, [{'error': 'The engine could not open the library (OSError: no memory).'}])     # the first line: the window shows it
+
+    def test_failed_library_deleted_only_where_roll_back_put_it(self):
+        lib = self.lib(self.parent / 'LastbookData', 'open')
+        elsewhere = self.lib(self.tmp / 'other' / 'LastbookData.failed', 'x')
+        named = [self.lib(self.parent / n, 'x') for n in ('LastbookData.failed-x', 'LastbookData.failed.keep', 'Photos.failed', 'LastbookData-failed')]
+        link = self.parent / 'LastbookData.failed-3'
+        link.symlink_to(elsewhere, target_is_directory=True)
+        good = [self.lib(self.parent / n, 'x') for n in ('LastbookData.failed', 'LastbookData.failed-2')]
+        paths = [elsewhere, *named, link, self.tmp, self.parent, lib, lib / 'library-data']
+        for p in map(str, paths):
+            self.assertFalse(install.is_failed_of(p, lib), p)
+        for bad in (None, 7, '', 'LastbookData.failed'):
+            self.assertFalse(install.is_failed_of(bad, lib), bad)
+        self.settings.mkdir(parents=True, exist_ok=True)
+        (self.settings / 'setup.json').write_text(json.dumps({'failed': [*map(str, paths + good), 7, None]}))
+        api.opened(self.settings, lib, None).join(20)
+        for p in paths:
+            self.assertTrue(p.exists(), p)
+        self.assertFalse(any(p.exists() for p in good))
+        self.assertEqual((elsewhere / 'library-data' / 'catalog.json').read_text(), 'x')
+
     def test_a_rename_that_fails_leaves_the_old_library_whole(self):
         """Nothing of the person's is moved until both renames are made, so neither failure can strand the model in a
         folder that is then cleared."""
@@ -1082,6 +1197,29 @@ class Manage(Base):
         self.assertEqual(self.files.log, [])
         self.assertFalse(api._pending_file(self.settings).exists())
         self.assertTrue((lib / 'models' / 'model.gguf').is_file())
+        self.assertEqual(sorted(p.name for p in (lib / 'models').iterdir()), ['model.gguf'])     # no model.gguf.partial beside it
+
+    def test_a_model_already_in_place_is_not_brought_again(self):
+        """_bring onto the same file (a path, or a hard link to it) leaves nothing beside it; a .partial an earlier version
+        left there goes at the next setup start, and is never carried into a new library as a model."""
+        models = self.parent / 'LastbookData' / 'models'
+        models.mkdir(parents=True)
+        (models / 'model.gguf').write_bytes(self.model)
+        os.link(models / 'model.gguf', self.parent / 'linked.gguf')
+        for src in (models / 'model.gguf', self.parent / 'linked.gguf'):
+            api._bring(src, models / 'model.gguf', Control())
+            self.assertEqual(sorted(p.name for p in models.iterdir()), ['model.gguf'])
+        self.assertEqual((models / 'model.gguf').read_bytes(), self.model)
+        (models / 'model.gguf.partial').write_bytes(b'cut short')
+        (models / 'other.gguf.partial').write_bytes(b'no model beside it')
+        new = self.parent / 'New'
+        install.carry_over(models.parent, new)
+        self.assertEqual(sorted(p.name for p in (new / 'models').iterdir()), ['model.gguf'])
+        (new / 'models' / 'model.gguf.partial').write_bytes(b'cut short')
+        api._clear_partials(new)
+        self.assertEqual(sorted(p.name for p in (new / 'models').iterdir()), ['model.gguf'])
+        api._clear_partials(models.parent)
+        self.assertEqual(sorted(p.name for p in models.iterdir()), ['model.gguf.partial', 'other.gguf.partial'])     # no model.gguf there now: kept
 
     def test_repair_damaged_file_and_model(self):
         lib = self.installed_library()

@@ -95,6 +95,7 @@ def open_library(setup_api, settings_dir, note):
     """The engine, on the library LASTBOOK_DATA names. If it does not open and a switch has just put it there (note), the
     old library is put back, once, and opened instead; note['error'] then says so. Any other failure is raised as it is."""
     import server
+    from engine.setup import install
     try:
         server.init()
     except Exception:
@@ -104,9 +105,16 @@ def open_library(setup_api, settings_dir, note):
         import traceback
         traceback.print_exc()
         print('setup:', said, flush=True)
-        note['error'], note['old'] = said, None
+        install.rolled_back_note(note, said)
         server.init()
     return server
+
+
+def failed_start(note, e):
+    """What the window says when the library does not open: with what setup did at this start (a switch undone), which
+    would otherwise never be told, since the notice rides on the ready line that is then never sent."""
+    said = f'The engine could not open the library ({type(e).__name__}: {str(e)[:300]}).'
+    return f'{note["error"]} {said}' if note and note.get('error') else said
 
 
 def options(app_main):
@@ -146,7 +154,11 @@ def main():
         os.environ['LASTBOOK_DATA'] = str(data)
         os.environ.setdefault('LASTBOOK_LOCAL_AI', '1')
         app_main.open_log(data)     # the installed app's output goes to the log from here; the protocol stays on OUT
-        server = open_library(setup_api, app_main.app_folders()[0], note)
+        try:
+            server = open_library(setup_api, app_main.app_folders()[0], note)
+        except Exception as e:
+            send({'error': failed_start(note, e)})      # the window shows it in place of the library
+            raise
         if not given or note:   # the library opened: mark the model checked, delete the old library an upgrade moved aside
             setup_api.opened(app_main.app_folders()[0], data, note)
         setup_api.configure(mode='manage', current=data, **options(app_main))

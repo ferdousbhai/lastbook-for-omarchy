@@ -227,7 +227,7 @@ def carry_over(old, new):
         (new / 'models').mkdir(parents=True, exist_ok=True)
         for f in src.iterdir():
             dest = new / 'models' / f.name
-            if f.is_file() and not dest.exists():
+            if f.is_file() and not f.name.endswith('.partial') and not dest.exists():      # a copy cut short is not a model
                 os.replace(f, dest)
                 moved.append(dest)
     addresses = old / 'derived' / 'geo' / 'addresses'
@@ -295,10 +295,22 @@ def switch(new_lib, target, old=None, resume=False):
     return old
 
 
-def roll_back(pend, work):
+def is_failed_of(path, lib):
+    """Whether `path` is a library roll_back set aside for `lib`, and so may be deleted: a real folder (never a link)
+    directly beside the library, named exactly as roll_back names one (<name>.failed, <name>.failed-<n>)."""
+    if not isinstance(path, str) or not path:
+        return False
+    p, lib = Path(path), Path(lib)
+    return bool(p.name.startswith(lib.name) and re.fullmatch(r'\.failed(-\d+)?', p.name[len(lib.name):])
+                and _real(p.parent) == _real(lib.parent) and not p.is_symlink() and p.is_dir())
+
+
+def roll_back(pend, work, kept=None):
     """The library a switch put in place did not open: the old one goes back, with what was carried across from it, and the
     one that failed is kept beside it as <name>.failed. Returns a sentence saying so, or None when there is nothing to go
-    back to (no switch waiting to be confirmed, or no old library). It happens once: the pending switch is then over."""
+    back to (no switch waiting to be confirmed, or no old library). It happens once: the pending switch is then over.
+    kept: a list the failed library's folder is added to once everything of the person's has come back out of it, so
+    the caller can list it for deletion (api.opened); one that still holds something of theirs is not added."""
     pend = Path(pend)
     try:
         d = json.loads(pend.read_text(encoding='utf-8'))
@@ -316,6 +328,8 @@ def roll_back(pend, work):
     os.replace(old, target)
     try:
         carry_over(broken, target)      # the model, the maps and the address indexes went into the new one: they go back too
+        if kept is not None:
+            kept.append(str(broken))
     except OSError as e:
         print('setup: not everything came back from', broken.name, type(e).__name__, e, flush=True)
     confirm(pend)
@@ -535,10 +549,20 @@ def apply_pending(pend, work):
         _write_json(pend, d)
     note['old'] = d.get('old')
     if not is_library(target):      # cannot happen after switch(); the engine's own failure to open it is roll_back's, from api.rolled_back
-        said = roll_back(pend, work)
+        kept = []
+        said = roll_back(pend, work, kept)
         if said:
-            note['error'], note['old'] = said, None
+            rolled_back_note(note, said)
+            note['failed'] = kept
     return target if is_library(target) else None, note
+
+
+def rolled_back_note(note, said):
+    """The note once the old library is back: nothing to delete, and the model the switch brought is not the one now in
+    place (the old library's own, or none), so it is not marked as checked with that model's digest. The library set
+    aside is deleted at a later start, not this one (api.opened)."""
+    note.update(error=said, old=None, model_file=None, model_sha256=None, rolled_back=True)
+    return note
 
 
 def confirm(pend):
