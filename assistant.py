@@ -5,7 +5,7 @@ and there is no other: without it Chat has no answer and the window shows the ma
 survival library (catalog ids, pages, transcripts, map gazetteer) and nothing else: no file paths, URLs or shell input
 are accepted from the model. Nothing here opens a socket.
 """
-import json, os, re, time
+import os, re, time
 import encyclopedia, retrieval
 
 MAX_ROUNDS = 2  # tool rounds; then the model must answer with what it has
@@ -35,14 +35,14 @@ def model_status():
     """online: a question can be answered. local: the local AI's own state (llm_local.Local.status), None when there is none."""
     local = LOCAL.status() if LOCAL else None
     return {'model': local['name'] if local else None, 'online': local_on(), 'local': local,
-            'index': dict(INDEX.status) if INDEX else {'state': 'off'}}
+            'index': dict(INDEX.status)}
 
 
 # --------------------------------------------------------------- retrieval --
 def _fts(q, limit=80):
     """(doc_id, page, snippet) from the keyword index, best first."""
     _, groups = S.query_groups(q)
-    return [row[:3] for row in S.fts_rows(groups, limit)[0]] if groups else []
+    return [row[:3] for row in S.fts_rows(groups, limit)] if groups else []
 
 
 def _src(r, page=None, t=None, excerpt='', excerpt_len=600, **extra):
@@ -97,7 +97,7 @@ def hybrid(q, k=8, kind='any', doc=None):
         if not allowed(doc_id):
             continue
         kw.append((doc_id, page if cat['by_id'][doc_id]['kind'] == 'pdf' else None, None, snip))
-    qv = INDEX.query_vector(q) if INDEX else None  # once: each embedding is a round trip to Recall
+    qv = INDEX.query_vector(q)  # once: each embedding is a round trip to Recall
     sem = INDEX.semantic(qv, 80, allowed) if qv is not None else []
     sem_l = [(s['doc_id'], s['page'] if cat['by_id'][s['doc_id']]['kind'] == 'pdf' else None, s['t'], s['text'], s['sem']) for s in sem]
     content, groups = S.query_groups(q)
@@ -158,8 +158,7 @@ def hybrid(q, k=8, kind='any', doc=None):
                 t = best[0]['t']
                 info = dict(info, excerpt=best[0]['text'])
         extra = {'section': info['section']} if info.get('section') else {}
-        res.append(_src(r, p, t, info.get('excerpt'), 900, found_by=e['ranks'], score=round(score * 1000, 2),
-                        imageOnly=(r.get('searchability') or '').startswith('image-only'), **extra))
+        res.append(_src(r, p, t, info.get('excerpt'), 900, found_by=e['ranks'], score=round(score * 1000, 2), **extra))
         if len(res) >= k:
             break
     if best_article and len(res) < k:  # fewer library results than places: the article still comes
@@ -273,7 +272,7 @@ def run_tool(name, args, sess):
             return f'No video with id {v!r} in the library.', {'video_id': v, 'error': 'unknown'}
         pub = S.public(r)
         q = str(args.get('query') or '')[:200]
-        wins = INDEX.semantic(q, 4, doc=v) if (q and INDEX) else []
+        wins = INDEX.semantic(q, 4, doc=v) if q else []
         if not wins:
             cues = (S.transcript(v) or {}).get('cues', [])
             if not cues:
@@ -381,7 +380,7 @@ def warm_local():
 
 
 def _local_round(msgs, tools, cancelled, wrote):
-    """One model turn from the local AI: (content, {index: call}), 'stopped', or a sentence saying what failed."""
+    """One model turn from the local AI: (content, [call]), 'stopped', or a sentence saying what failed."""
     import llm_local
     segs = _fit_prompt(msgs, tools, llm_local)
     if segs is None:
@@ -401,7 +400,7 @@ def _local_round(msgs, tools, cancelled, wrote):
     if done.get('reason') == 'cancel':
         return 'stopped'
     content, found = llm_local.parse_calls(text[0])
-    calls = {i: {'id': f'call_{i}', 'name': name, 'args': json.dumps(args)} for i, (name, args) in enumerate(found)} if tools else {}
+    calls = [{'id': f'call_{i}', 'name': name, 'args': args} for i, (name, args) in enumerate(found)] if tools else []
     return content.strip(), calls
 
 
@@ -456,7 +455,7 @@ def chat(messages, about, emit, cancelled):
         emit({'type': 'found', 'count': len(hits)})
     if sess.sources:
         emit({'type': 'sources', 'sources': list(sess.sources.values())})
-    answer, first_tok, tool_log, state = '', None, [], [None]
+    answer, tool_log, state = '', [], [None]
 
     def set_state(s):
         if s != state[0]:
@@ -479,11 +478,9 @@ def chat(messages, about, emit, cancelled):
     if why:
         emit({'type': 'error', 'error': 'model_unavailable', 'text': why})
         return
-    first = {'at': None}
 
     def wrote(piece):
         set_state('writing')
-        first['at'] = first['at'] or time.time() - t0
         emit({'type': 'delta', 'text': piece})
     for rnd in range(MAX_ROUNDS + 1):
         last = rnd == MAX_ROUNDS
@@ -498,31 +495,25 @@ def chat(messages, about, emit, cancelled):
             emit({'type': 'error', 'error': 'model_unavailable', 'text': got})
             return
         content, calls = got
-        rf = first['at']
         if not calls:
             answer = content
-            if content and first_tok is None:
-                first_tok = rf
             if answer.strip() or last:
                 break
             msgs.append({'role': 'system', 'content': 'Your reply was empty. Answer the question now.'})
             continue
         msgs.append({'role': 'assistant', 'content': content or '', 'tool_calls': [
-            {'id': c['id'] or f'call_{i}', 'type': 'function', 'function': {'name': c['name'], 'arguments': c['args'] or '{}'}} for i, c in sorted(calls.items())]})
-        for i, c in sorted(calls.items()):
-            try:
-                args = json.loads(c['args'] or '{}')
-            except ValueError:
-                args = {}
+            {'id': c['id'], 'type': 'function', 'function': {'name': c['name'], 'arguments': c['args']}} for c in calls]})
+        for c in calls:
+            args = c['args']
             set_state('searching')
             emit({'type': 'tool', 'name': c['name'], 'args': args, 'phase': 'start'})
             try:
-                result, summary = run_tool(c['name'], args if isinstance(args, dict) else {}, sess)
+                result, summary = run_tool(c['name'], args, sess)
             except Exception as e:
                 result, summary = f'Tool failed: {type(e).__name__}', {'error': type(e).__name__}  # sent to the window: no paths
             tool_log.append({'name': c['name'], 'args': args, 'summary': summary})
             emit({'type': 'tool', 'name': c['name'], 'args': args, 'phase': 'done', 'summary': summary})
-            msgs.append({'role': 'tool', 'tool_call_id': c['id'] or f'call_{i}', 'content': result})
+            msgs.append({'role': 'tool', 'tool_call_id': c['id'], 'content': result})
         emit({'type': 'sources', 'sources': list(sess.sources.values())})
         if content:  # text written before tool calls is discarded from the final answer
             emit({'type': 'reset'})
@@ -543,5 +534,5 @@ def chat(messages, about, emit, cancelled):
                 invalid.append(k)
     valid = [k for k in valid if k not in invalid]
     emit({'type': 'done', 'answer': answer, 'sources': [sess.sources[k] for k in valid],
-          'consulted': [v for k, v in sess.sources.items() if k not in valid], 'invalid': invalid, 'tools': tool_log,
-          'latency': {'first_token_s': round(first_tok, 2) if first_tok else None, 'total_s': round(time.time() - t0, 2)}})
+          'consulted': [v for k, v in sess.sources.items() if k not in valid], 'tools': tool_log,
+          'latency': {'total_s': round(time.time() - t0, 2)}})

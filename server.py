@@ -7,14 +7,14 @@ over in-memory streams. The routes the window uses:
   /api/topics                 curated needs and learning routes, with source details resolved from catalog.json
   /api/find?q=&kind=          plain-language search (synonyms, grouping by document, trusted-source ranking)
   /api/retrieve?q=&k=&kind=   the passages Chat would cite (keyword, meaning-based and encyclopedia lists, fused)
-  /api/doc/<id>               one catalog record (+ linked video/transcript)
+  /api/doc/<id>               one catalog record
   /api/transcript/<video id>  timed transcript cues
-  /api/videos, /api/videos/<row>   the Videos screen's rows, and one row or a search of all
+  /api/videos, /api/videos/all?q=  the Videos screen's rows, and a search of every video
   /api/shelves, /api/shelf/<id>    browse the whole collection by plain-language shelf
   /api/places?q=              place finder (addresses, ZIP codes, towns, named places; the world's towns from GeoNames)
   /api/library, /api/assistant/status, POST /api/assistant/local, POST /api/chat, /api/setup/*
 
-The assistant's tools call the helpers here directly (places, near, page_texts, render_page, transcript).
+The assistant's tools call the helpers here directly (places, near, page_texts, transcript).
 Nothing in library-data is written. Caches go to derived/cache.
 """
 import functools, html, io, json, math, os, re, sqlite3, struct, sys, threading, time, traceback, urllib.parse, zlib
@@ -126,7 +126,7 @@ def year_of(r):
     return m.group(0) if m else None
 
 
-def public(r, full=False):
+def public(r):
     """The fields the window needs, with friendly labels. Never includes local auth or worker state."""
     if not r:
         return None
@@ -140,22 +140,6 @@ def public(r, full=False):
         out['transcript'] = bool(tx or r.get('captions'))
         th = catalog()['thumbs'].get(r['path'])
         out['thumb'] = th if th and (LIB / th).is_file() else None
-    if (r.get('searchability') or '').startswith('image-only'):
-        out['imageOnly'] = True
-    if full:
-        for k in ('notes', 'edition', 'retrieved_at', 'source_url', 'license', 'license_url', 'searchability',
-                  'upload_date', 'publication_date', 'model', 'course', 'level', 'caption_type'):
-            if r.get(k):
-                out[k] = r[k]
-        if r['kind'] == 'transcript' and r.get('video_path'):
-            v = catalog()['by_path'].get(r['video_path'])
-            if v:
-                out['videoId'] = v['id']
-        if r['kind'] == 'video':
-            tx = catalog()['video_tx'].get(r['path'])
-            if tx:
-                out['transcriptId'] = tx['id']
-                out['caption_type'] = tx.get('caption_type')
     return out
 
 
@@ -201,9 +185,7 @@ def resolve_item(i):
     i = dict(i)
     if i.get('doc'):
         r = catalog()['by_id'].get(i['doc'])
-        i['src'] = public(r, full=False) if r else None
-        if r:
-            i['src']['notes'] = r.get('notes')
+        i['src'] = public(r)
     return i
 
 
@@ -328,7 +310,7 @@ _fts_tls = threading.local()
 
 
 def fts_rows(groups, limit, marks=('', ''), tokens=40, relax_below=10):
-    """(rows, relaxed) from the keyword index: every idea in groups must match; with fewer than relax_below rows, any idea
+    """Rows from the keyword index: every idea in groups must match; with fewer than relax_below rows, any idea
     may (documents with more of them still rank higher). Rows are (doc_id, page, snippet, bm25), best first."""
     con = getattr(_fts_tls, 'con', None)
     if con is None:  # one read-only connection per thread, reused
@@ -338,10 +320,10 @@ def fts_rows(groups, limit, marks=('', ''), tokens=40, relax_below=10):
     try:
         rows = con.execute(sql, (*marks, fts_expr(groups), limit)).fetchall()
         if len(rows) < relax_below and len(groups) > 1:
-            return rows + con.execute(sql, (*marks, ' OR '.join('(' + fts_expr([g]) + ')' for g in groups), limit)).fetchall(), True
+            return rows + con.execute(sql, (*marks, ' OR '.join('(' + fts_expr([g]) + ')' for g in groups), limit)).fetchall()
     except sqlite3.OperationalError:
-        return [], False
-    return rows, False
+        return []
+    return rows
 
 
 def find(q, kind='all', limit=30):
@@ -351,11 +333,10 @@ def find(q, kind='all', limit=30):
 
 @functools.lru_cache(maxsize=256)
 def _find(q, kind, limit, _cat_version, _excl_version):
-    content, groups = query_groups(q)
+    groups = query_groups(q)[1]
     if not groups:
-        return {'q': q, 'results': [], 'expanded': []}
-    rows, relaxed = fts_rows(groups, 600, ('\u0001', '\u0002'), 28, relax_below=8)
-    mode = 'some words' if relaxed else 'all words'
+        return {'q': q, 'results': []}
+    rows = fts_rows(groups, 600, ('\u0001', '\u0002'), 28, relax_below=8)
     full = catalog()
     cat, by_path = full['by_id'], full['by_path']
     docs = {}
@@ -402,8 +383,7 @@ def _find(q, kind, limit, _cat_version, _excl_version):
         p = public(d['r'])
         p['hits'] = [{'page': h['page'], 'snippet': clean_snip(h['snippet'])} for h in d['hits']]
         results.append(p)
-    expanded = sorted(set(w for g in groups for w in g[1:]) - set(content))
-    return {'q': q, 'mode': mode, 'expanded': expanded, 'results': results}
+    return {'q': q, 'results': results}
 
 
 def clean_snip(s):
@@ -506,7 +486,7 @@ def guide_videos():
             r = catalog()['by_id'].get(i.get('doc') or '')
             if r and r['kind'] == 'video' and r['id'] not in seen:
                 seen.add(r['id'])
-                out.append(dict(vcard(r), guide=t['id'], guideTitle=t.get('title')))
+                out.append(vcard(r))
     return out
 
 
@@ -599,9 +579,9 @@ def transcript(video_id):
     vtts += [c for c in v.get('captions', []) if c.endswith('.vtt')]
     for p in vtts:
         if (LIB / p).is_file():
-            return {'source': (tx or {}).get('caption_type') or 'captions', 'notes': (tx or {}).get('notes'), 'cues': vtt_cues(p)}
+            return {'source': (tx or {}).get('caption_type') or 'captions', 'cues': vtt_cues(p)}
     if tx and (LIB / tx['path']).is_file():
-        return {'source': tx.get('caption_type') or 'transcript', 'notes': tx.get('notes'),
+        return {'source': tx.get('caption_type') or 'transcript',
                 'cues': [{'t': None, 'text': x} for x in (LIB / tx['path']).read_text(encoding='utf-8', errors='replace').split('\n\n') if x.strip()]}
     return {'source': None, 'cues': []}
 
@@ -915,16 +895,7 @@ def coverage():
         with_text = sum(1 for r in vids if cat['video_tx'].get(r['path']) or any(c.endswith('.vtt') for c in r.get('captions', [])))
         pdfs = [r for r in cat['by_id'].values() if r['kind'] == 'pdf']
         img = sum(1 for r in pdfs if (r.get('searchability') or '').startswith('image-only'))
-        gaps = 0
-        try:
-            c = sqlite3.connect(ro_uri(retrieval.IDX / 'semantic.sqlite'), uri=True, timeout=5)
-            gaps = c.execute('SELECT count(*) FROM gaps').fetchone()[0]
-            c.close()
-        except sqlite3.Error:
-            pass
-        _cov.update(at=time.time(), data={'videos': len(vids), 'videos_with_text': with_text, 'pdfs': len(pdfs), 'pdfs_image_only': img,
-                                          'docs_without_text': gaps,
-                                          'videos_excluded': len({i for i in excluded_videos() if i.startswith('video-')})})
+        _cov.update(at=time.time(), data={'videos': len(vids), 'videos_with_text': with_text, 'pdfs': len(pdfs), 'pdfs_image_only': img})
     return _cov['data']
 
 
@@ -1040,13 +1011,6 @@ class Handler(library.Handler):
         if rpath == '/api/assistant/local':   # Chat is open: the local AI starts loading before the question comes
             if not assistant.LOCAL:
                 return self.send_json({'error': 'no local AI in this version'}, 404)
-            try:
-                n = int(self.headers.get('Content-Length') or 0)
-                action = json.loads(self.rfile.read(min(max(n, 0), 2000)) or b'{}').get('action')
-            except (ValueError, AttributeError):
-                action = None
-            if action != 'warm':
-                return self.send_json({'error': 'action is warm'}, 400)
             assistant.warm_local()
             return self.send_json(assistant.LOCAL.status())
         if rpath != '/api/chat':
@@ -1101,13 +1065,12 @@ class Handler(library.Handler):
                 return self.send_json(find(qs.get('q', '')[:200], qs.get('kind', 'all')))
             if path.startswith('/api/doc/'):
                 r = catalog()['by_id'].get(path[9:])
-                return self.send_json(public(r, full=True) if r else {'error': 'This item is not in the library catalog.'}, 200 if r else 404)
+                return self.send_json(public(r) if r else {'error': 'This item is not in the library catalog.'}, 200 if r else 404)
             if path.startswith('/api/transcript/'):
                 t = transcript(path[16:])
                 return self.send_json(t if t is not None else {'error': 'unknown video'}, 200 if t is not None else 404)
             if path == '/api/retrieve':
-                return self.send_json({'q': qs.get('q', ''), 'results': assistant.hybrid(qs.get('q', '')[:200], min(20, int(qs.get('k', 8))), qs.get('kind', 'any')),
-                                       'semantic': INDEX.status if INDEX else None})
+                return self.send_json({'q': qs.get('q', ''), 'results': assistant.hybrid(qs.get('q', '')[:200], min(20, int(qs.get('k', 8))), qs.get('kind', 'any'))})
             if path == '/api/assistant/status':
                 return self.send_json(dict(assistant.model_status(), coverage=coverage()))
             if path == '/api/videos':
@@ -1123,8 +1086,7 @@ class Handler(library.Handler):
             if path == '/api/library':
                 s = json.loads((LIB / 'summary.json').read_text(encoding='utf-8'))
                 sources = (catalog()['by_path'].get(SOURCES_PAGE) or {}).get('id')
-                return self.send_json({**{k: s.get(k) for k in ('resources', 'pdfs', 'pdf_pages', 'web_pages', 'videos', 'collections', 'document_bytes')},
-                                       'zims': zim_names(), 'sources': sources})
+                return self.send_json({**{k: s.get(k) for k in ('pdfs', 'pdf_pages', 'web_pages', 'videos', 'collections', 'document_bytes')}, 'sources': sources})
             if path.startswith('/api/'):
                 return self.send_json({'error': 'not found'}, 404)
             return super().do_GET()

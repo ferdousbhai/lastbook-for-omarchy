@@ -1,6 +1,5 @@
 """What this computer has: memory, graphics memory and room on each disk.
 No new dependency and no subprocess for any of it, except the AI's own measure (measure_ai), which runs lastbook-llm."""
-import json
 import os
 import shutil
 import subprocess
@@ -149,11 +148,8 @@ def measure_ai(llm_local, model_path, timeout=180):
     runner = llm_local.runner_path()
     if not runner or not Path(model_path).is_file():
         return None
-    threads = max(4, min(16, (os.cpu_count() or 8) // 2))
-    argv = [str(runner), '--model', str(model_path), '--ctx', str(llm_local.CTX), '--threads', str(threads), '--measure']
     try:
-        out = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
-        fit = next((json.loads(l) for l in out.stdout.decode('utf-8', 'replace').splitlines() if l.startswith('{"ev":"fit"')), None)
+        fit, _ = llm_local.measure(runner, model_path, timeout)
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
     if not fit:

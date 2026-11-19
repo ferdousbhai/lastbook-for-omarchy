@@ -9,8 +9,7 @@ version=$(cat VERSION)
   || { echo "native/Cargo.toml's version is not $version (VERSION)" >&2; exit 1; }
 
 bin/test
-bash -n install.sh packaging/arch/PKGBUILD bin/arch-run bin/build-packages bin/check bin/collect-packages bin/release \
-  bin/test bin/test-deps bin/verify-release tests/install_test.sh packaging/llm/build_llm_linux.sh native/dev/preview.sh
+git ls-files bin '*.sh' packaging/arch/PKGBUILD | xargs -n1 bash -n   # every shell script parses
 tests/install_test.sh
 
 printf '\nAll checks passed.\n'

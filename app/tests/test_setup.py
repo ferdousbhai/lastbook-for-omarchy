@@ -1349,15 +1349,15 @@ class Through(Base):
                 def finish(self, ok):
                     self.done.set()
 
-            def ask(method, path, headers=None, body=None):
+            def ask(method, path, body=None):
                 got = Got()
-                b.start(method, B.ORIGIN + path, headers or {}, body, got)
+                b.start(method, path, body, got)
                 got.done.wait(20)
                 return got
             r = ask('GET', '/api/setup/state')
             self.assertEqual(r.status, 200)
             self.assertEqual(json.loads(r.body)['mode'], 'first-run')
-            r = ask('POST', '/api/setup/pause', {'Content-Type': 'application/json'}, b'{}')
+            r = ask('POST', '/api/setup/pause', b'{}')
             self.assertEqual(r.status, 200)
             r = ask('GET', '/')
             self.assertEqual(r.status, 404)

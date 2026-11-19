@@ -123,7 +123,7 @@ impl WebPage {
                 && let Some(t) = v.title().filter(|t| !t.is_empty())
                 && let Some(app) = p.app.upgrade()
             {
-                app.set_title(&t);
+                app.report_title("web", &t);
             }
         });
         page

@@ -1,6 +1,6 @@
 # Third-party notices
 
-Lastbook builds on the work below. Each part keeps its own licence. The **Where** column says whether it is in this
+Lastbook builds on the work below. Each part keeps its own licence. Each section's heading says whether it is in this
 repository, bundled into the package by the build, used from the system, or downloaded by setup.
 
 **Checked** means the licence was read from the licence file or package metadata of the exact version the builds use.

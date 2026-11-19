@@ -410,7 +410,7 @@ impl MapPage {
         glib::spawn_future_local(async move {
             let r = engine.get(&query("/api/places", &[("q", &q)])).await;
             let Some(me) = me.upgrade() else { return };
-            let list: Vec<Value> = r.ok().and_then(|v| v.as_array().cloned().or_else(|| v["results"].as_array().cloned())).unwrap_or_default();
+            let list: Vec<Value> = r.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
             omui::clear(&me.results);
             for p in &list {
                 let row = gtk::Box::new(gtk::Orientation::Vertical, 2);

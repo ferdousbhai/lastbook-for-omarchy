@@ -169,7 +169,10 @@ impl Reader {
                 Err(_) => return me.fail("This document is not in the library."),
             };
             let title = rec["title"].as_str().unwrap_or_default().to_owned();
-            app.set_title(&title);
+            if !app.showing("reader") {
+                return;   // the person left before the answer came: opening it again asks again
+            }
+            app.report_title("reader", &title);
             let mut meta = vec![rec["publisher"].as_str().unwrap_or_default().to_owned()];
             if let Some(y) = rec["year"].as_str() {
                 meta.push(y.to_owned());
@@ -224,6 +227,13 @@ impl Reader {
         let n = n.clamp(1, total);
         self.page.set(n);
         self.entry.set_text(&n.to_string());
+        // The page on show is the page that is saved, and the one Back returns to.
+        if let (Some(app), Some((doc, _))) = (self.app.upgrade(), self.doc.borrow().as_ref())
+            && app.reading(doc)
+        {
+            app.replace_route(crate::ui::Route::Read { doc: doc.clone(), page: n }, false);
+            app.update_star();
+        }
         self.render();
         self.scroll.vadjustment().set_value(0.0);
     }

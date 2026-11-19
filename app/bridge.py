@@ -22,8 +22,6 @@ import traceback
 import urllib.parse
 from collections import deque
 
-ORIGIN = 'lastbook://app'
-
 MiB = 1024 * 1024
 CHUNK = MiB                         # largest piece handed to a stream Sink
 VIDEO_PIECE = 8 * MiB               # all of a video an answer holds: its start. A memory guard for a page that names one; the window plays the library's videos from disk.
@@ -42,10 +40,7 @@ GROW_TO = {'small': 48}                 # most workers once requests are kept wa
 GROW_AFTER = 0.05                       # seconds a request waits before a lane adds workers for what is waiting
 SHRINK_AFTER = 10                       # seconds an added worker sits idle before it goes
 
-PASS_HEADERS = {'content-type', 'accept'}  # the only request headers the engine sees
 FILE_PREFIXES = ('/documents/', '/pages/', '/videos/', '/videos-external/', '/transcripts/', '/metadata/videos/', '/courses/', '/collections/', '/assets/')
-HOP = {'connection', 'keep-alive', 'transfer-encoding', 'te', 'upgrade', 'proxy-connection', 'trailer'}
-DROP = HOP | {'server', 'date'}
 VIDEO_SUFFIXES = ('.mp4', '.webm', '.mkv')
 PDF_PAGE = re.compile(r'[?&]pdf-page=(\d+)(?:&|$)')
 PDF_WIDTH = 1400                    # the longer side of a drawn page
@@ -209,9 +204,7 @@ class Exchange:
         self.status, self.reason = int(parts[1]), parts[2] if len(parts) > 2 else ''
         for ln in lines[1:]:
             k, _, v = ln.partition(':')
-            k, v = k.strip(), v.strip()
-            if k.lower() not in DROP:
-                self.headers.append((k, v))
+            self.headers.append((k.strip(), v.strip()))
 
     def _header(self, name):
         return next((v for k, v in self.headers if k.lower() == name), None)
@@ -299,7 +292,7 @@ class Exchange:
 class Bridge:
     def __init__(self, server_module):
         """server_module: the imported engine, after server.init()."""
-        self.server, self.origin = server_module, ORIGIN
+        self.server = server_module
         self.Handler = _make_handler(server_module.Handler)
         self.lanes = {n: _Lane(n, w, q, GROW_TO.get(n)) for n, (w, q) in LANES.items()}
         self.waiting_now = threading.Event()
@@ -308,11 +301,11 @@ class Bridge:
         self.pdf_lock = threading.Lock()
 
     # ---- requests
-    def start(self, method, url, headers, body, sink):
+    def start(self, method, path, body, sink):
         """Runs sink's calls on a worker. Returns the Exchange, whose cancel() the caller uses to stop the request,
         or None if the bridge answered at once (a refusal), in which case sink already has the whole answer.
-        headers: (name, value) pairs or a dict. body: bytes or None."""
-        refused, prepared = self._prepare(method, url, headers, body)
+        path: as the window sent it, query included. body: bytes or None."""
+        refused, prepared = self._prepare(method, path, body)
         if refused:
             status, reason, hs, text = refused
             sink.head(status, reason, hs)
@@ -368,18 +361,11 @@ class Bridge:
                 '.p img{display:block;width:100%;height:auto;background:#fff}'
                 '</style></head><body>' + ''.join(rows) + '</body></html>').encode()
 
-    def target_of(self, url):
-        if url == self.origin:
-            return '/'
-        if not url.startswith(self.origin + '/'):
-            return None
-        target = url[len(self.origin):].split('#', 1)[0]
-        return re.sub(r'[\x80-\U0010ffff]', lambda m: urllib.parse.quote(m.group()), target)
-
     # ---- inside
-    def _prepare(self, method, url, headers, body):
-        target = self.target_of(url)
-        if target is None or not target.startswith('/') or target.startswith('//') or BAD_TARGET.search(target):
+    def _prepare(self, method, path, body):
+        """The request the Handler reads: the path as its target, and no header of the window's (the pipe carries none)."""
+        target = re.sub(r'[\x80-\U0010ffff]', lambda m: urllib.parse.quote(m.group()), str(path).split('#', 1)[0])
+        if not target.startswith('/') or target.startswith('//') or BAD_TARGET.search(target):
             return _plain(400, 'Bad Request', b'refused'), None
         if method not in ('GET', 'POST'):
             return _plain(405, 'Method Not Allowed', b'refused'), None
@@ -387,9 +373,6 @@ class Bridge:
         if method == 'POST' and body is not None and len(body) > MAX_POST:
             return _plain(413, 'Too Large', b'refused'), None
         lines = [f'{method} {target} HTTP/1.1', 'Host: localhost', 'Connection: close']
-        for k, v in _lower(headers).items():
-            if k in PASS_HEADERS and not re.search(r'[\r\n]', v):
-                lines.append(f'{k}: {v}')
         real = urllib.parse.unquote(path).lower()
         if method == 'GET' and real.endswith(VIDEO_SUFFIXES) and real.startswith(FILE_PREFIXES):
             lines.append(f'Range: bytes=0-{VIDEO_PIECE - 1}')   # the pipe carries no Range, so the engine is asked for a video's first piece and no more
@@ -409,11 +392,6 @@ class Bridge:
 
 def _plain(status, reason, text):
     return status, reason, [('Content-Type', 'text/plain'), ('Content-Length', str(len(text)))], text
-
-
-def _lower(headers):
-    items = headers.items() if hasattr(headers, 'items') else headers
-    return {str(k).lower(): str(v) for k, v in (items or ())}
 
 
 def _lane_for(method, path, target=''):

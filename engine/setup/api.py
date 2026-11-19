@@ -1051,7 +1051,7 @@ def _pending_file(settings_dir):
 
 
 def startup(settings_dir, only=None):
-    """app/main.py calls this first: a staged switch is made now, before the engine opens anything. Returns the library to open
+    """app/engine_pipe.py calls this first: a staged switch is made now, before the engine opens anything. Returns the library to open
     (or None to look as usual) and a note: {target, old, model_file, error}."""
     settings_dir = Path(settings_dir)
     try:
@@ -1221,29 +1221,22 @@ def handle(h, method, path):
 # ------------------------------------------------------------------------------------------------ setup mode's Handler --
 class SetupHandler(BaseHTTPRequestHandler):
     """All there is in setup mode: /api/setup/*."""
-    server_version = 'Lastbook'
-    sys_version = ''
 
     def log_message(self, *a):
         pass
 
-    def _path(self):
+    def _answer(self, method):
         import urllib.parse
-        return urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
+        path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
+        if path.startswith('/api/setup/'):
+            return handle(self, method, path)   # only an exact route name is answered
+        return _send_json(self, {'error': 'not found'}, 404)
 
     def do_GET(self):
-        path = self._path()
-        if '\0' in path or '/..' in path or '\\' in path:
-            return _send_json(self, {'error': 'not found'}, 404)
-        if path.startswith('/api/setup/'):
-            return handle(self, 'GET', path)
-        return _send_json(self, {'error': 'not found'}, 404)
+        return self._answer('GET')
 
     def do_POST(self):
-        path = self._path()
-        if path.startswith('/api/setup/'):
-            return handle(self, 'POST', path)
-        return _send_json(self, {'error': 'not found'}, 404)
+        return self._answer('POST')
 
 
 class SetupServer:

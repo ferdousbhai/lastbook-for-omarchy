@@ -13,7 +13,7 @@ The screens are `native/src/setup.rs`; the engine side is `engine/setup/` ([its 
 - **The one way out.** Setup's downloader is the only code in Lastbook that may reach the internet, and only when the person
   starts or resumes a download. It fetches over HTTPS only from hosts in `ALLOWED_HOSTS` (below), with no proxy taken from
   the system, and follows a redirect only to another allowed host. Everything else stays as it is: the window blocks all web
-  loads, the assistant talks to loopback or pipes only, and nothing is sent anywhere (no telemetry, no update check:
+  loads, the assistant talks to the local AI over pipes only, and nothing is sent anywhere (no telemetry, no update check:
   updates come from pacman). This route covers library packs, the model and the map, and nothing more.
 - **No blanket memory floor.** The local AI is offered when the measured fit says it fits (`llm_local.judge`, about 18 GB
   of memory for model and context, plus a 2.5 GiB reserve). It is not offered below that, and the screen says why in plain words.

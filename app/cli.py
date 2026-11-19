@@ -184,7 +184,7 @@ def transcript(S, A, a):
     out = {**head(S, r), 'duration': S.public(r).get('duration'), 'source': got.get('source'), 'query': a.query or None}
     if a.query and cues:
         # The passages nearest the question by meaning; without Recall, the lines that share a word with it.
-        near = S.INDEX.semantic(a.query[:200], 4, doc=a.video_id) if S.INDEX else []
+        near = S.INDEX.semantic(a.query[:200], 4, doc=a.video_id)
         if near:
             cues = [{'t': w['t'], 'text': w['text']} for w in sorted(near, key=lambda w: w['t'] or 0)]
         else:

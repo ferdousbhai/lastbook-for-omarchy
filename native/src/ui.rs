@@ -291,7 +291,9 @@ impl App {
         // A click on the row already selected goes back to that section's first screen (from a guide to the guides).
         let a = app.clone();
         app.sidebar.connect_row_activated(move |_, row| {
-            if let Some(s) = SECTIONS.iter().find(|s| s.0 == row.widget_name().as_str() && !matches!(s.0, "search" | "chat")) {
+            if let Some(s) = SECTIONS.iter().find(|s| s.0 == row.widget_name().as_str() && !matches!(s.0, "search" | "chat"))
+                && a.current() != Some(Route::Section(s.0))   // a click on another row has just gone there (row-selected)
+            {
                 a.navigate(Route::Section(s.0));
             }
         });
@@ -363,7 +365,11 @@ impl App {
                 Some("wiki") => "Encyclopedia article".into(),
                 Some("watch") => "Video".into(),
                 Some("guide") => "Guide".into(),
-                _ => "Saved page".into(),
+                // A saved web page keeps whose it is: the line the page shows above itself.
+                _ => match self.current() {
+                    Some(Route::Web { meta, .. }) if !meta.is_empty() => meta,
+                    _ => "Saved page".into(),
+                },
             };
             items.push(Saved { key, title, sub, at: glib::real_time() / 1_000_000 });
         }
@@ -371,7 +377,7 @@ impl App {
         self.update_star();
     }
 
-    fn update_star(&self) {
+    pub fn update_star(&self) {
         let key = self.current().and_then(|r| r.key());
         self.star.set_visible(key.is_some());
         let saved = key.is_some_and(|k| load_saved().iter().any(|s| s.key == k));
@@ -539,7 +545,25 @@ impl App {
         }
     }
 
-    pub fn set_title(&self, title: &str) {
+    /// Whether stack page `page` is the one on show: an answer that arrives after the person moved on must not rename
+    /// or replace the screen they moved to.
+    pub fn showing(&self, page: &str) -> bool {
+        self.stack.visible_child_name().as_deref() == Some(page)
+    }
+
+    /// Whether document `doc` is the screen in the history's current place.
+    pub fn reading(&self, doc: &str) -> bool {
+        matches!(self.current(), Some(Route::Read { doc: d, .. }) if d == doc)
+    }
+
+    /// A title a screen learned once it had loaded.
+    pub fn report_title(&self, page: &str, title: &str) {
+        if self.showing(page) {
+            self.set_title(title);
+        }
+    }
+
+    fn set_title(&self, title: &str) {
         if let Some(k) = self.current().and_then(|r| r.title_key()) {
             self.titles.borrow_mut().insert(k, title.to_owned());
         }

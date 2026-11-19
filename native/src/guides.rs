@@ -54,7 +54,7 @@ impl Guides {
                     && let Some(title) = me.show(&id)
                     && let Some(app) = me.app.upgrade()
                 {
-                    app.set_title(&title);
+                    app.report_title("guide", &title);
                 }
             }
         });
@@ -121,6 +121,21 @@ impl Guides {
                 items.set_margin_top(8);
                 for r in c["read"].as_array().into_iter().flatten() {
                     items.append(&self.item(r));
+                }
+                // A choice that belongs to another guide leads there.
+                if let Some(to) = c["goto"].as_str().map(|g| g.split('/').next().unwrap_or(g).to_owned())
+                    && let Some(name) = self.topics.borrow().iter().find(|t| t["id"] == to.as_str()).and_then(|t| t["title"].as_str().map(str::to_owned))
+                {
+                    let go = crate::cards::wrap_button(&format!("Open the guide: {name}"));
+                    go.add_css_class("chip");
+                    go.set_halign(gtk::Align::Start);
+                    let app = self.app.clone();
+                    go.connect_clicked(move |_| {
+                        if let Some(app) = app.upgrade() {
+                            app.navigate(Route::Guide(to.clone()));
+                        }
+                    });
+                    items.append(&go);
                 }
                 exp.set_child(Some(&items));
                 exp.set_expanded(i == 0 && choices.len() == 1);
@@ -198,6 +213,29 @@ impl Guides {
                 row.insert(&b, -1);
             }
             self.page.append(&row);
+        }
+        // What the curators looked for and did not find, and where the sources disagree: said, not hidden.
+        let gaps = |key: &str| t["gaps"][key].as_array().cloned().unwrap_or_default();
+        let (missing, disagree) = (gaps("missing"), gaps("disagree"));
+        if !missing.is_empty() || !disagree.is_empty() {
+            let exp = gtk::Expander::new(Some("What this guide does not cover"));
+            exp.add_css_class("choice");
+            let b = gtk::Box::new(gtk::Orientation::Vertical, 6);
+            b.set_margin_top(8);
+            for (heading, lines) in [("", missing), ("Where the sources disagree", disagree)] {
+                if !heading.is_empty() && !lines.is_empty() {
+                    b.append(&label(heading, "result-title"));
+                }
+                for l in lines.iter().filter_map(Value::as_str) {
+                    let text = gtk::Label::new(Some(l));
+                    text.set_wrap(true);
+                    text.set_xalign(0.0);
+                    text.add_css_class("dim-label");
+                    b.append(&text);
+                }
+            }
+            exp.set_child(Some(&b));
+            self.page.append(&exp);
         }
         self.page_scroll.vadjustment().set_value(0.0);
         Some(title)

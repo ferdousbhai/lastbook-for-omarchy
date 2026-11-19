@@ -121,7 +121,7 @@ def merge(bundled, fetched):
 
 
 class Manifest:
-    """The bundled manifest at once; a fetched one replaces it when it arrives and is newer or the same date."""
+    """The bundled manifest at once; a fetched one is merged into it when it arrives (merge(), whatever its date)."""
 
     def __init__(self, bundled=None, remote=REMOTE, allowed=None, context=None):
         self.current = bundled or load_bundled()

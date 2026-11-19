@@ -5,7 +5,7 @@ person asks for it (engine/setup/). Lastbook finds it inside the selected librar
 whether it fits this computer's memory, and starts it when someone asks a question. It stops after IDLE_STOP seconds unused
 and when the app quits (the program leaves when its standard input closes).
 
-assistant.py calls round() for each model turn, with OpenAI-shaped messages. This file turns them into Gemma 4's own prompt
+assistant.py calls render() and Local.generate() for each model turn, with OpenAI-shaped messages. This file turns them into Gemma 4's own prompt
 format, sends that as segments (template markup, where special tokens count, or plain text, where they never do: a document
 cannot start a turn of its own), and turns Gemma's tool calls back into the shape assistant.py already handles.
 """
@@ -110,7 +110,7 @@ class Local:
         self.lock = threading.RLock()
         self.gen_lock = threading.Lock()       # one answer at a time: the model holds one conversation
         self.state, self.pct, self.message = 'absent', None, ''
-        self.path, self.fit, self.ready_info = None, None, None
+        self.path, self.fit = None, None
         self.proc, self.events, self.last_used = None, None, 0
         self.warming = False
         self.next_id = 0
@@ -118,29 +118,28 @@ class Local:
         self.saved = _load()
         self.runner = runner_path()
         self._started = False
+        self.looked = threading.Event()   # set once discover() has finished: 'absent' then means none was found, not "not looked yet"
 
     # -- what the app shows -----------------------------------------------------------------------------------------------
     def status(self):
         with self.lock:
-            fit = self.fit or {}
-            return {'name': NAME, 'file': FILE, 'size': SIZE, 'state': self.state, 'pct': self.pct, 'message': self.message,
-                    'found_at': self.path and _folder_name(self.path), 'runtime': bool(self.runner),
-                    'needs_bytes': fit.get('needs'), 'ram_total': fit.get('ram_total'), 'placement': fit.get('placement'),
-                    'load_s': (self.ready_info or {}).get('load_s'), 'places': [_folder_name(p) for p in places()[:6]]}
+            return {'name': NAME, 'state': self.state, 'pct': self.pct, 'message': self.message}
 
     def available(self):
-        """True when a question can be answered: running, or ready to start."""
-        return self.state in ('ready', 'stopped', 'loading')
+        """True when a question can be answered: running, ready to start, or set up but failed to start last time. Each
+        question then tries once more (ensure_running), since nothing else brings it back from 'error' before a restart."""
+        return self.state in ('ready', 'stopped', 'loading') or (self.state == 'error' and bool(self.path and (self.fit or {}).get('fits')))
 
     def settle(self, waiting=lambda: None):
         """Just after start the model file may still be being found, checked or measured: wait for that to settle, rather
         than answer "no model" to the first question. waiting() is called once if there is anything to wait for."""
-        waited = 0.0
-        while waited < 600 and (self.state in ('checking', 'measuring') or (self.state == 'absent' and waited < 5)):
-            if waited == 0:
-                waiting()
-            time.sleep(0.5)
-            waited += 0.5
+        busy = lambda: not self.looked.is_set() or self.state in ('checking', 'measuring')
+        if not busy():
+            return
+        waiting()
+        t0 = time.time()
+        while busy() and time.time() - t0 < 600:
+            time.sleep(0.25)
 
     # -- finding and checking the file ------------------------------------------------------------------------------------
     def start_background(self):
@@ -157,6 +156,14 @@ class Local:
         with self.lock:
             if self.state in ('checking', 'measuring', 'loading', 'ready'):
                 return
+            self.looked.clear()
+        try:
+            self._discover()
+        finally:
+            self.looked.set()
+
+    def _discover(self):
+        with self.lock:
             if not self.runner:
                 self.state, self.message = 'error', 'This copy of Lastbook has no local AI runtime.'
                 return
@@ -222,8 +229,7 @@ class Local:
         with self.lock:
             self.state, self.pct, self.message = 'measuring', None, ''
         try:
-            out = subprocess.run(self._argv(['--measure']), stdin=subprocess.DEVNULL, capture_output=True, timeout=180)
-            fit = next((json.loads(l) for l in out.stdout.decode('utf-8', 'replace').splitlines() if l.startswith('{"ev":"fit"')), None)
+            fit, out = measure(self.runner, self.path)
         except (OSError, subprocess.SubprocessError, ValueError) as e:
             fit, out = None, None
             print('local AI: measuring failed:', type(e).__name__, e, flush=True)
@@ -239,10 +245,6 @@ class Local:
                 self.state, self.message = 'stopped', ''
             else:
                 self.state, self.message = 'too_big', self.fit['why']
-
-    def _argv(self, extra=()):
-        threads = max(4, min(16, (os.cpu_count() or 8) // 2))   # about the number of performance cores; more only contend
-        return [str(self.runner), '--model', str(self.path), '--ctx', str(CTX), '--threads', str(threads), '--ubatch', str(ubatch()), *extra]
 
     # -- running ----------------------------------------------------------------------------------------------------------
     def ensure_running(self, on_wait=None, cancelled=lambda: False):
@@ -282,7 +284,7 @@ class Local:
         err = open(logs / 'local-ai.log', 'ab')
         err.write(f'\n--- {time.strftime("%Y-%m-%d %H:%M:%S")} start\n'.encode())
         err.flush()
-        self.proc = subprocess.Popen(self._argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, bufsize=0)   # it leaves when its standard input closes, however Lastbook ends
+        self.proc = subprocess.Popen(argv(self.runner, self.path), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, bufsize=0)   # it leaves when its standard input closes, however Lastbook ends
         err.close()
         self.events = queue.Queue()
         self.t_spawn = time.time()
@@ -304,9 +306,8 @@ class Local:
                     if self.proc is proc:
                         self.state, self.pct = 'ready', None
                         self.failed_loads = 0
-                        self.ready_info = dict(ev, load_s=round(time.time() - self.t_spawn, 1))
                         self.last_used = time.time()
-                        print('local AI: ready', json.dumps(self.ready_info), flush=True)
+                        print('local AI: ready', json.dumps(dict(ev, load_s=round(time.time() - self.t_spawn, 1))), flush=True)
             elif kind == 'fit':
                 pass
             elif kind == 'error' and ev.get('id') is None:
@@ -424,6 +425,20 @@ class Local:
 
 
 LOCAL = Local()
+
+
+def argv(runner, path, *extra):
+    """How lastbook-llm is started on a model file: to answer, and (with --measure) to say how it would fit."""
+    threads = max(4, min(16, (os.cpu_count() or 8) // 2))   # about the number of performance cores; more only contend
+    return [str(runner), '--model', str(path), '--ctx', str(CTX), '--threads', str(threads), '--ubatch', str(ubatch()), *extra]
+
+
+def measure(runner, path, timeout=180):
+    """(llama.cpp's 'fit' event for the model file on this computer, or None; the finished process). Setup
+    (engine/setup/hardware.py) and the AI itself both measure here, with the settings the model then runs with, so what
+    setup says fits is what the engine finds fits."""
+    out = subprocess.run(argv(runner, path, '--measure'), stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
+    return next((json.loads(l) for l in out.stdout.decode('utf-8', 'replace').splitlines() if l.startswith('{"ev":"fit"')), None), out
 
 
 def ubatch():

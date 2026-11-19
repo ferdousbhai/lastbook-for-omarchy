@@ -83,7 +83,7 @@ def main(a):
             except Exception as e:           # one damaged file must not cost the answers from the others
                 print(f'{path.name}: skipped ({type(e).__name__})')
 if __name__ == '__main__':
-    for out in (sys.stdout, sys.stderr): out.reconfigure(encoding='utf-8', errors='replace')   # page text is not all in a Windows console's own encoding
+    for out in (sys.stdout, sys.stderr): out.reconfigure(encoding='utf-8', errors='replace')   # page text is not all in the terminal's own encoding (LANG=C)
     rest = use(sys.argv[1:])
     if not rest or rest[0] not in ('search', 'titles', 'doc', 'page', 'toc', 'zim'): sys.exit(__doc__)
     try:

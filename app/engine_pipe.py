@@ -129,11 +129,7 @@ def main():
             continue
         rid, method, path = req.get('id'), req.get('method', 'GET'), req.get('path', '/')
         body = req.get('body')
-        raw = json.dumps(body).encode() if body is not None else None
-        headers = {'accept': 'application/json'}
-        if raw is not None:
-            headers['content-type'] = 'application/json'
-        ex = bridge.start(method, B.ORIGIN + path, headers, raw, PipeSink(rid))
+        ex = bridge.start(method, path, json.dumps(body).encode() if body is not None else None, PipeSink(rid))
         if ex:
             running[rid] = ex
             if len(running) > 256:   # finished ones are dropped lazily; cancelling a finished exchange does nothing

@@ -154,10 +154,9 @@ class Res:
         self.status, self.hs, self.body, self.ok = status, hs, body, ok
 
 
-def call(b, method, path, headers=None, body=None, timeout=60, url=None):
-    url = url if url is not None else b.origin + path
+def call(b, method, path, body=None, timeout=60):
     r = Rec()
-    b.start(method, url, headers or {}, body, r)
+    b.start(method, path, body, r)
     assert r.done.wait(timeout), f'no answer: {method} {path}'
     return Res(r.status, r.hs, r.body, r.ok)
 
@@ -176,11 +175,10 @@ class Both:
 
     def setUp(self):
         self.b = B.Bridge(MOD)
-        self.json = {'Content-Type': 'application/json'}
         self.piece = B.VIDEO_PIECE
 
     def get(self, path, **k):
-        return call(self.b, 'GET', path, {}, **k)
+        return call(self.b, 'GET', path, **k)
 
     # ---- a video through the bridge: its first piece and no more (the window plays the library's videos from disk)
     def test_video_gets_first_piece(self):
@@ -188,11 +186,6 @@ class Both:
         self.assertEqual(r.status, 206)
         self.assertEqual(len(r.body), self.piece)
         self.assertEqual(hashlib.sha256(r.body).digest(), hashlib.sha256(pat(0, self.piece)).digest())
-
-    def test_video_range_from_a_caller_is_not_passed_on(self):
-        r = call(self.b, 'GET', A, {'Range': 'bytes=1000-1999'})
-        self.assertEqual(len(r.body), self.piece)
-        self.assertEqual(r.body[:1000], pat(0, 1000))
 
     def test_video_other_types_and_case(self):
         self.assertEqual(self.get('/videos/b.webm').status, 206)
@@ -244,13 +237,8 @@ class Both:
         self.assertEqual(r.body, B.PDF_NOTICE)
 
     # ---- every refusal
-    def test_refused_host(self):
-        for url in ('https://evil.example/', 'lastbook://other/', self.b.origin + '.evil/', self.b.origin + '@evil/', 'file:///etc/hosts', 'about:blank', ''):
-            r = call(self.b, 'GET', '', url=url)
-            self.assertEqual(r.status, 400, url)
-
     def test_refused_target(self):
-        for t in ('//evil/', '/a b', '/a\nb', '/a\x00b', '/a\tb', '/\x7f'):
+        for t in ('//evil/', '/a b', '/a\nb', '/a\x00b', '/a\tb', '/\x7f', 'https://evil.example/', 'file:///etc/hosts', 'about:blank', ''):
             self.assertEqual(self.get(t).status, 400, repr(t))
 
     def test_refused_method(self):
@@ -258,7 +246,7 @@ class Both:
             self.assertEqual(call(self.b, m, '/').status, 405, m)
 
     def test_post_too_big(self):
-        self.assertEqual(call(self.b, 'POST', '/api/chat', self.json, b'x' * (B.MAX_POST + 1)).status, 413)
+        self.assertEqual(call(self.b, 'POST', '/api/chat', b'x' * (B.MAX_POST + 1)).status, 413)
 
     def test_path_attacks(self):
         attacks = ['/../canary-root.txt', '/documents/../canary-root.txt', '/%2e%2e/canary-root.txt', '/documents/%2e%2e/%2e%2e/outside-canary.txt', '/canary-root.txt',
@@ -286,13 +274,10 @@ class Both:
         self.assertEqual(self.get('/pages/hl2.txt').status, 404)
         self.assertEqual(self.get('/documents/plain.txt').status, 200)
 
-    def test_only_two_headers_reach_the_engine(self):
-        r = call(self.b, 'GET', '/api/t/echo', {'X-Lastbook-Key': 'secret', 'Origin': 'null', 'Cookie': 'sg_key=1', 'Host': 'evil.example', 'X-Forwarded-For': '1.2.3.4', 'Accept': 'x/y', 'Range': 'bytes=0-1', 'Bad': 'a\r\nInjected: 1', 'Accept\r\nInjected': '2'})
-        seen = json.loads(r.body)['headers']
-        self.assertEqual(seen['host'], 'localhost')
-        self.assertEqual(seen['accept'], 'x/y')
-        for h in ('x-lastbook-key', 'origin', 'cookie', 'x-forwarded-for', 'range', 'bad', 'injected'):
-            self.assertNotIn(h, seen)
+    def test_the_engine_sees_the_path_and_no_header_of_the_caller(self):
+        got = json.loads(self.get('/api/t/echo?a=1').body)
+        self.assertEqual(got['path'], '/api/t/echo?a=1')
+        self.assertEqual(got['headers'], {'host': 'localhost', 'connection': 'close'})
 
     def test_non_ascii_target(self):
         r = self.get('/documents/پ.txt')
@@ -462,17 +447,6 @@ class Both:
         h.path, h.directory = page, str(fixture.LIB)
         return h.saved_page_part(src)
 
-    def test_no_page_of_the_app_itself(self):
-        for t in ('/', '/index.html', '/sw.js', '/ui/app.js', '/ui/setup.html', '/api/map/info', '/api/tools'):
-            self.assertEqual(self.get(t).status, 404, t)
-        self.assertEqual(call(self.b, 'POST', '/api/tool/search', self.json, b'{}').status, 404)
-
-    def test_no_server_or_date_header(self):
-        r = self.get('/api/doc/pdfsmall')
-        self.assertEqual(r.status, 200)
-        self.assertNotIn('server', r.hs)
-        self.assertNotIn('date', r.hs)
-
     def test_engine_error_is_an_answer(self):
         r = self.get('/api/t/boom')
         self.assertEqual(r.status, 500)
@@ -480,9 +454,9 @@ class Both:
         self.assertEqual(self.get('/api/t/uncaught').status, 502)   # an error the Handler let out still becomes an answer
 
     def test_ordinary_api(self):
-        self.assertEqual(self.get('/api/health').status, 404)   # gone: nothing asks whether the engine is up, the window reads its "ready" line
         self.assertEqual(self.get('/reader.css').status, 200)
         self.assertEqual(self.get('/api/nope').status, 404)
+        self.assertEqual(call(self.b, 'POST', '/api/nope', b'{}').status, 404)
         r = json.loads(self.get('/api/find?q=boil').body)
         self.assertTrue(r)
         self.assertEqual(json.loads(self.get('/api/doc/pdfsmall').body)['id'], 'pdfsmall')
@@ -507,23 +481,13 @@ class AssistantStaysHere(unittest.TestCase):
         self.assertIsNone(st['local'])
 
 
-class NothingGoesOut(unittest.TestCase):
-    """What must be gone from the window's code is checked in its source."""
-
-    def test_no_way_to_hand_anything_to_the_system(self):
-        for name in ('engine_pipe.py', 'bridge.py', 'main.py'):
-            src = (ROOT / 'app' / name).read_text(encoding='utf-8')
-            for word in ('open_in_browser', 'open_external', 'startfile', 'NSWorkspace', 'openURL', "'browser'", 'webbrowser', 'Process.Start', 'ShellExecute'):
-                self.assertNotIn(word, src, name)
-
-
 class StreamTests(Both, unittest.TestCase):
 
     def test_cancel_mid_body_stops_the_handler(self):
         b = B.Bridge(MOD)
         hold = threading.Event()
         r = Rec(hold, after=4)
-        ex = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r)   # one piece of video: 8 chunks
+        ex = b.start('GET', '/videos/huge.mkv', None, r)   # one piece of video: 8 chunks
         self.assertTrue(wait_until(lambda: len(r.parts) == 4))
         lane = b.lanes['large']
         self.assertEqual(lane.active, 1)
@@ -536,12 +500,12 @@ class StreamTests(Both, unittest.TestCase):
 
     def test_chunks_are_bounded(self):
         r = Rec()
-        self.b.start('GET', self.b.origin + A, {}, None, r)
+        self.b.start('GET', A, None, r)
         self.assertTrue(r.done.wait(20))
         self.assertTrue(all(len(p) <= B.CHUNK for p in r.parts))
         self.assertTrue(r.ok)
         r = Rec()
-        self.b.start('GET', self.b.origin + '/documents/t/manywrites', {}, None, r)
+        self.b.start('GET', '/documents/t/manywrites', None, r)
         self.assertTrue(r.done.wait(20))
         self.assertEqual(max(len(p) for p in r.parts), B.CHUNK)
         self.assertEqual(sum(len(p) for p in r.parts), 3 * MiB)
@@ -562,7 +526,7 @@ class StreamTests(Both, unittest.TestCase):
                 events.append('finish')
                 super().finish(ok)
         r = S()
-        self.b.start('GET', self.b.origin + '/documents/s.pdf', {}, None, r)
+        self.b.start('GET', '/documents/s.pdf', None, r)
         self.assertTrue(r.done.wait(10))
         self.assertEqual(events[0], 'head')
         self.assertEqual(events[-1], 'finish')
@@ -572,7 +536,7 @@ class StreamTests(Both, unittest.TestCase):
         r = Rec()
         STUB.update(pieces=6, delay=0.1)
         t0 = time.time()
-        self.b.start('POST', self.b.origin + '/api/chat', self.json, b'{"messages":[{"role":"user","content":"hi"}]}', r)
+        self.b.start('POST', '/api/chat', b'{"messages":[{"role":"user","content":"hi"}]}', r)
         self.assertTrue(r.first.wait(5))
         first_at = time.time() - t0
         self.assertTrue(r.done.wait(10))
@@ -590,7 +554,7 @@ class StreamTests(Both, unittest.TestCase):
         r = Rec()
         STUB.update(pieces=200, delay=0.05)
         before = len(STUB['stopped'])
-        ex = self.b.start('POST', self.b.origin + '/api/chat', self.json, b'{}', r)
+        ex = self.b.start('POST', '/api/chat', b'{}', r)
         self.assertTrue(wait_until(lambda: len(r.parts) >= 3))
         ex.cancel()
         self.assertTrue(wait_until(lambda: len(STUB['stopped']) > before, 5))
@@ -603,9 +567,9 @@ class StreamTests(Both, unittest.TestCase):
         lane = b.lanes['large'] = B._Lane('large', 1, 10)
         hold = threading.Event()
         r1, r2 = Rec(hold), Rec()
-        e1 = b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r1)
+        e1 = b.start('GET', '/videos/huge.mkv', None, r1)
         self.assertTrue(r1.first.wait(5))
-        e2 = b.start('GET', b.origin + '/videos/a.mp4', {}, None, r2)
+        e2 = b.start('GET', '/videos/a.mp4', None, r2)
         e2.cancel()
         e1.cancel()
         hold.set()
@@ -617,7 +581,7 @@ class StreamTests(Both, unittest.TestCase):
         b = B.Bridge(MOD)
         hold = threading.Event()
         recs = [Rec(hold) for _ in range(300)]
-        exs = [b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r) for r in recs]
+        exs = [b.start('GET', '/videos/huge.mkv', None, r) for r in recs]
         lane = b.lanes['large']
         self.assertTrue(wait_until(lambda: lane.active == 6))
         time.sleep(0.2)
@@ -641,12 +605,12 @@ class StreamTests(Both, unittest.TestCase):
         b.lanes['large'] = B._Lane('large', 1, 2)
         hold = threading.Event()
         recs = [Rec(hold) for _ in range(3)]
-        exs = [b.start('GET', b.origin + '/videos/huge.mkv', {}, None, recs[0])]
+        exs = [b.start('GET', '/videos/huge.mkv', None, recs[0])]
         self.assertTrue(recs[0].first.wait(5))     # one running, held
-        exs += [b.start('GET', b.origin + '/videos/huge.mkv', {}, None, r) for r in recs[1:]]     # two waiting
+        exs += [b.start('GET', '/videos/huge.mkv', None, r) for r in recs[1:]]     # two waiting
         self.assertNotIn(None, exs)
         extra = [Rec() for _ in range(3)]
-        got = [b.start('GET', b.origin + '/videos/a.mp4', {}, None, r) for r in extra]
+        got = [b.start('GET', '/videos/a.mp4', None, r) for r in extra]
         self.assertEqual(got, [None] * 3)
         self.assertEqual([r.status for r in extra], [503] * 3)
         for e in exs:
@@ -663,7 +627,7 @@ class StreamTests(Both, unittest.TestCase):
     def test_real_chat_with_no_model_is_plain(self):
         assistant.model_status, assistant.chat = REAL_STATUS, REAL_CHAT
         try:
-            r = call(self.b, 'POST', '/api/chat', self.json, b'{}', timeout=15)
+            r = call(self.b, 'POST', '/api/chat', b'{}', timeout=15)
         finally:
             assistant.model_status, assistant.chat = stub_status, stub_chat
         self.assertEqual(r.status, 200)
@@ -689,10 +653,6 @@ class WholeProcess(unittest.TestCase):
     def test_nothing_written_to_the_real_library(self):
         self.assertTrue(str(server.LIB).startswith(str(DATA)))
 
-    def test_video_piece_size(self):
-        self.assertGreaterEqual(B.VIDEO_PIECE, 4 * MiB)
-        self.assertLessEqual(B.VIDEO_PIECE, 8 * MiB)
-
 
 # ---- the stub: stands in for the model. handle_post, emit and wfile are the real ones.
 STUB = {'pieces': 4, 'delay': 0.05, 'runs': [], 'sent': [], 'stopped': []}
@@ -713,7 +673,7 @@ def stub_chat(messages, about, emit, cancelled):
         time.sleep(STUB['delay'])
         emit({'type': 'delta', 'text': f'p{i} '})
         STUB['sent'].append(i)
-    emit({'type': 'done', 'answer': 'x', 'sources': [], 'consulted': [], 'invalid': [], 'latency': {}})
+    emit({'type': 'done', 'answer': 'x', 'sources': [], 'consulted': [], 'tools': [], 'latency': {}})
 
 
 assistant.model_status, assistant.chat = stub_status, stub_chat

@@ -30,7 +30,8 @@ pub struct Videos {
     title: gtk::Label,
     meta: gtk::Label,
     cues: gtk::ListBox,
-    cue_times: RefCell<Vec<f64>>,
+    /// When each transcript row is said; None for a transcript that is plain paragraphs, with no times.
+    cue_times: RefCell<Vec<Option<f64>>>,
     current: RefCell<Option<String>>,
     seek_to: Cell<f64>,
     loaded: Cell<bool>,
@@ -67,7 +68,7 @@ impl Videos {
         t.add_css_class("page-title");
         t.set_xalign(0.0);
         let entry = gtk::SearchEntry::new();
-        entry.set_placeholder_text(Some("Search video titles and transcripts"));
+        entry.set_placeholder_text(Some("Search video titles"));
         let rails = gtk::Box::new(gtk::Orientation::Vertical, 10);
         column.append(&t);
         column.append(&entry);
@@ -130,10 +131,10 @@ impl Videos {
         let me = Rc::downgrade(&v);
         v.cues.connect_row_activated(move |_, row| {
             if let Some(me) = me.upgrade()
-                && let Some(t) = me.cue_times.borrow().get(row.index() as usize)
+                && let Some(Some(t)) = me.cue_times.borrow().get(row.index() as usize).copied()
                 && let Some(s) = me.video.media_stream()
             {
-                s.seek((*t * 1e6) as i64);
+                s.seek((t * 1e6) as i64);
                 s.play();
             }
         });
@@ -277,7 +278,7 @@ impl Videos {
             let Some(me) = me.upgrade() else { return };
             let Some(app) = me.app.upgrade() else { return };
             let title = rec["title"].as_str().unwrap_or_default().to_owned();
-            app.set_title(&title);
+            app.report_title("watch", &title);
             me.title.set_text(&title);
             let mut meta = vec![rec["publisher"].as_str().unwrap_or_default().to_owned()];
             if let Some(y) = rec["year"].as_str() {
@@ -317,9 +318,10 @@ impl Videos {
             me.video.set_media_stream(Some(&stream));
             if let Ok(tx) = engine.get(&format!("/api/transcript/{}", urlencoding::encode(&id))).await {
                 for c in tx["cues"].as_array().into_iter().flatten() {
-                    let t = c["t"].as_f64().unwrap_or(0.0);
+                    let t = c["t"].as_f64();
                     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-                    let tl = gtk::Label::new(Some(&clock(t)));
+                    let tl = gtk::Label::new(t.map(clock).as_deref());
+                    tl.set_visible(t.is_some());
                     tl.add_css_class("cue-time");
                     tl.set_valign(gtk::Align::Start);
                     let text = gtk::Label::new(c["text"].as_str());
@@ -353,7 +355,7 @@ impl Videos {
         }
         let now = s.timestamp() as f64 / 1e6;
         let times = self.cue_times.borrow();
-        let idx = times.iter().rposition(|t| *t <= now + 0.25);
+        let idx = times.iter().rposition(|t| t.is_some_and(|t| t <= now + 0.25));
         if let Some(i) = idx
             && let Some(row) = self.cues.row_at_index(i as i32)
             && self.cues.selected_row().as_ref() != Some(&row)

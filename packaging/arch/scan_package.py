@@ -29,10 +29,8 @@ FIRST_PARTY = re.compile(r'^usr/lib/lastbook-for-omarchy/(content|app|engine|set
 NET_MODULES = {'socket', 'ssl', 'http.client', 'urllib.request', 'http.server', 'socketserver', 'asyncio', 'ftplib', 'smtplib', 'xmlrpc', 'requests', 'urllib3'}
 NET_ALLOWED = {
     P + 'engine/setup/download.py',   # setup's downloader: HTTPS to the allowlist, roots.pem only
-    P + 'server.py',                  # the engine's request handler, run through bridge.py over in-memory streams: it has no port to open
     P + 'engine/setup/api.py',        # BaseHTTPRequestHandler for setup's routes, run the same way
     P + 'engine/library.py',          # http.server's handler base, the same
-    P + 'assistant.py',               # a chat model on this computer's loopback, when one is set; the app's own is llm_local over pipes
     P + 'retrieval.py',               # Recall's owner-only Unix socket (checked below: AF_UNIX only)
 }
 ARCH = {'x86_64': 'X86-64', 'aarch64': 'AArch64'}

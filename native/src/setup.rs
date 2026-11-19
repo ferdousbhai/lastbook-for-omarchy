@@ -26,7 +26,10 @@ pub struct SetupPage {
     job_box: gtk::Box,
     status: gtk::Label,
     state: RefCell<Value>,
+    /// The library size to download; None keeps the library there is.
     pack: RefCell<Option<String>>,
+    /// The choices have their starting values (set once, from the first state read).
+    chosen: Cell<bool>,
     /// The world map and place search (cut from OpenStreetMap on this computer, engine/setup/maps.py).
     world: Cell<bool>,
     /// Street-level areas to add (Geofabrik region ids).
@@ -56,6 +59,7 @@ impl SetupPage {
             status,
             state: RefCell::new(Value::Null),
             pack: RefCell::new(None),
+            chosen: Cell::new(false),
             world: Cell::new(true),
             regions: RefCell::new(Vec::new()),
             ai: Cell::new(false),
@@ -93,9 +97,10 @@ impl SetupPage {
         clear(&self.body);
         let first = st["mode"] == "first-run";
         let rec = &st["recommend"];
-        if self.pack.borrow().is_none() {
-            self.pack.replace(rec["pack"].as_str().map(str::to_owned).or_else(|| st["current"]["pack"].as_str().map(str::to_owned)));
-            // Only first-run setup suggests the model; managing a library never ticks a 17 GB download by itself.
+        if !self.chosen.replace(true) {
+            // Only first-run setup suggests downloads; managing a library starts from "keep it as it is", so adding a
+            // map never swaps the library for another size or ticks a 17 GB model by itself.
+            self.pack.replace(if first { rec["pack"].as_str().map(str::to_owned) } else { None });
             self.ai.set(first && rec["ai"].as_bool().unwrap_or(false));
             self.world.set(first);
         }
@@ -166,10 +171,8 @@ impl SetupPage {
                     me.pack.replace(None);
                 }
             });
-            none.set_active(self.pack.borrow().is_none() || self.pack.borrow().as_deref() == st["current"]["pack"].as_str());
-            if none.is_active() {
-                self.pack.replace(None);
-            }
+            let keep = self.pack.borrow().is_none();   // read first: ticking it writes the choice
+            none.set_active(keep);
             self.body.append(&none);
         }
 
@@ -426,11 +429,7 @@ impl SetupPage {
             let Some(me) = me.upgrade() else { return };
             match r {
                 Ok(v) if v.get("error").is_some() => {
-                    let mut t = v["error"].as_str().unwrap_or("Setup could not start.").to_owned();
-                    if let (Some(n), Some(f)) = (v["need_bytes"].as_f64(), v["free_bytes"].as_f64()) {
-                        t.push_str(&format!(" It needs {} and {} is free.", gb(n), gb(f)));
-                    }
-                    me.status.set_text(&t);
+                    me.status.set_text(v["error"].as_str().unwrap_or("Setup could not start."));
                     me.status.add_css_class("error");
                 }
                 Ok(v) => {
@@ -472,6 +471,7 @@ impl SetupPage {
         clear(&self.job_box);
         let Some(items) = job["items"].as_array().filter(|i| !i.is_empty()) else { return };
         self.job_box.append(&crate::cards::section("Progress"));
+        let mut said: Vec<String> = Vec::new();   // an item's reason is not repeated as the job's
         for it in items {
             let row = gtk::Box::new(gtk::Orientation::Vertical, 4);
             row.add_css_class("result");
@@ -491,7 +491,8 @@ impl SetupPage {
             let bar = gtk::ProgressBar::new();
             bar.set_fraction(if total > 0.0 { (done / total).clamp(0.0, 1.0) } else if state == "done" { 1.0 } else { 0.0 });
             row.append(&bar);
-            if let Some(e) = it["error"].as_str() {
+            if let Some(e) = it["error"]["message"].as_str() {
+                said.push(e.to_owned());
                 let l = label(e, "meta");
                 l.add_css_class("error");
                 row.append(&l);
@@ -527,7 +528,7 @@ impl SetupPage {
                 add("Cancel", "/api/setup/cancel", false);
             }
         }
-        if let Some(e) = job["error"].as_str() {
+        if let Some(e) = job["error"]["message"].as_str().filter(|e| !said.iter().any(|s| s == e)) {
             let l = label(e, "meta");
             l.add_css_class("error");
             self.job_box.append(&l);

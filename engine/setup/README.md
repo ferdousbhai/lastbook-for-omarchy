@@ -5,7 +5,7 @@ The contract is `docs/SETUP-API.md`. This package fills it in.
 | File | What it does |
 |---|---|
 | `download.py` | The only module in Lastbook that opens a network connection. It uses HTTPS on port 443 to `ALLOWED_HOSTS` (and `*.hf.co`) and takes no proxy: it uses `http.client`, which never reads proxy settings. A redirect is followed only to an allowed address. A download resumes with Range. The ETag is compared here, because R2 ignores If-Range. The SHA-256 is computed while the file streams in. |
-| `roots.pem` | The only root certificates the downloader trusts: 11 roots from Mozilla's bundle, those the allowed hosts' chains end in, plus their siblings. The system's trust store is never used. Rebuild with `packaging/setup_roots.py <certifi cacert.pem>`. The package scans require it. |
+| `roots.pem` | The only root certificates the downloader trusts: 11 roots from Mozilla's bundle, those the allowed hosts' chains end in, plus their siblings. The system's trust store is never used. Rebuild with `packaging/setup_roots.py <certifi cacert.pem>`. The package scan requires it. |
 | `manifest.py` | Loads the bundled `setup/manifest-v1.json`, plus one fetch of `https://downloads.lastbook.org/manifest-v1.json` when setup opens. The fetched copy is used only if it validates and every URL is allowed. |
 | `hardware.py` | Reads RAM, unified memory, GPUs and VRAM (from `/proc` and `/sys`) and free space per disk. It estimates whether the AI fits, or measures it with `lastbook-llm --measure` and `llm_local.judge`. |
 | `install.py` | Checks a zip before writing anything: zip-slip, absolute paths, links, case clashes, encryption and the size against `installed_bytes`. Unpacks so that a stopped unpack can resume. Does the one-rename switch, keeps the old library, and rolls back if the new one does not open. |
@@ -18,11 +18,6 @@ The contract is `docs/SETUP-API.md`. This package fills it in.
 - **Normal mode.** `app/engine_pipe.py` configures a manage-mode `Setup` for the open library, and `server.py` hands `/api/setup/` to `api.handle()`. The screens are the window's own (`native/src/setup.rs`, under About → Library and downloads). An upgrade is staged the same way and switches when the engine restarts, so nothing is renamed while files are open. Adding only the AI moves the model into the open library and marks it checked at once; map files made without a pack go straight into the open library.
 - Requests arrive only through the pipe and the bridge. Nothing listens.
 - **The old library after an upgrade.** The switch renames it to `LastbookData.old-<date>` and `pending.json` remembers it, so `apply_pending` can put it back if the new library does not open. `api.opened()` runs only after the engine has opened the new library: it removes `pending.json`, then deletes the old folder in a background thread. `install.is_old_of` decides what may be deleted: a real folder (never a link) directly beside the open library, named `<library>.old-<8 digits>` with an optional `-<n>`, and listed by setup itself (this switch, or `old` in `setup.json` from an earlier one). A folder stays in that list until it is gone, so a delete cut short carries on at the next start.
-
-## Routes added beyond the contract table
-
-- `POST /api/setup/start {repair: true, ai}` re-checks every file against `pack-manifest.tsv` and the model's SHA-256, and fetches again only what is wrong (the whole pack zip, then switches as an upgrade does).
-- `state.recommend` also carries `folder` and `need_bytes` (per pack). Each `found` entry is `{kind: library|pack|model, path, name, id, size, size_ok}`.
 
 ## Tests
 

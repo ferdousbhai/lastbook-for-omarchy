@@ -191,6 +191,12 @@ impl ChatPage {
             if let Some(p) = p.upgrade() {
                 p.pending_about.replace(None);
                 p.about_bar.set_visible(false);
+                // A chat already begun stops being about that page too.
+                let current = p.current.borrow().clone();
+                if let Some(c) = p.chats.borrow_mut().iter_mut().find(|c| Some(&c.id) == current.as_ref()) {
+                    c.about = None;
+                }
+                p.save();
             }
         });
         let keys = gtk::EventControllerKey::new();
@@ -273,7 +279,7 @@ impl ChatPage {
     fn warm(&self) {
         // Chat is open: the local AI starts loading now, so the first question doesn't wait for it.
         if let Some(app) = self.app.upgrade() {
-            let _ = app.engine.request("POST", "/api/assistant/local", Some(&json!({"action": "warm"})));
+            let _ = app.engine.request("POST", "/api/assistant/local", Some(&json!({})));
         }
     }
 
@@ -292,6 +298,7 @@ impl ChatPage {
                 "stopped" => String::new(),
                 "checking" | "measuring" => "Checking the local AI's model file…".into(),
                 "too_big" => format!("The local AI doesn't fit this computer: {}", local["message"].as_str().unwrap_or_default()),
+                "error" => format!("The local AI could not start; your next question tries again. {}", local["message"].as_str().unwrap_or_default()),
                 _ => "No local AI on this computer: questions show the matching pages instead.".into(),
             };
             me.status.set_text(&line);

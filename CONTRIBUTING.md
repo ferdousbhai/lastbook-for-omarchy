@@ -46,7 +46,7 @@ from pacman, never from the app.
 nothing shared may name a real person's home, street, coordinates, machines or accounts.
 
 - Write guides for any reader in any place. Name a region only when the source is about that region.
-- Never commit a private word list, real coordinates of a home, user or machine names, LAN
+- Never commit real coordinates of a home, user or machine names, LAN
   addresses, keys or tokens. Test paths use placeholders such as `/path/to/lastbook`.
 - The package is built from the committed source, so what you commit is what ships. The package scan
   (`packaging/arch/scan_package.py`) refuses home-folder paths; it cannot know your other personal details.

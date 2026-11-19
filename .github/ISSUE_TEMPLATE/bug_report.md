@@ -17,7 +17,7 @@ What you did, what you expected, and what you saw instead.
 - Lastbook version (About page):
 - System: Omarchy version (`omarchy version`), and x86_64 or Apple silicon (Asahi)
 - Library: Small / Medium / All, or your own
-- Local AI on or off:
+- Local AI installed or not:
 
 **Screenshots or log**
 If you can, add a screenshot or the last lines of `LastbookData/derived/logs/lastbook.log`.

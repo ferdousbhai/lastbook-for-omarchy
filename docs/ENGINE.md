@@ -25,7 +25,7 @@ the engine starts in setup and answers `/api/setup/*` only ([SETUP-API.md](SETUP
 | `/api/retrieve?q=&k=&kind=` | The passages Chat would cite, with where each came from |
 | `/api/doc/<id>` | One catalog record |
 | `/api/transcript/<video id>` | Timed transcript cues |
-| `/api/videos`, `/api/videos/<row>?q=` | The Videos screen's rows; one row, or a search of all |
+| `/api/videos`, `/api/videos/all?q=` | The Videos screen's rows; a search of every video |
 | `/api/shelves`, `/api/shelf/<id>` | The library by plain-language shelf |
 | `/api/places?q=` | Place search: addresses, ZIP codes, towns and named places (US data from an upstream pack), and the world's countries, regions and towns (GeoNames, built in setup) |
 | `/api/library`, `/api/assistant/status` | What this library holds; the state of the model and of the search index |
@@ -48,13 +48,13 @@ JavaScript off and every address but `lastbook:` blocked (`native/src/web.rs`).
   by file lock). Without Recall, search is keyword search.
 - **The assistant** (`assistant.py`) searches first, then gives the model read-only tools that accept catalog ids only:
   `search_library`, `read_pages`, `read_article`, `get_timed_transcript`, `lookup_place`. Source text is wrapped as untrusted reference data. Every `[S3]` in an answer is checked
-  against what the tools returned in that turn; unknown keys are removed and reported.
+  against what the tools returned in that turn; a key that names nothing they returned is left out of the answer's sources.
 - **The local AI** (`llm_local.py`) is Gemma 4 26B A4B run by `lastbook-llm` (`packaging/llm/lastbook_llm.cpp`, on a pinned
   llama.cpp), which speaks JSON lines on its standard input and output and has no network code. The engine finds the model
   file in `LastbookData/models/` (setup puts it there), checks it once (size, then SHA-256), and asks
   `lastbook-llm --measure` whether it fits this computer's memory. It starts when someone asks, and stops after 15
   minutes unused and when the app quits. It is text only: it is not given page images.
-- What the assistant cannot read is reported, not hidden (`/api/assistant/status`, shown under Library → About): videos
+- What the assistant cannot read is reported, not hidden (`/api/assistant/status`, shown in About): videos
   without captions, scanned PDFs without text.
 
 There is no other model. Without the local AI (not installed, too big for this computer, or `LASTBOOK_LOCAL_AI=0` in

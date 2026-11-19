@@ -138,7 +138,7 @@ impl Browse {
                 clear(&me.shelf);
                 title(&name, "", &me.shelf);
                 if let Some(app) = me.app.upgrade() {
-                    app.set_title(&name);
+                    app.report_title("shelf", &name);
                 }
             }
             for col in s["collections"].as_array().into_iter().flatten() {
@@ -166,7 +166,10 @@ impl Browse {
         items.sort_by_key(|s| -s.at);
         for s in items {
             let c = card(&s.title, "", &s.sub, None);
-            if let Some(r) = Route::from_key(&s.key) {
+            if let Some(mut r) = Route::from_key(&s.key) {
+                if let Route::Web { meta, .. } = &mut r {
+                    *meta = s.sub.clone();
+                }
                 activate(&c, self.app.clone(), r);
             }
             self.saved.append(&c);
@@ -198,8 +201,27 @@ impl Browse {
             } else {
                 format!("Meaning-based search (through Recall for Omarchy): {} passages from {} documents.", ix["chunks"], ix["docs"])
             };
-            let ai = st["local"]["name"].as_str().map(|n| format!("Local AI: {n} — {}.", st["local"]["state"].as_str().unwrap_or("unknown"))).unwrap_or_else(|| "No local AI.".into());
-            me.about.append(&card("Search and the assistant", &glib::markup_escape_text(&format!("{search} {ai}")), "", None));
+            let state = match st["local"]["state"].as_str().unwrap_or_default() {
+                "ready" => "ready",
+                "loading" => "starting",
+                "stopped" => "starts when you ask",
+                "too_big" => "does not fit this computer's memory",
+                "error" => "could not start",
+                "absent" => "not downloaded",
+                "wrong" => "the model file cannot be read",
+                _ => "checking",
+            };
+            let ai = st["local"]["name"].as_str().map(|n| format!("Local AI: {n} — {state}.")).unwrap_or_else(|| "No local AI.".into());
+            // What search and the assistant cannot read is said, not hidden.
+            let cov = &st["coverage"];
+            let (silent, scanned) = (cov["videos"].as_i64().unwrap_or(0) - cov["videos_with_text"].as_i64().unwrap_or(0), cov["pdfs_image_only"].as_i64().unwrap_or(0));
+            let unread = match (silent > 0, scanned > 0) {
+                (true, true) => format!(" Not readable: videos without captions ({silent}), scanned PDFs without text ({scanned})."),
+                (true, false) => format!(" Not readable: videos without captions ({silent})."),
+                (false, true) => format!(" Not readable: scanned PDFs without text ({scanned})."),
+                (false, false) => String::new(),
+            };
+            me.about.append(&card("Search and the assistant", &glib::markup_escape_text(&format!("{search} {ai}{unread}")), "", None));
             me.about.append(&card(
                 "Privacy",
                 &glib::markup_escape_text("Lastbook sends nothing anywhere. Only setup downloads, and only when you start it."),
