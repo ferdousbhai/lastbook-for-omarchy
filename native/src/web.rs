@@ -90,7 +90,10 @@ impl WebPage {
         let store = webkit6::UserContentFilterStore::new(&store_dir.to_string_lossy());
         // No page loads before the filter that blocks the network is in place, and none at all if it cannot be.
         let (filtered, waiting) = (Rc::new(Cell::new(false)), Rc::new(RefCell::new(None::<String>)));
-        let (m, f2, w2, v2) = (manager.clone(), filtered.clone(), waiting.clone(), view.clone());
+        let blocked = gtk::Label::new(Some("Pages cannot be shown: Lastbook could not set up its block on the network."));
+        blocked.add_css_class("error");
+        blocked.set_visible(false);
+        let (m, f2, w2, v2, b2) = (manager.clone(), filtered.clone(), waiting.clone(), view.clone(), blocked.clone());
         store.save("lastbook-no-network", &glib::Bytes::from_static(NO_NETWORK.as_bytes()), gio::Cancellable::NONE, move |f| match f {
             Ok(filter) => {
                 m.add_filter(&filter);
@@ -99,7 +102,10 @@ impl WebPage {
                     v2.load_uri(&uri);
                 }
             }
-            Err(e) => eprintln!("content filter: {e}"),
+            Err(e) => {
+                eprintln!("content filter: {e}");
+                b2.set_visible(true);
+            }
         });
 
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -112,6 +118,7 @@ impl WebPage {
         bar.append(&meta);
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.append(&bar);
+        root.append(&blocked);
         root.append(&view);
         let page = Rc::new(Self { root: root.upcast(), app: Rc::downgrade(app), view, meta, manager, theme: app.theme.clone(), themed: RefCell::new(false), filtered, waiting });
         // The page on screen follows a theme switch.
@@ -143,7 +150,7 @@ impl WebPage {
                 decision.ignore();
                 let route = match path.strip_prefix("/zim/") {
                     Some(article) => crate::ui::Route::Wiki { path: article.to_owned() },
-                    None => crate::ui::Route::Web { path: path.to_owned(), meta: p.meta.text().to_string() },
+                    None => crate::ui::Route::Web { path: path.to_owned(), meta: String::new() },   // another file: not this one's source
                 };
                 glib::idle_add_local_once(move || app.navigate(route));
                 return true;
@@ -193,7 +200,6 @@ impl WebPage {
         let uri = format!("{ORIGIN}{}", if path.starts_with('/') { path.to_owned() } else { format!("/{path}") });
         if !self.filtered.get() {
             self.waiting.replace(Some(uri));   // loaded once the filter is in place
-            self.meta.set_text("Pages cannot be shown yet: Lastbook could not set up its block on the network.");
         } else if self.view.uri().as_deref() != Some(uri.as_str()) {
             self.view.load_uri(&uri);
         }

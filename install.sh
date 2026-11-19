@@ -77,7 +77,8 @@ add_signed_repo() {
       # Whole or not at all: a new file beside it, renamed over it. Where that
       # cannot be (pacman.conf is itself a mount), written in place as before.
       local new=/etc/pacman.conf.new.$$
-      if ! { $sudo install -m 644 "$temporary" "$new" && $sudo mv -f "$new" /etc/pacman.conf; } 2>/dev/null; then
+      # A link (a managed dotfile) is written through, not replaced by a file.
+      if [[ -L /etc/pacman.conf ]] || ! { $sudo install -m 644 "$temporary" "$new" && $sudo mv -f "$new" /etc/pacman.conf; } 2>/dev/null; then
         $sudo rm -f "$new" 2>/dev/null || true
         $sudo tee /etc/pacman.conf < "$temporary" >/dev/null
       fi

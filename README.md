@@ -167,6 +167,10 @@ hits@8, MRR and timing on `tools/eval/questions.json` against a real data folder
 built package with `python3 packaging/arch/scan_package.py <package>`. Releases: `bin/release <version>` (with
 `packaging/release-notes.md` written first) tags, builds both architectures natively in CI (`.github/workflows/packages.yml`,
 `bin/build-packages`), signs the packages and repository databases locally and publishes them with `install.sh`.
+Release day, in order: commit the release notes on main; publish this commit's `install.sh` at
+`https://ferdousbhai.com/lastbook/install.sh` (verification compares the two); run `bin/release <version>` (a run
+stopped part way is resumed by running it again); `verify-release.yml` then installs the release on both
+architectures.
 
 ## Packs and the local AI
 

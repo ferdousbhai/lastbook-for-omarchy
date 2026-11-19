@@ -30,6 +30,7 @@ if ! grep -qE "^\[GNUPG:\] VALIDSIG( [^ ]+){9} $signer\$" <<< "$signature" || gr
   echo "The Arch root from $url is not signed by $signer (or that key expired or was revoked); nothing was unpacked." >&2
   exit 1
 fi
+echo "Arch root verified: signed by $signer."
 mkdir "$work/root"
 tar --extract --file "$work/root.tar" --directory "$work/root" --numeric-owner
 rm "$work/root.tar"

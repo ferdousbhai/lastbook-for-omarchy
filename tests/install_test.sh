@@ -47,6 +47,9 @@ mkdir -p "$work/bin"
 cat >"$work/bin/pacman" <<'STUB'
 #!/bin/sh
 echo "pacman $*" >>"$PACMAN_LOG"
+# STUB_NOT_INSTALLED: the install "succeeds" but the package is not there afterwards (pacman -Q fails).
+[ "$1" = -Q ] && [ -n "${STUB_NOT_INSTALLED:-}" ] && exit 1
+exit 0
 STUB
 cat >"$work/bin/omarchy-pkg-add" <<'STUB'
 #!/bin/sh
@@ -161,6 +164,12 @@ status=0
 STUB_ARCH=riscv64 bash install.sh >/dev/null 2>&1 || status=$?
 check "an unsupported architecture fails" [ "$status" = 1 ]
 check "an unsupported architecture changes nothing" [ ! -e /etc/pacman.d/lastbook-for-omarchy.conf ]
+
+setup
+status=0
+STUB_NOT_INSTALLED=1 bash install.sh >"$work/out" 2>&1 || status=$?
+check "a package that did not install fails the installer" [ "$status" = 1 ]
+check "and says so" grep -q 'was not installed' "$work/out"
 
 # Plain Arch: no Omarchy commands anywhere on PATH, so one pacman -Syu transaction.
 setup

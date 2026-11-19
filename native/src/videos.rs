@@ -281,6 +281,9 @@ impl Videos {
             let Some(me) = me.upgrade() else { return };
             let Ok(rec) = rec else {
                 me.title.set_text("This video is not in the library.");
+                if let Some(app) = me.app.upgrade() {
+                    app.report_title("watch", "Video not found");
+                }
                 me.meta.set_text("");
                 me.video.set_media_stream(gtk::MediaStream::NONE);
                 me.current.replace(None);

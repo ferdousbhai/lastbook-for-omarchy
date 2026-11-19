@@ -168,7 +168,10 @@ impl Reader {
             let Some(app) = me.app.upgrade() else { return };
             let rec = match rec {
                 Ok(r) => r,
-                Err(_) => return me.fail("This document is not in the library."),
+                Err(_) => {
+                    app.report_title("reader", "Document not found");
+                    return me.fail("This document is not in the library.");
+                }
             };
             let title = rec["title"].as_str().unwrap_or_default().to_owned();
             if !app.showing("reader") {

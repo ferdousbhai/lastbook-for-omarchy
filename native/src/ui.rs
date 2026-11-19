@@ -321,7 +321,8 @@ impl App {
         keys.connect_key_pressed(move |_, key, _, state| {
             let alt = state.contains(gdk::ModifierType::ALT_MASK);
             let ctrl = state.contains(gdk::ModifierType::CONTROL_MASK);
-            match key {
+            // By the key's lower case: Caps Lock does not turn Ctrl+F into something else.
+            match key.to_lower() {
                 gdk::Key::Left if alt => a.go(-1),
                 gdk::Key::Right if alt => a.go(1),
                 gdk::Key::b if ctrl => a.toggle_sidebar(),

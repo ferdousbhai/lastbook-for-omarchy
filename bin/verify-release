@@ -25,4 +25,4 @@ curl -fsSL "$site" -o "$work/site-install.sh" \
   || { echo "$site is missing or unreachable: publish this release's install.sh there." >&2; exit 1; }
 cmp -s "$work/install.sh" "$work/site-install.sh" \
   || { echo "$site differs from the install.sh of $tag: publish the release's copy there." >&2; exit 1; }
-echo "Verified:$pkgname ${tag#v} on $(uname -m)"
+echo "Verified: $pkgname ${tag#v} on $(uname -m)"

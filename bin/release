@@ -15,6 +15,9 @@ remote=$(git remote -v | awk -v repo="$gh_repo" '$3 == "(push)" && $2 ~ ("github
 [[ -n $remote ]] || { echo "No git remote points at $gh_repo." >&2; exit 1; }
 git fetch -q "$remote" main --tags
 git merge-base --is-ancestor "$remote/main" HEAD || { echo "HEAD does not contain $remote/main; rebase first." >&2; exit 1; }
+# Releases are made from main (or, resuming, from the tag itself): pushing another branch here would move main to it.
+[[ $(git branch --show-current) == main ]] || [[ $(git rev-parse -q --verify "refs/tags/$tag^{commit}") == $(git rev-parse HEAD) ]] \
+  || { echo "Release from main." >&2; exit 1; }
 # This tag's releases on GitHub, one line each: "true" for a draft, "false" for a published one.
 release_states() { gh api "repos/$gh_repo/releases" --paginate --jq ".[] | select(.tag_name == \"$tag\") | .draft"; }
 # A run that failed after tagging (the CI build, the watch, signing, the upload) is resumed by running this again on
@@ -114,3 +117,5 @@ done
 gh release create "$tag" dist/release/* --repo "$gh_repo" --title "Lastbook for Omarchy $tag" \
   --notes-file packaging/release-notes.md --verify-tag --latest
 echo "Published https://github.com/$gh_repo/releases/tag/$tag; installation verification runs in CI."
+echo "It checks that https://ferdousbhai.com/lastbook/install.sh is this release's install.sh: publish it there first."
+echo "If that was late: gh workflow run verify-release.yml -f release_tag=$tag"
