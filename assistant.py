@@ -125,7 +125,8 @@ def _page_body(texts, p, limit):
 
 def _allowed(kind):
     cat = S.catalog()['by_id']
-    ok = {'any': None, 'manual': ('pdf', 'html', 'pptx'), 'video': ('video', 'transcript'), 'encyclopedia': ()}.get(kind or 'any')
+    # 'library': everything but the encyclopedias, which take a second longer (the window asks for them separately)
+    ok = {'any': None, 'library': None, 'manual': ('pdf', 'html', 'pptx'), 'video': ('video', 'transcript'), 'encyclopedia': ()}.get(kind or 'any')
     return lambda d: d in cat and cat[d]['kind'] not in ('metadata', 'zim') and (ok is None or cat[d]['kind'] in ok)
 
 

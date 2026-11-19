@@ -148,24 +148,65 @@ impl SearchPage {
                 "video" => "video",
                 _ => "all",
             };
+            // "Everything" asks for the library and the encyclopedias separately: the library answers at once, and the
+            // articles (ranked by reading them, about a second for a new topic) are added under it when they arrive.
+            let split = kind == "any";
+            let articles = split.then(|| {
+                let (e, p, page) = (engine.clone(), query("/api/retrieve", &[("q", &q), ("k", "3"), ("kind", "encyclopedia")]), page.clone());
+                glib::spawn_future_local(async move {
+                    let found = e.get(&p).await.ok();
+                    (found, page)
+                })
+            });
             let (e1, e2) = (engine.clone(), engine.clone());
-            let (p1, p2) = (query("/api/retrieve", &[("q", &q), ("k", "8"), ("kind", &kind)]), query("/api/find", &[("q", &q), ("kind", find_kind)]));
+            let (p1, p2) = (
+                query("/api/retrieve", &[("q", &q), ("k", "8"), ("kind", if split { "library" } else { &kind })]),
+                query("/api/find", &[("q", &q), ("kind", find_kind)]),
+            );
             let (relevant, docs) = futures_join(async move { e1.get(&p1).await }, async move { e2.get(&p2).await }).await;
             let Some(page) = page.upgrade() else { return };
             if page.generation.get() != generation {
                 return;   // a newer search replaced this one
             }
-            page.show_results(relevant.ok(), if kind == "encyclopedia" { None } else { docs.ok() });
+            let slot = page.show_results(relevant.ok(), if kind == "encyclopedia" { None } else { docs.ok() });
+            drop(page);
+            if let Some(articles) = articles
+                && let Ok((found, page)) = articles.await
+                && let Some(page) = page.upgrade()
+                && page.generation.get() == generation
+            {
+                page.show_articles(&slot, found);
+            }
         });
     }
 
-    fn show_results(self: &Rc<Self>, relevant: Option<Value>, docs: Option<Value>) {
+    /// Encyclopedia articles for an "Everything" search, put in the place kept for them under the library's passages.
+    fn show_articles(self: &Rc<Self>, slot: &gtk::Box, found: Option<Value>) {
+        let rel: Vec<Value> = found.as_ref().and_then(|v| v["results"].as_array().cloned()).unwrap_or_default();
+        if rel.is_empty() {
+            if self.results.first_child().is_some_and(|c| c == *slot) && slot.next_sibling().is_none() {
+                self.status.set_text("Nothing in the library matched. Try other words for the same thing.");
+            }
+            return;
+        }
+        self.status.set_text("");
+        slot.append(&section("From the encyclopedias"));
+        for r in &rel {
+            slot.append(&self.passage_card(r));
+        }
+    }
+
+    /// Draws the results and returns the (empty) place kept for encyclopedia articles.
+    fn show_results(self: &Rc<Self>, relevant: Option<Value>, docs: Option<Value>) -> gtk::Box {
         let rel: Vec<Value> = relevant.as_ref().and_then(|v| v["results"].as_array().cloned()).unwrap_or_default();
         let found: Vec<Value> = docs.as_ref().and_then(|v| v["results"].as_array().cloned()).unwrap_or_default();
-        self.status.set_text(&if rel.is_empty() && found.is_empty() {
-            "Nothing in the library matched. Try other words for the same thing.".to_owned()
+        let waiting_for_articles = self.shown.borrow().1 == "any";
+        self.status.set_text(if rel.is_empty() && found.is_empty() && !waiting_for_articles {
+            "Nothing in the library matched. Try other words for the same thing."
+        } else if rel.is_empty() && found.is_empty() {
+            "Searching…"
         } else {
-            String::new()
+            ""
         });
         if !rel.is_empty() {
             self.results.append(&section("Most relevant pages"));
@@ -173,6 +214,8 @@ impl SearchPage {
                 self.results.append(&self.passage_card(r));
             }
         }
+        let slot = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        self.results.append(&slot);
         if !found.is_empty() {
             self.results.append(&section(&format!("Documents ({})", found.len())));
             for d in found.iter().take(30) {
@@ -181,6 +224,7 @@ impl SearchPage {
             }
         }
         self.pump_thumbs();
+        slot
     }
 
     fn passage_card(self: &Rc<Self>, r: &Value) -> gtk::Widget {

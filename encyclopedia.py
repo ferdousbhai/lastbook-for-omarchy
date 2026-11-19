@@ -10,7 +10,7 @@ best-matching passage.
 No vectors are kept on disk: the encyclopedias hold hundreds of thousands of articles, and only the few a question reaches are
 ever embedded. Parsed articles and their vectors are cached in memory.
 """
-import re, threading, urllib.parse
+import re, sqlite3, threading, urllib.parse
 from collections import OrderedDict
 from html.parser import HTMLParser
 
@@ -25,6 +25,7 @@ CANDIDATES = 20              # articles whose opening is ranked by meaning
 LEAD = 500                   # characters of an article's opening used to rank it
 DEEP, PASSAGES = 2, 3        # best articles, and keyword-picked passages of each, ranked by meaning too
 MAX_PASSAGES = 40            # passages kept per parsed article
+CACHE = 1                    # bump when LEAD or the passage chunking changes: cached openings and vectors start over
 FLOOR = 0.73                 # measured with tools/eval: off-topic articles score 0.55-0.71, useful ones 0.74-0.85
 SKIP_CLASSES = re.compile(r'\b(reference|references|reflist|mw-references-wrap|navbox|infobox|hatnote|navigation-not-searchable|'
                           r'zim-footer|template-databox|metadata|mw-editsection|thumb|toc|sidebar|ambox|noprint)\b')
@@ -119,6 +120,33 @@ class Encyclopedias:
         self._articles = OrderedDict()
         self._vecs = OrderedDict()
         self._lock = threading.Lock()
+        self._disk = None             # what earlier searches worked out, kept between runs: see _cache()
+
+    def _cache(self):
+        """derived/index/encyclopedia-cache.sqlite: the opening of each article a search has looked at, and the vectors
+        Recall gave for article text. A question about a topic seen before then costs no parsing and no embedding.
+        Keyed by the encyclopedia's file name (it carries the edition) and, for vectors, the embedding model."""
+        if self._disk is None:
+            retrieval.IDX.mkdir(parents=True, exist_ok=True)
+            db = sqlite3.connect(retrieval.IDX / 'encyclopedia-cache.sqlite', check_same_thread=False)
+            db.execute('PRAGMA journal_mode=WAL')
+            db.executescript(f'''CREATE TABLE IF NOT EXISTS lead{CACHE}(zim TEXT, path TEXT, real TEXT, title TEXT, text TEXT, PRIMARY KEY(zim, path));
+                CREATE TABLE IF NOT EXISTS vec{CACHE}(src TEXT, zim TEXT, path TEXT, part TEXT, v BLOB, PRIMARY KEY(src, zim, path, part));''')
+            self._disk = db
+        return self._disk
+
+    def _lead(self, name, path):
+        """(real path, title, opening text) of an article, from the cache or by reading it; None if it has no text."""
+        with self._lock:
+            row = self._cache().execute(f'SELECT real, title, text FROM lead{CACHE} WHERE zim=? AND path=?', (name, path)).fetchone()
+        if row:
+            return row if row[2] else None
+        a = self.article(name, path, lead_only=True)
+        row = (a['path'], a['title'], a['passages'][0][1][:LEAD]) if a and a['passages'] else (path, '', '')
+        with self._lock:
+            self._cache().execute(f'INSERT OR REPLACE INTO lead{CACHE} VALUES (?,?,?,?,?)', (name, path, *row))
+            self._cache().commit()
+        return row if row[2] else None
 
     # ---------------------------------------------------------------- files --
     def files(self):
@@ -228,6 +256,13 @@ class Encyclopedias:
         """Vectors for (key, title, text) triples, reusing cached ones. None if Recall cannot answer now."""
         src = self.index.source
         need = [(k, t, x) for k, t, x in keys_texts if (src, k) not in self._vecs]
+        if need:                   # what an earlier run embedded
+            with self._lock:
+                for k, _, _ in need:
+                    row = self._cache().execute(f'SELECT v FROM vec{CACHE} WHERE src=? AND zim=? AND path=? AND part=?', (src, k[0], k[1], str(k[2]))).fetchone()
+                    if row:
+                        self._vecs[(src, k)] = np.frombuffer(row[0], dtype=np.float16).astype(np.float32)
+            need = [(k, t, x) for k, t, x in need if (src, k) not in self._vecs]
         if need:
             try:
                 v = self.index.recall.embed([retrieval.DOCUMENT.format(t, x) for _, t, x in need], timeout=20)
@@ -238,6 +273,9 @@ class Encyclopedias:
             with self._lock:
                 for (k, _, _), row in zip(need, v):
                     self._vecs[(src, k)] = row
+                self._cache().executemany(f'INSERT OR REPLACE INTO vec{CACHE} VALUES (?,?,?,?,?)',
+                                          [(src, k[0], k[1], str(k[2]), np.asarray(row, dtype=np.float16).tobytes()) for (k, _, _), row in zip(need, v)])
+                self._cache().commit()
                 while len(self._vecs) > 20000:
                     self._vecs.popitem(last=False)
         return np.stack([self._vecs[(src, k)] for k, _, _ in keys_texts]) if keys_texts else np.zeros((0, 0))
@@ -250,25 +288,26 @@ class Encyclopedias:
         if qv is not None:
             leads, seen = [], set()
             for name, path in self.candidates(words, groups):
-                a = self.article(name, path, lead_only=True)
-                if a and a['passages'] and (name, a['path']) not in seen:   # two candidates can redirect to one article
-                    seen.add((name, a['path']))
-                    leads.append((name, a))
+                lead = self._lead(name, path)
+                if lead and (name, lead[0]) not in seen:   # two candidates can redirect to one article
+                    seen.add((name, lead[0]))
+                    leads.append((name, lead))
                 if len(leads) >= CANDIDATES:
                     break
-            vecs = self._embed([((n, a['path'], 'lead'), a['title'], a['passages'][0][1][:LEAD]) for n, a in leads]) if leads else None
+            vecs = self._embed([((n, real, 'lead'), title, text) for n, (real, title, text) in leads]) if leads else None
             if vecs is not None:
-                hits = []
+                deep = []      # the best articles' passages, embedded in one request to Recall
                 for i in np.argsort(-(vecs @ qv))[:DEEP]:
-                    n, lead = leads[i]
-                    a = self.article(n, lead['path'])
-                    if not a or not a['passages']:
-                        continue
-                    picks = [0] + sorted(range(1, len(a['passages'])), key=lambda j: -overlap(a['passages'][j][1]))[:PASSAGES]
-                    pv = self._embed([((n, a['path'], j), a['title'], (a['passages'][j][0] + ': ' if a['passages'][j][0] else '') + a['passages'][j][1]) for j in picks])
-                    if pv is None:
-                        break
-                    s = pv @ qv
+                    n, a = leads[i][0], self.article(leads[i][0], leads[i][1][0])
+                    if a and a['passages']:
+                        picks = [0] + sorted(range(1, len(a['passages'])), key=lambda j: -overlap(a['passages'][j][1]))[:PASSAGES]
+                        deep.append((n, a, picks))
+                pv = self._embed([((n, a['path'], j), a['title'], (a['passages'][j][0] + ': ' if a['passages'][j][0] else '') + a['passages'][j][1])
+                                  for n, a, picks in deep for j in picks]) if deep else None
+                hits, at = [], 0
+                for n, a, picks in deep if pv is not None else ():
+                    s = pv[at:at + len(picks)] @ qv
+                    at += len(picks)
                     best = int(np.argmax(s))
                     if s[best] >= FLOOR:
                         hits.append((float(s[best]), n, a, picks[best]))
