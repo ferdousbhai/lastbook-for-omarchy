@@ -27,7 +27,7 @@ it needs Rust):
 cd packaging/arch && makepkg -si
 ```
 
-For meaning-based search, install Recall for Omarchy as well (`curl -fsSL https://ferdousbhai.com/recall/install.sh | sudo bash`).
+The installer offers to add Recall for Omarchy for meaning-based search (or later: `curl -fsSL https://ferdousbhai.com/recall/install.sh | sudo bash`).
 Without it everything works, and search matches words only.
 
 Open Lastbook from the application menu. First-run setup downloads your chosen library, makes the map and, if you want it, downloads the local AI.
