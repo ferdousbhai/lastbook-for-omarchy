@@ -269,7 +269,7 @@ class Setup:
             p = self.current / 'models' / m['file']
             if p.is_file() and p.stat().st_size == m['size']:
                 model = m['id']
-        return {'folder': str(self.current), 'pack': pack, 'content_revision': revision, 'map_bytes': install.map_bytes(self.current), 'model': model, 'map': install.map_name(self.current), 'address_indexes': self.address_indexes(), 'old': self._settings().get('old', []),
+        return {'folder': str(self.current), 'pack': pack, 'content_revision': revision, 'map_bytes': install.map_bytes(self.current), 'model': model, 'map': install.map_name(self.current), 'address_indexes': self.address_indexes(),
                 'osm': maps.installed(self.current / 'derived' / 'geo')}
 
     def address_indexes(self):
@@ -528,9 +528,10 @@ class Setup:
         """The new job, saved and started (the caller holds the lock)."""
         self.job = {'id': uuid.uuid4().hex[:12], 'state': 'waiting', 'items': items, 'error': None, 'started': _now(), 'folder': str(target),
                     **extra, 'plan': plan}
-        s = self._settings()
-        s['work'] = str(work)
-        self._save_settings(s)
+        with _SETTINGS:
+            s = self._settings()
+            s['work'] = str(work)
+            self._save_settings(s)
         _tag_sources(self.job)
         self._save_job()
         self._run()
@@ -749,23 +750,6 @@ class Setup:
         if local is not None and getattr(local, '_started', False):
             threading.Thread(target=local.discover, daemon=True).start()
         return {'ok': True, 'freed_bytes': size}
-
-    def delete_old(self, path):
-        s = self._settings()
-        olds = s.get('old', [])
-        if path not in olds:
-            return {'error': 'Lastbook only deletes an old library it moved aside itself.', 'code': 'unknown'}
-        p = Path(path)
-        if '.old-' not in p.name:
-            return {'error': 'That is not an old library.', 'code': 'unknown'}
-
-        def gone():
-            shutil.rmtree(p, ignore_errors=True)
-            s2 = self._settings()
-            s2['old'] = [o for o in s2.get('old', []) if o != path or Path(o).exists()]
-            self._save_settings(s2)
-        threading.Thread(target=gone, daemon=True, name='setup-delete-old').start()
-        return {'ok': True, 'deleting': path}
 
     # ------------------------------------------------------------------------------------------------------ the work --
     def _set(self, it, state, **kw):
@@ -1122,13 +1106,57 @@ def startup(settings_dir, only=None):
         return None, None
 
 
-def opened(settings_dir, data, note):
-    """The library opened. Record the old one for deleting later, mark the model checked, and clear the work folder."""
-    settings_dir = Path(settings_dir)
+_SETTINGS = threading.Lock()      # around a read-change-write of setup.json
+
+
+def _read_settings(settings_dir):
     try:
-        s = json.loads((settings_dir / 'setup.json').read_text(encoding='utf-8'))
+        s = json.loads((Path(settings_dir) / 'setup.json').read_text(encoding='utf-8'))
+        return s if isinstance(s, dict) else {}
     except (OSError, ValueError):
-        s = {}
+        return {}
+
+
+def _old_listed(s):
+    """setup.json's `old`: the folders an upgrade moved aside that are still there, waiting to be deleted."""
+    old = s.get('old')
+    return [o for o in old if isinstance(o, str) and os.path.lexists(o)] if isinstance(old, list) else []
+
+
+def _delete_old(settings_dir, data, olds):
+    """Deletes the old libraries of `data` among olds, then drops from setup.json's list what is gone. Each is checked again
+    just before it goes (install.is_old_of): only a folder setup itself moved aside, beside the open library."""
+    for o in olds:
+        if install.is_old_of(o, data):
+            print('setup: deleting the old library', Path(o).name, flush=True)
+            shutil.rmtree(o, ignore_errors=True)
+    with _SETTINGS:
+        s = _read_settings(settings_dir)
+        s['old'] = _old_listed(s)
+        try:
+            install._write_json(Path(settings_dir) / 'setup.json', s)
+        except OSError:
+            pass
+
+
+def opened(settings_dir, data, note):
+    """The library opened. Mark the model checked, clear the work folder, and delete the old library an upgrade moved aside:
+    the new one has opened, so it is not needed to go back to. That runs in its own thread (many GB), which is returned (or
+    None); the folder stays listed in setup.json until it is gone, so a delete this program did not live to finish carries on
+    at the next start."""
+    settings_dir = Path(settings_dir)
+    with _SETTINGS:
+        olds = _opened(settings_dir, note)
+    olds = [o for o in olds if install.is_old_of(o, data)]
+    if not olds:
+        return None
+    t = threading.Thread(target=_delete_old, args=(settings_dir, data, olds), daemon=True, name='setup-delete-old')
+    t.start()
+    return t
+
+
+def _opened(settings_dir, note):
+    s = _read_settings(settings_dir)
     work = Path(s['work']) if s.get('work') else None
     if note and note.get('model_file') and note.get('model_sha256') and os.path.isfile(note['model_file']):
         try:
@@ -1136,8 +1164,9 @@ def opened(settings_dir, data, note):
             llm_local.mark_checked(note['model_file'], note['model_sha256'])
         except Exception as e:
             print('setup: mark_checked:', type(e).__name__, e, flush=True)
-    if note and note.get('old') and note['old'] not in s.get('old', []):
-        s.setdefault('old', []).append(note['old'])
+    olds = s.get('old') if isinstance(s.get('old'), list) else []
+    if note and note.get('old') and note['old'] not in olds:
+        olds = olds + [note['old']]
     if work:
         install.confirm(_pending_file(settings_dir))
         try:
@@ -1151,12 +1180,13 @@ def opened(settings_dir, data, note):
                 _job_file(settings_dir).unlink()
             except OSError:
                 pass
-    s['old'] = [o for o in s.get('old', []) if Path(o).exists()]
+    s['old'] = _old_listed({'old': olds})
     try:
         settings_dir.mkdir(parents=True, exist_ok=True)
         install._write_json(settings_dir / 'setup.json', s)
     except OSError:
         pass
+    return s['old']
 
 
 SETUP = None
@@ -1188,7 +1218,6 @@ ROUTES = {
     ('POST', 'retry'): lambda s, b: s.retry(),
     ('POST', 'use'): lambda s, b: s.use(b.get('path')),
     ('POST', 'finish'): lambda s, b: s.finish(),
-    ('POST', 'delete-old'): lambda s, b: s.delete_old(b.get('path')),
     ('POST', 'remove-ai'): lambda s, b: s.remove_ai(),
 }
 

@@ -13,15 +13,15 @@ The contract is `docs/SETUP-API.md`. This package fills it in.
 
 ## How it runs
 
-- **Setup mode.** `app/main.py` finds no library. `app/engine_pipe.py` puts `SetupServer` behind the bridge, with no socket: it answers `/api/setup/*` only. The job downloads into `<parent>/LastbookData.setup/downloads/` and unpacks into `.../unpack/LastbookData`. Then it writes `pending.json`. `finish` answers `{ok, folder}`; `engine_pipe.py` remembers the target in `settings.json` and sends the window `{"restart": folder}`, which starts the engine again. On the next start, `api.startup()` makes the switch before the engine opens anything. After the engine starts, `api.opened()` marks the model checked (`llm_local.mark_checked`), records the old library and removes the work folder.
+- **Setup mode.** `app/main.py` finds no library. `app/engine_pipe.py` puts `SetupServer` behind the bridge, with no socket: it answers `/api/setup/*` only. The job downloads into `<parent>/LastbookData.setup/downloads/` and unpacks into `.../unpack/LastbookData`. Then it writes `pending.json`. `finish` answers `{ok, folder}`; `engine_pipe.py` remembers the target in `settings.json` and sends the window `{"restart": folder}`, which starts the engine again. On the next start, `api.startup()` makes the switch before the engine opens anything. After the engine starts, `api.opened()` marks the model checked (`llm_local.mark_checked`), removes the work folder and deletes the old library (below).
 - **Normal mode.** `server.py` hands `/api/setup/` to `api.handle()`. `main.py` configures a manage-mode `Setup` for that. The setup page is at `/ui/setup.html`. An upgrade is staged the same way and switches on relaunch, so nothing is renamed while files are open. Adding only the AI moves the model into the open library and marks it checked at once.
 - Only this computer gets answers: the bridge, or loopback when running as `server.py`.
+- **The old library after an upgrade.** The switch renames it to `LastbookData.old-<date>` and `pending.json` remembers it, so `apply_pending` can put it back if the new library does not open. `api.opened()` runs only after the engine has opened the new library: it removes `pending.json`, then deletes the old folder in a background thread. `install.is_old_of` decides what may be deleted: a real folder (never a link) directly beside the open library, named `<library>.old-<8 digits>` with an optional `-<n>`, and listed by setup itself (this switch, or `old` in `setup.json` from an earlier one). A folder stays in that list until it is gone, so a delete cut short carries on at the next start.
 
 ## Routes added beyond the contract table
 
 - `POST /api/setup/remove-ai` deletes the model file from the open library.
 - `POST /api/setup/start {repair: true, ai}` re-checks every file against `pack-manifest.tsv` and the model's SHA-256, and fetches again only what is wrong (the whole pack zip, then switches as an upgrade does).
-- `POST /api/setup/delete-old {path}` deletes a `LastbookData.old-*` that setup itself moved aside. These are listed in `state.current.old`.
 - `state.recommend` also carries `folder` and `need_bytes` (per pack). Each `found` entry is `{kind: library|pack|model, path, name, id, size, size_ok}`.
 
 ## Tests

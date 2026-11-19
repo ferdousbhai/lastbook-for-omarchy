@@ -93,11 +93,10 @@ are served by `engine/setup/api.py` alone. In normal mode `server.py` hands `/ap
 | `POST /api/setup/pause`, `/resume`, `/cancel`, `/retry` | `job` |
 | `POST /api/setup/use` `{path}` | uses a library or file already on this computer: `job` (verify, then unpack or activate) |
 | `POST /api/setup/finish` | `{ok: true}`; the app then opens the library (see below) |
-| `POST /api/setup/delete-old` `{path}` | deletes a `LastbookData.old-*` setup moved aside itself (listed in `current.old`): `{ok, deleting}` |
 | `POST /api/setup/remove-ai` | manage mode: deletes `LastbookData/models/<file>` (the library stays): `{ok, freed_bytes}` |
 | `POST /api/setup/start` `{repair: true, ai}` | manage mode: re-checks every file against the library's `pack-manifest.tsv` and the model's SHA-256 (items `verifying`); fetches again only what is wrong (the pack: downloaded and switched to like an upgrade; the model: replaced in place). All well: `done`, nothing downloaded |
 
-Added by setup-backend on 2026-11-12: `delete-old`, `remove-ai` and repair above; `current.old` (old libraries kept after an upgrade);
+Added by setup-backend on 2026-11-12: `remove-ai` and repair above;
 `recommend.folder` (where it would go) and `recommend.need_bytes` (`{pack id: bytes}` per pack); each `found` entry is
 `{kind: "library" or "pack" or "model", path, name, id, size, size_ok}`. An error answer is `{error, code}` (with HTTP 400,
 409 for `busy`/`not_done`, 507 for `no_space`). In normal mode the setup page is `/ui/setup.html`, which the bridge now allows as
@@ -125,7 +124,11 @@ automatically, then fails with `checksum`.
 `finish` writes `settings.json` and tells the shell to load `lastbook://app/`
 with the engine now started on the new folder. If an in-process switch proves fragile, the app may relaunch itself instead,
 with the same result for the person. Either way, an upgrade (for example Small to Medium) renames the old LastbookData to
-`LastbookData.old-<date>` only after the new one is complete and opens, and offers to delete the old one afterwards.
+`LastbookData.old-<date>` only once the new one is complete. If the new one does not open, the old one is put back. Once
+the new one has opened, the old one is deleted without asking (`api.opened`, in its own thread): only a real folder beside the
+open library, named `<library>.old-<8 digits>` (or with `-<n>` after it), that setup itself moved aside. Until it is gone it
+is listed under `old` in the app's `setup.json`, so a delete cut short carries on at the next start. There is no
+`delete-old` request and no `current.old` any more.
 
 ## State maps (added 2026-11-12)
 

@@ -762,7 +762,7 @@ class Switching(Base):
         (where / 'library-data' / 'catalog.json').write_text(marker)
         return where
 
-    def test_upgrade_keeps_old_and_carries_the_model(self):
+    def test_upgrade_carries_the_model_and_deletes_the_old_library_once_the_new_one_opens(self):
         cur = self.lib(self.parent / 'LastbookData', 'old')
         (cur / 'models').mkdir()
         (cur / 'models' / 'model.gguf').write_bytes(self.model)
@@ -778,14 +778,40 @@ class Switching(Base):
         self.assertTrue((lib / 'models' / 'model.gguf').is_file())
         old = Path(note['old'])
         self.assertTrue(old.name.startswith('LastbookData.old-'))
-        self.assertEqual((old / 'library-data' / 'catalog.json').read_text(), 'old')
-        api.opened(self.settings, lib, note)
-        s2 = self.setup('manage', current=lib)
-        self.assertEqual(s2.current_info()['old'], [str(old)])
-        self.assertEqual(s2.delete_old('/etc')['code'], 'unknown')
-        s2.delete_old(str(old))
-        time.sleep(0.5)
+        self.assertEqual((old / 'library-data' / 'catalog.json').read_text(), 'old')   # kept until the new one has opened
+        earlier = self.lib(self.parent / 'LastbookData.old-20260101-2', 'older')         # left by an upgrade before this one
+        (self.settings / 'setup.json').write_text(json.dumps({**json.loads((self.settings / 'setup.json').read_text()), 'old': [str(earlier)]}))
+        api.opened(self.settings, lib, note).join(20)
         self.assertFalse(old.exists())
+        self.assertFalse(earlier.exists())
+        self.assertEqual((lib / 'library-data' / 'catalog.json').read_text(), '{"records": []}')
+        self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData'])
+        self.assertEqual(json.loads((self.settings / 'setup.json').read_text()), {'old': []})
+        self.assertIsNone(api.opened(self.settings, lib, None))     # nothing left to delete at the next start
+
+    def test_old_library_deleted_only_where_setup_put_it(self):
+        lib = self.lib(self.parent / 'LastbookData', 'open')
+        elsewhere = self.lib(self.tmp / 'other' / 'LastbookData.old-20260101', 'x')         # not beside the open library
+        named = [self.lib(self.parent / n, 'x') for n in ('LastbookData.old-backup', 'LastbookData.old-2026010', 'Photos.old-20260101',
+                                                           'LastbookData.old-20260101.keep', 'LastbookData-mine')]
+        link = self.parent / 'LastbookData.old-20260102'                                     # the right name, but a link out
+        link.symlink_to(elsewhere, target_is_directory=True)
+        unlisted = self.lib(self.parent / 'LastbookData.old-20260103', 'x')                  # the right name, but setup did not list it
+        paths = [elsewhere, *named, link, self.tmp, self.parent, lib, lib / 'library-data']
+        for p in map(str, paths):
+            self.assertFalse(install.is_old_of(p, lib), p)
+        for bad in (None, 7, '', 'LastbookData.old-20260101', str(self.parent / 'LastbookData.old-20260199')):
+            self.assertFalse(install.is_old_of(bad, lib), bad)
+        self.assertTrue(install.is_old_of(str(unlisted), lib))
+        self.settings.mkdir(parents=True, exist_ok=True)
+        (self.settings / 'setup.json').write_text(json.dumps({'old': [*map(str, paths), 7, None, str(link) + '/', str(self.parent / 'LastbookData.old-20260102' / '..' / 'LastbookData')]}))
+        t = api.opened(self.settings, lib, {'target': str(lib), 'old': str(named[0])})
+        if t:
+            t.join(20)
+        for p in paths + [unlisted]:
+            self.assertTrue(p.exists(), p)
+        self.assertEqual((elsewhere / 'library-data' / 'catalog.json').read_text(), 'x')
+        self.assertEqual((lib / 'library-data' / 'catalog.json').read_text(), 'open')
 
     def test_new_library_that_does_not_open_is_rolled_back(self):
         cur = self.lib(self.parent / 'LastbookData', 'old')
@@ -804,6 +830,10 @@ class Switching(Base):
             lib, note = api.startup(self.settings)
         self.assertEqual((cur / 'library-data' / 'catalog.json').read_text(), 'old')
         self.assertIn('error', note)
+        self.assertIsNone(note['old'])
+        self.assertIsNone(api.opened(self.settings, lib, note))      # the old library, open again, is not deleted
+        self.assertEqual((cur / 'library-data' / 'catalog.json').read_text(), 'old')
+        self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData', 'LastbookData.failed'])
 
     def test_failed_switch_leaves_library(self):
         cur = self.lib(self.parent / 'LastbookData', 'old')
@@ -868,7 +898,7 @@ class Manage(Base):
         new, note = api.startup(self.settings)
         self.assertEqual(sha((new / 'models' / 'model.gguf').read_bytes()), sha(self.model))
         self.assertEqual(s._check_library({'state': '', 'bytes_done': 0}, new, Control()), [])
-        self.assertTrue(Path(note['old']).exists())        # the damaged copy is kept aside until deleted
+        self.assertTrue(Path(note['old']).exists())        # the damaged copy is kept aside until the repaired one has opened
 
     def test_repair_needs_a_known_pack(self):
         lib = self.parent / 'LastbookData'

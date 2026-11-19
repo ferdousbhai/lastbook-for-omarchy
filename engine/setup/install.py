@@ -7,7 +7,8 @@ Every member of a zip is checked before anything is written: a relative name und
 no symbolic link, no device, and a total no larger than the manifest's installed_bytes. Files are written as <name>.partial and
 renamed when whole, so an unpack that stops (a crash, power) carries on where it was. Switching is one rename on one disk.
 An upgrade first moves the old library aside to LastbookData.old-<date>; when the app restarts it opens the new one, and only if
-that fails to open is the old one put back (apply_pending, called by app/main.py before the engine starts).
+that fails to open is the old one put back (apply_pending, called by app/engine_pipe.py before the engine starts). Once the new
+one has opened, the old one is deleted (api.opened; is_old_of says which folders that may be).
 """
 import json
 import os
@@ -189,6 +190,16 @@ def old_name(target):
         p = base.with_name(f'{base.name}-{i}')
         i += 1
     return p
+
+
+def is_old_of(path, lib):
+    """Whether `path` is a folder switch() moved aside for the library `lib`, and so may be deleted: a real folder (never a link)
+    directly beside the library, named exactly as old_name names one. Nothing else is ever deleted as an old library."""
+    if not isinstance(path, str) or not path:
+        return False
+    p, lib = Path(path), Path(lib)
+    return bool(p.name.startswith(lib.name) and re.fullmatch(r'\.old-\d{8}(-\d+)?', p.name[len(lib.name):])
+                and _real(p.parent) == _real(lib.parent) and not p.is_symlink() and p.is_dir())
 
 
 def stage_switch(pend, new_lib, target, model_file=None, kind=None, model_sha256=None):
@@ -482,7 +493,7 @@ def apply_pending(pend, work):
 
 
 def confirm(pend):
-    """The new library opened: the switch is done. The old one stays until the person deletes it from setup."""
+    """The new library opened: the switch is done, and there is no going back to the old one (api.opened then deletes it)."""
     try:
         Path(pend).unlink()
     except OSError:

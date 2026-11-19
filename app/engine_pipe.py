@@ -119,7 +119,7 @@ def main():
         sys.stdout = sys.stderr      # open_log points the standard streams at the log; keep the protocol on OUT
         import server
         server.init()
-        if not given or note:   # the library opened: keep the old one for deleting later, mark the model checked
+        if not given or note:   # the library opened: mark the model checked, delete the old library an upgrade moved aside
             setup_api.opened(app_main.app_folders()[0], data, note)
         setup_api.configure(mode='manage', current=data, **options(app_main))
         bridge = B.Bridge(server)
