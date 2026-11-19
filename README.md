@@ -56,6 +56,33 @@ the Python engine as its own child process. Your library and settings stay in yo
   The person can choose Small, Medium or All, picks the world map and any street-level regions, and starts the checked
   downloads. A library already on the computer (a folder or a pack zip) can be used instead of downloading.
 
+## Command line and agent skill
+
+`lastbook` alone opens the window. With a command it answers from the same library as JSON on standard output, with no
+window, for scripts and for AI agents working on the computer:
+
+```bash
+lastbook search "treat a burn" --limit 5          # passages by meaning and by words: doc_id, title, page, excerpt, trust
+lastbook read med-443ae5cfaa6ecc68 --pages 37,38  # the text of PDF pages; of an encyclopedia article (zim:…); of a saved page
+lastbook page med-443ae5cfaa6ecc68 38             # one PDF page as a PNG (in ~/.cache/lastbook/pages, or --out FILE)
+lastbook transcript VIDEO_ID --query "tinder"     # a video's timed lines
+lastbook place "Denpasar" --nearby hospital       # the offline gazetteer, and help points near the first match
+lastbook guides; lastbook guide hurt              # the situation guides and the pages they point to
+lastbook ask "How do I make water safe?"          # the local AI's cited answer: {answer, sources, steps}
+lastbook status                                   # library folder and counts, local AI, meaning search, map files
+lastbook open med-443ae5cfaa6ecc68 38             # a new window at that page; also routes: guide:hurt, search:burns
+```
+
+`lastbook --help` lists them. Exit codes: 0 success (no matches too), 1 a runtime error (no library yet, an unknown
+id), 2 invalid arguments; an error is one line on standard error. `--data FOLDER` names the library, as for the window.
+The commands run beside an open window: they only read the library (the window keeps indexing), and write nothing but
+the engine's own caches. Only `ask` loads the AI model, in a process of its own (so with the window's model loaded too
+there are two in memory, about 17 GB each: on a computer short of memory it can get other programs killed); without a local AI it exits 1, and `search` still finds the passages. Only `open` starts a window.
+
+The agent skill (`skills/lastbook/SKILL.md`) tells an agent when and how to use these. `lastbook skill` prints it;
+`lastbook skill install` writes it to `~/.agents/skills/lastbook` and links it from `~/.claude/skills` and
+`~/.codex/skills`. The installer does that for the desktop user, and the window keeps an installed skill current.
+
 ## Privacy and network use
 
 - **No listening port.** The desktop app opens no network port. The window (`native/`) and the engine talk in JSON lines over
@@ -85,9 +112,10 @@ The setup contract is in [docs/SETUP-API.md](docs/SETUP-API.md); the engine side
 | Path | What it is |
 |---|---|
 | `native/` | The desktop window: a Rust crate (binary `lastbook`, app id `io.github.ferdousbhai.Lastbook`) on GTK 4, WebKitGTK 6 and Poppler. It starts the engine as a child process. |
-| `app/` | The engine's side of the app: the pipe the window talks to (`engine_pipe.py`), library lookup and setup hooks (`main.py`), the no-port bridge (`bridge.py`), and tests (`app/tests/`). |
+| `app/` | The engine's side of the app: the pipe the window talks to (`engine_pipe.py`), the command line (`cli.py`), library lookup and setup hooks (`main.py`), the no-port bridge (`bridge.py`), and tests (`app/tests/`). |
 | `engine/` | Paths, the request handler's base and file rules (`library.py`), saved pages, offline address search (`address_search.py`) and setup (`engine/setup/`, which also makes the map). |
 | `server.py`, `assistant.py`, `retrieval.py`, `encyclopedia.py`, `llm_local.py` | The engine: request handler, the assistant and its citation checks, keyword plus meaning-based search (through Recall), encyclopedia articles as passages, and the local AI (model pins, fit check, runner control). |
+| `skills/` | The agent skill (`lastbook/SKILL.md`), built into the program and shipped in the package. |
 | `content/` | The curated guides (`topics/*.json`) and what curators looked for and did not find (`gaps.json`). Format: `content/SCHEMA.md`. |
 | `packaging/` | The Arch package (`arch/`: PKGBUILD, the manifest and map region list it ships, the package scan), the desktop entry (`linux/`), the icon (`icon/`), release manifest, TLS roots tools, and `packaging/llm/` (the local AI runner). |
 | `tools/` | Curator helpers (`libq.py`, `validate_topics.py`), the map area list's maker (`make_region_list.py`), and the retrieval check (`eval/`). |
@@ -177,7 +205,7 @@ bin/test
 ```
 
 It runs the window's tests (`cargo test`) and the engine's (`python3 -m unittest`, with libzim and pypdfium2 from the
-PKGBUILD's pinned wheels, `bin/test-deps`). `test_bridge` builds its own made-up library; `test_semantic` runs a stand-in
+PKGBUILD's pinned wheels, `bin/test-deps`). `test_bridge` builds its own made-up library, which `test_cli` runs the commands against; `test_semantic` runs a stand-in
 Recall; the others run without a library. `bin/check` adds the installer test. The `linux_*` helpers in `app/tests/` drive a running window through AT-SPI.
 
 ## Contributing and licence

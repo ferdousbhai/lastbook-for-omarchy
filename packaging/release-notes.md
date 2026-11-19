@@ -5,6 +5,7 @@ Lastbook for Omarchy v1.2.0 is the first release: an offline survival library (m
 - Meaning-based search uses [Recall for Omarchy](https://github.com/ferdousbhai/recall-for-omarchy) when it is installed; without it, search matches words.
 - An offline world map drawn in the theme's colours, with place search. The world map and the street-level areas the person picks are made during setup from OpenStreetMap, on their own computer; nothing is hosted.
 - Guides for urgent needs, videos, manuals and PDFs, and the library's encyclopedias, all offline after setup.
+- A command line and an agent skill: `lastbook search`, `read`, `page`, `transcript`, `place`, `guides`, `ask`, `status` and `open` answer from the library as JSON with no window, and `lastbook skill install` teaches AI agents on the computer to use them.
 
 Install (x86_64 and aarch64, including Apple silicon through Asahi):
 
