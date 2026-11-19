@@ -13,7 +13,6 @@ APP = Path(__file__).resolve().parents[1]
 INSTALLED = (APP / 'lib').is_dir()
 DATA = Path(os.environ.get('LASTBOOK_DATA') or APP).resolve()
 LIB = (DATA / 'library-data').resolve()
-os.environ['LASTBOOK_LIBRARY'] = str(LIB)  # engine/library.py reads this
 
 
 def ro_uri(path):

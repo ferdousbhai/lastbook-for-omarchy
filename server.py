@@ -31,10 +31,8 @@ CACHE = HERE / 'derived' / 'cache'
 MAPDB = HERE / 'derived' / 'geo' / 'map.sqlite'
 PLACEDB = HERE / 'derived' / 'geo' / 'places.sqlite'
 WORLD_PLACEDB = HERE / 'derived' / 'geo' / 'world-places.sqlite'   # GeoNames: countries, regions, towns of 15,000+ (engine/setup/maps.py builds it in setup)
-os.environ.setdefault('SURVIVAL_DISABLE_INDEX_WATCH', '1')
-import engine.library as library  # noqa: E402  (provides Handler, search DB path, ZIM reader)
+import engine.library as library  # noqa: E402  (the Handler base, the search index's path, the ZIM reader)
 import retrieval, assistant  # noqa: E402
-remote_records = library.remote_records  # videos moved to remote drives by the library's workers; none in the packaged app
 INDEX = None  # retrieval.Index, created in init()
 
 _pdf_lock = threading.Lock()  # PDFium is not thread-safe
@@ -143,9 +141,6 @@ def public(r, full=False):
         out['thumb'] = th if th and (LIB / th).is_file() else None
     if (r.get('searchability') or '').startswith('image-only'):
         out['imageOnly'] = True
-    rem = remote_records().get(r['path']) if r['kind'] == 'video' else None
-    if rem:
-        out['remote'] = rem.get('host')
     if full:
         for k in ('notes', 'edition', 'retrieved_at', 'source_url', 'license', 'license_url', 'searchability',
                   'upload_date', 'publication_date', 'model', 'course', 'level', 'caption_type'):
@@ -990,7 +985,7 @@ def coverage():
         except sqlite3.Error:
             pass
         _cov.update(at=time.time(), data={'videos': len(vids), 'videos_with_text': with_text, 'pdfs': len(pdfs), 'pdfs_image_only': img,
-                                          'docs_without_text': gaps, 'remote_videos': len(remote_records()),
+                                          'docs_without_text': gaps,
                                           'videos_excluded': len({i for i in excluded_videos() if i.startswith('video-')})})
     return _cov['data']
 
@@ -1022,7 +1017,7 @@ class Handler(library.Handler):
     # The only parts of the library the window gets: no worker state, logs, tools, sign-in settings or reports.
     SERVED_PREFIXES = ('/api/', '/zim/', '/documents/', '/pages/', '/videos/', '/videos-external/', '/transcripts/', '/metadata/videos/', '/courses/', '/collections/', '/assets/')
     SERVED_ONLY = True  # engine/library.py: a file must really sit in one of these folders, whatever links lead there
-    LIBRARY_ROUTES = ('/api/health', '/api/download-status', '/api/collection-search', '/api/search')  # answered in engine/library.py
+    LIBRARY_ROUTES = ('/api/health', '/api/collection-search')  # answered in engine/library.py
     LIBRARY_PREFIXES = tuple(p for p in SERVED_PREFIXES if p not in ('/api/', '/zim/'))
     # What a browser runs scripts in when it is opened directly. An <img> never runs them and shows it as before.
     ACTIVE_SUFFIXES = ('', '.html', '.htm', '.shtml', '.xhtml', '.xht', '.svg', '.svgz', '.xml', '.xsl', '.xslt', '.rdf', '.mht', '.mhtml')

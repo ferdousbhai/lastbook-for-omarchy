@@ -17,6 +17,7 @@ from html.parser import HTMLParser
 import numpy as np
 
 import retrieval
+from engine.library import follow
 
 ARTICLE_PREFIX = 'zim:'      # doc ids: zim:<file name>/<article path>
 PER_ZIM = 6                  # full-text candidates per encyclopedia for all the question's words
@@ -112,9 +113,9 @@ def article_sections(html, lead_only=False):
 
 
 class Encyclopedias:
-    def __init__(self, lib, catalog_fn, archives, archive_lock, index):
+    def __init__(self, lib, catalog_fn, open_archive, index):
         self.lib, self.catalog_fn, self.index = lib, catalog_fn, index
-        self.archives, self.archive_lock = archives, archive_lock   # engine.library's open-archive cache, shared with the reader
+        self.archive = open_archive   # engine.library.open_zim: the open-archive cache, shared with the reader
         self._articles = OrderedDict()
         self._vecs = OrderedDict()
         self._lock = threading.Lock()
@@ -129,13 +130,6 @@ class Encyclopedias:
                 if (self.lib / r['path']).is_file():
                     out[name] = r
         return out
-
-    def archive(self, name):
-        from libzim.reader import Archive
-        with self.archive_lock:
-            if name not in self.archives:
-                self.archives[name] = Archive(self.lib / 'collections' / name)
-            return self.archives[name]
 
     # ------------------------------------------------------------- articles --
     @staticmethod
@@ -175,11 +169,7 @@ class Encyclopedias:
                     return self._articles[k]
         try:
             arc = self.archive(name)
-            entry = arc.get_entry_by_path(path)
-            for _ in range(5):
-                if not entry.is_redirect:
-                    break
-                entry = entry.get_redirect_entry()
+            entry = follow(arc.get_entry_by_path(path))
             item = entry.get_item()
             if 'html' not in item.mimetype:
                 return None

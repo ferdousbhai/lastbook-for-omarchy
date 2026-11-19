@@ -24,7 +24,6 @@ BAD_SEGMENTS = {'test', 'tests', 'testing', 'pytest', 'unittest', 'doctest', 're
 BAD_FILE = re.compile(r'(^|/)(test_[^/]*|[^/]*_test\.(py|pyc|so)|[^/]*_tests[^/]*\.so|[^/]*\.onnx|[^/]*\.gguf|mac_[^/]*|win_[^/]*)$', re.I)
 TEST_MARKERS = [b'TEST-STUB', b'mac_offscreen', b'stub_chat', b'stub-chat']
 P = 'usr/lib/lastbook-for-omarchy/'
-ALLOWED_REMOTE = {P + 'engine/library.py'}     # names remote_storage in the code that skips it when packaged
 USER_PATH = re.compile(rb'/Users/[A-Za-z0-9._-]+|/home/(?!runner\b|user\b)[a-z_][a-z0-9_.-]*')   # one-letter names too
 OUR_PY = re.compile(r'^usr/lib/lastbook-for-omarchy/(server|retrieval|encyclopedia|assistant|llm_local)\.py$|^usr/lib/lastbook-for-omarchy/(app|engine)/.*\.py$')
 FIRST_PARTY = re.compile(r'^usr/lib/lastbook-for-omarchy/(content|app|engine|setup)/|^usr/lib/lastbook-for-omarchy/[^/]+\.py$')
@@ -136,8 +135,7 @@ def main():
                     if calls:
                         problems.append(f'network calls in {rel}: {calls[:8]}')
         for rel in remote_hits:
-            if rel not in ALLOWED_REMOTE:
-                problems.append(f'remote_storage named in {rel}')
+            problems.append(f'remote_storage named in {rel}')
         for u, where in user_paths.items():
             if u.startswith('/Users/') or any(FIRST_PARTY.search(w) or w == WINDOW for w in where):
                 problems.append(f'path of a person\'s folder {u} in {where[:3]}')

@@ -12,7 +12,6 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'app')]
 DATA = Path(os.environ['LASTBOOK_TEST_DATA'])
 os.environ['LASTBOOK_DATA'] = str(DATA)
 os.environ['SURVIVAL_MODEL_BASE'] = 'http://127.0.0.1:9'
-os.environ['SURVIVAL_DISABLE_INDEX_WATCH'] = '1'
 os.environ['LASTBOOK_RECALL_SOCKET'] = '/nonexistent/recall.sock'
 import server  # noqa: E402
 import bridge as B  # noqa: E402

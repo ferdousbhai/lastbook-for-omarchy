@@ -16,7 +16,6 @@ import fixture  # noqa: E402
 DATA = fixture.ensure()
 os.environ['LASTBOOK_DATA'] = str(DATA)
 os.environ['SURVIVAL_MODEL_BASE'] = 'http://127.0.0.1:9'   # a dead address: the real model server is never contacted
-os.environ['SURVIVAL_DISABLE_INDEX_WATCH'] = '1'
 os.environ['LASTBOOK_RECALL_SOCKET'] = '/nonexistent/recall.sock'   # no embedding model: meaning-based search stays off
 
 import server, assistant  # noqa: E402

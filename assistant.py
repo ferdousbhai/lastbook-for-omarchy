@@ -40,7 +40,7 @@ LOCAL = None
 def init(server_module, index):
     global S, INDEX, ENC, LOCAL
     S, INDEX = server_module, index
-    ENC = encyclopedia.Encyclopedias(S.LIB, S.catalog, S.library.ZIMS, S.library.ZIM_LOCK, index)
+    ENC = encyclopedia.Encyclopedias(S.LIB, S.catalog, S.library.open_zim, index)
     if os.environ.get('LASTBOOK_LOCAL_AI') == '1':
         import llm_local
         LOCAL = llm_local.LOCAL
