@@ -166,3 +166,5 @@ popover entry { margin: 2px 2px 6px; }
   padding: 1px 6px;
 }
 .map-results > row { padding: 2px 8px; }
+.sidebar-footer button { color: @lb_dim_text; padding: 2px 8px; min-height: 0; }
+.sidebar-footer button:hover { color: @lb_text; background: alpha(@lb_text, 0.06); }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! The browsing screens: Library (shelves, then a shelf's collections and documents), Encyclopedias (search inside the
-//! ZIM collections), Saved (what the person starred) and About (what this library holds, and credits).
+//! The browsing screens: Library (shelves, then a shelf's collections and documents, and a search inside the
+//! encyclopedias), Saved (what the person starred) and About (what this library holds, and credits).
 
 use std::{
     path::PathBuf,
@@ -73,12 +73,13 @@ pub fn store_saved(items: &[Saved]) {
 pub struct Browse {
     pub library_root: gtk::Widget,
     pub shelf_root: gtk::Widget,
-    pub enc_root: gtk::Widget,
     pub saved_root: gtk::Widget,
     pub about_root: gtk::Widget,
     app: Weak<App>,
     library: gtk::Box,
     shelf: gtk::Box,
+    /// The encyclopedias' part of the Library screen: a search box and what it found.
+    enc: gtk::Box,
     enc_results: gtk::Box,
     saved: gtk::Box,
     about: gtk::Box,
@@ -88,10 +89,11 @@ impl Browse {
     pub fn build(app: &Rc<App>) -> Rc<Self> {
         let (ls, library) = column(12);
         let (ss, shelf) = column(12);
-        let (es, enc) = column(12);
         let (sv, saved) = column(12);
         let (ab, about) = column(12);
-        title("Encyclopedias", "Community-written: check safety-critical steps against a manual.", &enc);
+        let enc = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        enc.append(&section("Encyclopedias"));
+        enc.append(&label("Community-written: check safety-critical steps against a manual.", "dim"));
         let entry = gtk::SearchEntry::new();
         entry.set_placeholder_text(Some("Search the encyclopedias"));
         enc.append(&entry);
@@ -100,12 +102,12 @@ impl Browse {
         let b = Rc::new(Self {
             library_root: ls.upcast(),
             shelf_root: ss.upcast(),
-            enc_root: es.upcast(),
             saved_root: sv.upcast(),
             about_root: ab.upcast(),
             app: Rc::downgrade(app),
             library,
             shelf,
+            enc,
             enc_results,
             saved,
             about,
@@ -146,6 +148,10 @@ impl Browse {
                 grid.insert(&c, -1);
             }
             me.library.append(&grid);
+            let has = engine.get("/api/library").await.is_ok_and(|l| l["collections"].as_u64().unwrap_or(0) > 0);
+            if has {
+                me.library.append(&me.enc);
+            }
         });
     }
 
@@ -261,7 +267,7 @@ impl Browse {
             ));
             me.about.append(&card(
                 "Credits",
-                &glib::markup_escape_text("Based on Lastbook (lastbook.org), MIT. The look follows Strata (github.com/lgse/strata), MIT; the icons are Lucide's, ISC. Encyclopedias by Kiwix and their contributors. Map data © OpenStreetMap contributors (ODbL) where included. Each document keeps its own licence: see Sources and permissions in the library."),
+                &glib::markup_escape_text("Based on Lastbook (lastbook.org), MIT. The look follows Strata (github.com/lgse/strata), MIT; the icons are Lucide's, ISC. Encyclopedias by Kiwix and their contributors. Map data © OpenStreetMap contributors (ODbL), tiles from Protomaps; place names from GeoNames (CC BY 4.0). Each document keeps its own licence: see Sources and permissions in the library."),
                 &format!("Lastbook for Omarchy {}", app_version(&me.app)),
                 None,
             ));

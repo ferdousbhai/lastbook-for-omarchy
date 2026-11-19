@@ -82,15 +82,14 @@ impl Route {
     }
 }
 
-/// The sidebar's screens: (id, label, icon).
+/// The sidebar's screens, in order: (id, label, icon). About is a screen too, but its way in is the sidebar's footer.
 pub const SECTIONS: &[(&str, &str, &str)] = &[
-    ("guides", "Guides", name::INFO),
     ("search", "Search", name::SEARCH),
     ("chat", "Chat", name::CHAT),
+    ("guides", "Guides", name::INFO),
+    ("library", "Library", name::DOCUMENT),
     ("videos", "Videos", name::VIDEO),
     ("map", "Map", name::LOCATION),
-    ("library", "Library", name::DOCUMENT),
-    ("encyclopedias", "Encyclopedias", name::BOOK),
     ("saved", "Saved", name::STARRED),
     ("about", "About", name::SETTINGS),
 ];
@@ -144,15 +143,29 @@ impl App {
         let sidebar = gtk::ListBox::new();
         sidebar.set_selection_mode(gtk::SelectionMode::Single);
         for (id, label, icon) in SECTIONS {
-            sidebar.append(&omui::sidebar_row(id, Some(icon), label, None));
+            let row = omui::sidebar_row(id, Some(icon), label, None);
+            // About's row is there to hold the selection, unseen: the footer is its way in.
+            row.set_visible(*id != "about");
+            // A gap opens each group: ask, browse, yours.
+            if matches!(*id, "guides" | "saved") {
+                row.set_margin_top(10);
+            }
+            sidebar.append(&row);
         }
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         footer.add_css_class("sidebar-footer");
         footer.append(&omui::icon(name::OFFLINE));
         footer.append(&gtk::Label::new(Some("Works offline")));
+        let about = gtk::Button::with_label("About");
+        about.add_css_class("flat");
+        let gap = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        gap.set_hexpand(true);
+        footer.append(&gap);
+        footer.append(&about);
         let sidebar_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
         sidebar_shell.add_css_class("sidebar");
         sidebar_shell.set_size_request(200, -1);
+        sidebar_shell.set_hexpand(false);
         let scroll = gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).child(&sidebar).build();
         sidebar_shell.append(&scroll);
         sidebar_shell.append(&footer);
@@ -218,7 +231,6 @@ impl App {
         let browse = Browse::build(&app);
         app.stack.add_named(&browse.library_root, Some("library"));
         app.stack.add_named(&browse.shelf_root, Some("shelf"));
-        app.stack.add_named(&browse.enc_root, Some("encyclopedias"));
         app.stack.add_named(&browse.saved_root, Some("saved"));
         app.stack.add_named(&browse.about_root, Some("about"));
         app.browse.replace(Some(browse));
@@ -232,6 +244,8 @@ impl App {
 
         let a = app.clone();
         toggle.connect_clicked(move |_| a.toggle_sidebar());
+        let a = app.clone();
+        about.connect_clicked(move |_| a.navigate(Route::Section("about")));
         let a = app.clone();
         app.back.connect_clicked(move |_| a.go(-1));
         let a = app.clone();
@@ -419,7 +433,7 @@ impl App {
                     w.open(&format!("/zim/{path}"), &format!("{enc} · community-written: check safety-critical steps against a manual"), true);
                 }
                 let article = path.rsplit('/').next().unwrap_or_default().replace('_', " ");
-                ("web", "encyclopedias", urlencoding::decode(&article).map(|s| s.into_owned()).unwrap_or(article))
+                ("web", "library", urlencoding::decode(&article).map(|s| s.into_owned()).unwrap_or(article))
             }
             Route::Web { path, meta } => {
                 if let Some(w) = self.web.borrow().as_ref() {
