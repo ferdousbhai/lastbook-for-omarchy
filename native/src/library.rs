@@ -109,7 +109,7 @@ impl Browse {
         let (es, enc) = column();
         let (sv, saved) = column();
         let (ab, about) = column();
-        title("Encyclopedias", "Complete offline encyclopedias. Community-written: check safety-critical steps against a manual.", &enc);
+        title("Encyclopedias", "Community-written: check safety-critical steps against a manual.", &enc);
         let entry = gtk::SearchEntry::new();
         entry.set_placeholder_text(Some("Search the encyclopedias"));
         enc.append(&entry);
@@ -143,7 +143,7 @@ impl Browse {
         if self.library.first_child().is_some() {
             return;
         }
-        title("Library", "Every manual, guide and saved page on this computer, by subject.", &self.library);
+        title("Library", "", &self.library);
         let Some(app) = self.app.upgrade() else { return };
         let (engine, me) = (app.engine.clone(), Rc::downgrade(self));
         glib::spawn_future_local(async move {
@@ -157,7 +157,15 @@ impl Browse {
             grid.set_row_spacing(8);
             grid.set_column_spacing(8);
             for s in shelves.as_array().into_iter().flatten() {
-                let counts = format!("{} to read · {} video{}", s["read"], s["video"], if s["video"] == 1 { "" } else { "s" });
+                let (read, video) = (s["read"].as_u64().unwrap_or(0), s["video"].as_u64().unwrap_or(0));
+                if read + video == 0 {
+                    continue;   // nothing on this shelf in this library
+                }
+                let counts = [(read > 0).then(|| format!("{read} to read")), (video > 0).then(|| format!("{video} video{}", if video == 1 { "" } else { "s" }))]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" · ");
                 let c = card(s["title"].as_str().unwrap_or_default(), "", &counts, None);
                 c.add_css_class("guide-card");
                 activate(&c, me.app.clone(), Route::Shelf(s["id"].as_str().unwrap_or_default().to_owned()));
@@ -225,10 +233,10 @@ impl Browse {
 
     pub fn show_saved(self: &Rc<Self>) {
         clear(&self.saved);
-        title("Saved", "Pages, articles, videos and guides you starred (the star in the header bar).", &self.saved);
+        title("Saved", "", &self.saved);
         let items = load_saved();
         if items.is_empty() {
-            let l = gtk::Label::new(Some("Nothing saved yet."));
+            let l = gtk::Label::new(Some("Nothing saved yet. Star a page, video or guide to keep it here (Ctrl+D)."));
             l.add_css_class("empty-state");
             l.set_xalign(0.0);
             self.saved.append(&l);
@@ -246,7 +254,7 @@ impl Browse {
 
     pub fn show_about(self: &Rc<Self>) {
         clear(&self.about);
-        title("About this library", "Public manuals, health guides, videos and encyclopedias kept on this computer, so it works when the internet and phones don't.", &self.about);
+        title("About this library", "", &self.about);
         let Some(app) = self.app.upgrade() else { return };
         let (engine, me) = (app.engine.clone(), Rc::downgrade(self));
         glib::spawn_future_local(async move {
@@ -265,7 +273,7 @@ impl Browse {
             ));
             let ix = &st["index"];
             let search = if ix["state"] == "waiting for Recall" {
-                "Meaning-based search is off: it uses Recall for Omarchy, which isn't running. Search by words works.".to_owned()
+                "Meaning-based search is off: Recall for Omarchy isn't running.".to_owned()
             } else {
                 format!("Meaning-based search (through Recall for Omarchy): {} passages from {} documents.", ix["chunks"], ix["docs"])
             };
@@ -273,7 +281,7 @@ impl Browse {
             me.about.append(&card("Search and the assistant", &glib::markup_escape_text(&format!("{search} {ai}")), "", None));
             me.about.append(&card(
                 "Privacy",
-                &glib::markup_escape_text("Lastbook opens no network port and sends nothing anywhere. The engine runs beside this window over pipes; meaning-based search asks Recall over a local socket. Only setup downloads, and only when you start it."),
+                &glib::markup_escape_text("Lastbook sends nothing anywhere. Only setup downloads, and only when you start it."),
                 "",
                 None,
             ));
@@ -283,7 +291,7 @@ impl Browse {
                 &format!("Lastbook for Omarchy {}", app_version(&me.app)),
                 None,
             ));
-            let m = card("Library and downloads", &glib::markup_escape_text("Add videos, documents or encyclopedias, change the detailed map, add the local AI, or check every file."), "", None);
+            let m = card("Library and downloads", "", "", None);
             activate(&m, me.app.clone(), Route::Manage);
             me.about.append(&m);
             if let Some(src) = lib["sources"].as_str() {

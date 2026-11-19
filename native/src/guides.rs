@@ -75,12 +75,7 @@ impl Guides {
         let t = gtk::Label::new(Some("Guides"));
         t.add_css_class("page-title");
         t.set_xalign(0.0);
-        let s = gtk::Label::new(Some("Pick what's happening. Each guide points to the exact pages in the library, and says when to stop and get help."));
-        s.add_css_class("dim");
-        s.set_wrap(true);
-        s.set_xalign(0.0);
         self.list.append(&t);
-        self.list.append(&s);
         for (mode, heading) in [("now", "Right now"), ("learn", "Learn and prepare")] {
             let topics: Vec<Value> = self.topics.borrow().iter().filter(|t| t["mode"].as_str().unwrap_or("now") == mode).cloned().collect();
             if topics.is_empty() {

@@ -142,7 +142,7 @@ impl SearchPage {
         clear(&self.results);
         self.thumbs.borrow_mut().clear();
         if q.is_empty() {
-            self.status.set_text("Search manuals, health guides, video transcripts and the encyclopedias, all on this computer.");
+            self.status.set_text("");
             self.entry.grab_focus();
             return;
         }
@@ -171,13 +171,10 @@ impl SearchPage {
     fn show_results(self: &Rc<Self>, relevant: Option<Value>, docs: Option<Value>) {
         let rel: Vec<Value> = relevant.as_ref().and_then(|v| v["results"].as_array().cloned()).unwrap_or_default();
         let found: Vec<Value> = docs.as_ref().and_then(|v| v["results"].as_array().cloned()).unwrap_or_default();
-        let meaning = relevant.as_ref().is_some_and(|v| v["semantic"]["chunks"].as_u64().unwrap_or(0) > 0 && v["semantic"]["state"] != "waiting for Recall");
         self.status.set_text(&if rel.is_empty() && found.is_empty() {
             "Nothing in the library matched. Try other words for the same thing.".to_owned()
-        } else if meaning {
-            "Matched by meaning as well as by words.".to_owned()
         } else {
-            "Matched by your words (meaning-based search needs Recall for Omarchy).".to_owned()
+            String::new()
         });
         if !rel.is_empty() {
             self.results.append(&section("Most relevant pages"));

@@ -289,7 +289,7 @@ impl ChatPage {
             let line = match state {
                 "ready" => format!("{} is ready on this computer.", local["name"].as_str().unwrap_or("The local AI")),
                 "loading" => format!("Starting the local AI{}…", local["pct"].as_i64().map(|p| format!(" ({p}%)")).unwrap_or_default()),
-                "stopped" => "The local AI starts when you ask; answers come from the library and cite their pages.".into(),
+                "stopped" => String::new(),
                 "checking" | "measuring" => "Checking the local AI's model file…".into(),
                 "too_big" => format!("The local AI doesn't fit this computer: {}", local["message"].as_str().unwrap_or_default()),
                 "off" => "The local AI is turned off. Questions show the matching pages instead.".into(),
@@ -359,12 +359,7 @@ impl ChatPage {
             let t = gtk::Label::new(Some("Ask the library"));
             t.add_css_class("page-title");
             t.set_xalign(0.0);
-            let s = gtk::Label::new(Some("Answers come only from the manuals, guides, videos and encyclopedias on this computer, and every sentence links to the page it came from."));
-            s.add_css_class("dim");
-            s.set_wrap(true);
-            s.set_xalign(0.0);
             hello.append(&t);
-            hello.append(&s);
             for q in ["How do I make water safe to drink?", "Someone is bleeding badly from a leg wound", "How do I treat a second-degree burn?", "What should I do during an earthquake?"] {
                 let b = crate::cards::wrap_button(q);
                 b.add_css_class("chip");

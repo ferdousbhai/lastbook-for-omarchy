@@ -437,7 +437,7 @@ impl MapPage {
                 me.results.append(&row);
             }
             if list.is_empty() {
-                let l = gtk::Label::new(Some("No place by that name in the offline gazetteer."));
+                let l = gtk::Label::new(Some("No place by that name."));
                 l.add_css_class("dim");
                 me.results.append(&l);
             }

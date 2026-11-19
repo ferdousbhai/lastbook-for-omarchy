@@ -54,14 +54,10 @@ impl Videos {
         let t = gtk::Label::new(Some("Videos"));
         t.add_css_class("page-title");
         t.set_xalign(0.0);
-        let s = gtk::Label::new(Some("Watch it done: practical how-tos first, then channels and courses."));
-        s.add_css_class("dim");
-        s.set_xalign(0.0);
         let entry = gtk::SearchEntry::new();
         entry.set_placeholder_text(Some("Search video titles and transcripts"));
         let rails = gtk::Box::new(gtk::Orientation::Vertical, 10);
         column.append(&t);
-        column.append(&s);
         column.append(&entry);
         column.append(&rails);
         let list_scroll = gtk::ScrolledWindow::builder().child(&column).vexpand(true).hscrollbar_policy(gtk::PolicyType::Never).build();

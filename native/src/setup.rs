@@ -113,14 +113,6 @@ impl SetupPage {
             self.folder.replace(rec["folder"].as_str().map(str::to_owned));
         }
         self.body.append(&label(if first { "Set up Lastbook" } else { "Library and downloads" }, "page-title"));
-        self.body.append(&label(
-            if first {
-                "Choose what to keep on this computer. Everything is checked as it arrives, and after this Lastbook works with no internet."
-            } else {
-                "Add to this library, add map areas, add the local AI, or check every file."
-            },
-            "dim",
-        ));
         if let Some(c) = st["current"].as_object() {
             self.body.append(&label(
                 &format!(
@@ -521,7 +513,7 @@ impl SetupPage {
         }
         let state = job["state"].as_str().unwrap_or_default();
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let mut add = |text: &str, path: &'static str, primary: bool| {
+        let add = |text: &str, path: &'static str, primary: bool| {
             let b = gtk::Button::with_label(text);
             b.add_css_class(if primary { "primary" } else { "chip" });
             let me = Rc::downgrade(self);
