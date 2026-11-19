@@ -1357,7 +1357,6 @@ class Through(Base):
             self.assertEqual(r.status, 200)
             r = ask('GET', '/')
             self.assertEqual(r.status, 200)
-            self.assertTrue(b.top_url_ok(B.ORIGIN + '/ui/setup.html'))
             r = ask('GET', '/documents/x.pdf')
             self.assertEqual(r.status, 404)
 

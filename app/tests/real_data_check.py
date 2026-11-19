@@ -60,9 +60,9 @@ class Rec(B.Sink):
         self.done.set()
 
 
-def call(b, method, target, headers=None, body=None, is_document=None, timeout=120):
+def call(b, method, target, headers=None, body=None, timeout=120):
     r = Rec()
-    b.start(method, b.origin + target, headers or {}, body, r, is_document)
+    b.start(method, b.origin + target, headers or {}, body, r)
     assert r.done.wait(timeout), target
     return r.status, r.hs, b''.join(r.parts)
 
@@ -119,10 +119,6 @@ if zims:
     s, h, d = call(b, 'GET', f'/zim/{z}/')
     loc = h.get('location')
     note('ZIM root', s == 200 and b'refresh' in d, f'{s} {loc or d[:70]}')
-route = b.new_window(b.origin + q(pdf) + '#page=3', True, True)
-note('open the original file stays inside', route[0] == 'inside' and b.top_url_ok(route[1]), route[1])
-route = b.new_window(b.origin + q(saved), True, True)
-note('a saved page never becomes the top', route[0] == 'inside' and '#/read/' in route[1], route[1])
 
 # A page asking for video as fast as it can, 16 at a time, with a web view that drains at about 200 MB/s per worker.
 b = B.Bridge(server)

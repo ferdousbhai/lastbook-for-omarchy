@@ -1,7 +1,7 @@
 """/api/setup/*: the engine side of first-run setup and of Library → Library and local AI. Contract: docs/SETUP-API.md.
 
 Two ways in, one module:
-  - setup mode (no library yet): app/main.py makes a Bridge around SetupServer, whose Handler serves web/setup.html at /, the web
+  - setup mode (no library yet): app/engine_pipe.py makes a Bridge around SetupServer, whose Handler serves web/setup.html at /, the web
     folder at /ui/, and /api/setup/* here. Nothing else.
   - normal mode: server.py hands /api/setup/ to handle(). The app's main.py configures it first (configure(...)); a bare
     server.py gets a manage-mode Setup on first use, with no relaunch (finish then answers restart: true).

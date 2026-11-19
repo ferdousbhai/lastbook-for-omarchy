@@ -15,7 +15,7 @@ Text answers come as "chunk"; anything else (images, fonts, video) as "b64", bas
 {"cancel": 8} stops request 8. The first line out is {"ready": {...}} with the data and library folders, which the window reads
 files from directly (thumbnails, PDFs, videos): only answers that need the engine come through here.
 
-Requests run through app/bridge.py's Bridge, the same lanes, limits and engine Handler the web window used, holding its key:
+Requests run through app/bridge.py's Bridge (lanes, limits and the engine's own Handler), holding its key:
 this process and the window are one program, split so the engine can stay in Python. It leaves when its standard input closes.
 """
 import base64
@@ -144,7 +144,7 @@ def main():
         headers = {B.KEY_HEADER: bridge.key, 'accept': 'application/json'}
         if raw is not None:
             headers['content-type'] = 'application/json'
-        ex = bridge.start(method, B.ORIGIN + path, headers, raw, PipeSink(rid), is_document=False)
+        ex = bridge.start(method, B.ORIGIN + path, headers, raw, PipeSink(rid))
         if ex:
             running[rid] = ex
             if len(running) > 256:   # finished ones are dropped lazily; cancelling a finished exchange does nothing

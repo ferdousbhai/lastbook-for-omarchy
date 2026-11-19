@@ -69,12 +69,13 @@ class TestHandler(server.Handler):
             return self.send_json({'slept': True})
         if p == '/zim/t/pdf':
             return self.send_data(b'%PDF-1.4 inside an encyclopedia', 'application/pdf')
-        if p == '/documents/t/slowbig':
-            time.sleep(0.2)
+        if p == '/documents/t/sized':
+            n = int(q.get('bytes', B.BIG_BODY + 1))
             self.send_response(200)
-            self.send_header('Content-Length', str(B.BIG_BODY + 1))
+            self.send_header('Content-Length', str(n))
             self.end_headers()
-            self.wfile.write(b'x' * (B.BIG_BODY + 1))
+            for off in range(0, n, MiB):
+                self.wfile.write(b'x' * min(MiB, n - off))
             return
         if p == '/documents/t/nolen':
             self.send_response(200)
@@ -155,10 +156,10 @@ class Res:
         self.status, self.hs, self.body, self.ok = status, hs, body, ok
 
 
-def call(b, method, path, headers=None, body=None, is_document=None, timeout=60, url=None):
+def call(b, method, path, headers=None, body=None, timeout=60, url=None):
     url = url if url is not None else b.origin + path
     r = Rec()
-    b.start(method, url, headers or {}, body, r, is_document)
+    b.start(method, url, headers or {}, body, r)
     assert r.done.wait(timeout), f'no answer: {method} {path}'
     return Res(r.status, r.hs, r.body, r.ok)
 
@@ -272,10 +273,6 @@ class Both:
         self.assertIn(b'src="?pdf-page=2"', b)
         self.assertNotIn(b'<script', b.lower())
         self.assertNotRegex(b.split(b'</style>')[1], rb'\son\w+=')
-        o = self.b.origin
-        self.assertTrue(self.b.is_pdf_viewer(o + '/documents/a%20b.PDF#page=3'))
-        for u in (o + '/documents/a.pdf?pdf-page=3', o + '/documents/a.html', o + '/documents/a.html?x=.pdf', o + '/documents/a.html#.pdf', o + '/', o + '/api/a.pdf', 'https://e.example/a.pdf'):
-            self.assertFalse(self.b.is_pdf_viewer(u), u)
 
     def test_pdf_page_is_a_picture(self):
         r = self.get(self.real_pdf() + '?pdf-page=2')
@@ -407,38 +404,27 @@ class Both:
         self.assertNotIn(self.b.key, json.dumps(self.logged))
 
     # ---- the flood gate
-    def test_gate_refuses_big_without_a_ticket(self):
-        r = self.get('/documents/big.bin')
+    def test_gate_refuses_an_answer_over_the_limit(self):
+        r = self.get('/documents/t/sized')
         self.assertEqual(r.status, 403)
         self.assertEqual(r.body, B.TOO_LARGE)
         self.assertEqual(self.b.counts['flood-gate'], 1)
 
     def test_gate_size_edge(self):
-        self.assertEqual(self.get('/documents/over.bin').status, 403)
-        self.assertEqual(self.get('/documents/mid.bin').status, 200)
+        self.assertEqual(self.get('/documents/t/sized?bytes=%d' % (B.BIG_BODY + 1)).status, 403)
+        r = self.get('/documents/t/sized?bytes=%d' % B.BIG_BODY)
+        self.assertEqual(r.status, 200)
+        self.assertEqual(len(r.body), B.BIG_BODY)
+        self.assertEqual(self.get('/documents/t/sized?bytes=%d' % (B.WHOLE_MAX + 1)).status, 413)
 
-    def test_gate_ticket_once(self):
-        url = self.b.origin + '/documents/big.bin'
-        self.b.give_ticket(url + '#x')
-        r = self.get('/documents/big.bin', is_document=True)
+    def test_a_page_the_size_of_the_largest_real_one_opens(self):
+        self.assertGreater(B.BIG_BODY, 44 * 1000 * 1000)
+        r = self.get('/documents/big.bin')     # 40 MiB
         self.assertEqual(r.status, 200)
         self.assertEqual(len(r.body), 40 * MiB)
         self.assertEqual(r.body[:1000], pat(0, 1000))
-        self.assertEqual(self.get('/documents/big.bin', is_document=True).status, 403)
-
-    def test_gate_ticket_needs_a_document_when_the_shell_knows(self):
-        self.b.give_ticket(self.b.origin + '/documents/big.bin')
-        self.assertEqual(self.get('/documents/big.bin', is_document=False).status, 403)
-        self.assertEqual(self.get('/documents/big.bin', is_document=True).status, 200)
-
-    def test_gate_ticket_for_another_target(self):
-        self.b.give_ticket(self.b.origin + '/documents/big.bin?x=1')
-        self.assertEqual(self.get('/documents/big.bin').status, 403)
-
-    def test_gate_ticket_expires(self):
-        self.b.give_ticket(self.b.origin + '/documents/big.bin')
-        self.b.tickets['/documents/big.bin'] -= B.TICKET_LIFE + 1
-        self.assertEqual(self.get('/documents/big.bin').status, 403)
+        self.assertEqual(self.get('/documents/over.bin').status, 200)
+        self.assertEqual(self.get('/documents/mid.bin').status, 200)
 
     def test_gate_catches_a_video_the_engine_does_not_recognise(self):
         r = self.get('/videos/huge.mk%76', 'bytes=0-')   # the engine's own Range path looks at the raw address, so it answers whole
@@ -474,14 +460,8 @@ class Both:
         full = b'<html><head></head>' + b'x' * P.MAX_PAGE
         self.assertEqual(P.rewrite(full), full)
 
-    def test_gate_ticket_counts_from_the_request_not_the_answer(self):
-        """The engine can take longer than a ticket lasts to get its answer ready."""
-        self.b.give_ticket(self.b.origin + '/documents/t/slowbig')
-        r = self.get('/documents/t/slowbig', is_document=True)
-        self.assertEqual(r.status, 200)
-
     def test_unknown_length_over_the_limit(self):
-        r = self.get('/documents/t/nolen?mb=40')
+        r = self.get('/documents/t/nolen?mb=%d' % (B.BIG_BODY // MiB + 8))
         self.assertEqual(r.status, 200)
         self.assertFalse(r.ok)
         self.assertLessEqual(len(r.body), B.BIG_BODY + MiB)
@@ -653,49 +633,6 @@ class Both:
         r = self.get('/documents/t/short')
         self.assertEqual(r.status, 200)
         self.assertFalse(r.ok)
-
-    # ---- where things may go
-    def test_frame_rule(self):
-        ok = ['/documents/s.pdf', '/pages/s.html', '/videos/a.mp4', '/zim/x/y', '/assets/a', '/courses/a', '/collections/a', '/transcripts/a', '/metadata/videos/a', '/videos-external/a', '/documents/a?x=1#y']
-        no = ['/', '/index.html', '/api/health', '/ui/app.js', '/sw.js', '/reader.css', '/__bridge/stream/start', '/documents/../api/health', '/documents/%2e%2e/api/health', '/zim/../api/x', '/documents', '/documentsx/a', '/metadata/x']
-        for t in ok:
-            self.assertTrue(self.b.frame_url_ok(self.b.origin + t), t)
-        for t in no:
-            self.assertFalse(self.b.frame_url_ok(self.b.origin + t), t)
-        for u in ('https://evil.example/documents/a', 'file:///documents/a', 'javascript:alert(1)', 'lastbook://other/documents/a', self.b.origin + '.evil/documents/a'):
-            self.assertFalse(self.b.frame_url_ok(u), u)
-        for u in ('about:blank', 'about:srcdoc'):
-            self.assertTrue(self.b.frame_url_ok(u), u)
-        for u in ('data:text/html,<script>1</script>', 'blob:x', 'about:x', 'javascript:1', 'mailto:a@b', 'tel:1', 'macappstore://x', 'itms://x'):   # a new document in a frame does not keep the old one's policy
-            self.assertFalse(self.b.frame_url_ok(u), u)
-
-    def test_top_rule(self):
-        o = self.b.origin
-        for u in (o, o + '/', o + '/#/read/x?p=1', o + '/#/'):
-            self.assertTrue(self.b.top_url_ok(u), u)
-        for u in (o + '/pages/s.html', o + '/documents/s.pdf', o + '/api/health', o + '/ui/app.js', o + '/index.html', o + '/?x=1', 'https://evil.example/', 'about:blank', 'data:text/html,x', 'blob:x', o + '.evil/', 'javascript:1'):
-            self.assertFalse(self.b.top_url_ok(u), u)
-
-    def test_link_rule(self):
-        o, nw = self.b.origin, self.b.new_window
-        for gesture in (True, False, None):   # the app hands nothing to a browser, from anywhere
-            self.assertEqual(nw('https://example.org/a', True, gesture), ('nothing', None))
-            self.assertEqual(nw('http://example.org/', True, gesture), ('nothing', None))
-        for gesture in (True, False, None):   # a frame opens nothing, gesture or not
-            self.assertEqual(nw('https://example.org/', False, gesture), ('nothing', None))
-            self.assertEqual(nw(o + '/documents/s.pdf', False, gesture), ('nothing', None))
-        for u in ('file:///etc/hosts', 'javascript:alert(1)', 'data:text/html,x', 'about:blank', 'blob:x', 'ftp://x/', 'mailto:a@b', 'https://', 'https://a b/', 'lastbook://other/x', 'https://x/\ny'):
-            self.assertEqual(nw(u, True, True), ('nothing', None), u)
-        self.assertEqual(nw(o + '/documents/s.pdf#page=7', True, True), ('inside', o + '/#/read/pdfsmall?p=7&view=pdf'))
-        self.assertEqual(nw(o + '/documents/s.pdf', True, None), ('inside', o + '/#/read/pdfsmall?p=1&view=pdf'))
-        self.assertEqual(nw(o + '/pages/s.html', True, True), ('inside', o + '/#/read/saved'))
-        self.assertEqual(nw(o + '/videos/a.mp4', True, True), ('inside', o + '/#/watch/vida'))
-        self.assertEqual(nw(o + '/zim/wiki%20x.zim/A/B_c', True, True), ('inside', o + '/#/wiki/wiki%20x.zim/A/B_c'))
-        self.assertEqual(nw(o + '/reports/gap-closure-status.html', True, True), ('nothing', None))   # the UI links there; the engine serves nothing there
-        self.assertEqual(nw(o + '/documents/not-in-catalog.pdf', True, True), ('nothing', None))
-        self.assertEqual(nw(o + '/pages/s.html', True, False), ('nothing', None))
-        for u in (nw(o + '/pages/s.html', True, True)[1], nw(o + '/documents/s.pdf', True, True)[1], nw(o + '/zim/a/b', True, True)[1]):
-            self.assertTrue(self.b.top_url_ok(u), u)
 
 
 class AssistantStaysHere(unittest.TestCase):
@@ -940,25 +877,6 @@ class StreamTests(Both, unittest.TestCase):
         self.assertNotIn(b'"<b>', r.body)
         self.assertIn("default-src 'none'", r.hs['content-security-policy'])
 
-    def test_no_poll_route(self):
-        self.assertEqual(call(self.b, 'POST', '/__bridge/stream/start', {**self.key, 'Content-Type': 'application/octet-stream'}, b'{}').status, 404)
-        self.assertEqual(self.get('/__bridge/stream/start').status, 404)
-
-    def test_top_script(self):
-        s = self.b.top_script()
-        self.assertIn(self.b.key, s)
-        out = run_node(s, 'https://lastbook.test', self.b.key)
-        self.assertTrue(out['top_patched'])
-        self.assertFalse(out['frame_patched'])
-        self.assertFalse(out['sandboxed_top_patched'])
-        by = {(c['method'], c['url'].replace('https://lastbook.test', '')): c for c in out['calls']}
-        self.assertEqual(by[('GET', '/api/health')]['key'], self.b.key)       # the top frame's own /api/ reads: see LANES
-        self.assertIsNone(by[('GET', '/ui/app.css')]['key'])
-        self.assertIsNone(by[('GET', 'https://elsewhere.example/y')]['key'])
-        self.assertEqual(by[('POST', '/api/tool/x')]['key'], self.b.key)
-        self.assertEqual(by[('POST', '/api/chat')]['key'], self.b.key)
-        self.assertIsNone(by[('POST', 'https://elsewhere.example/x')]['key'])
-
     def test_real_chat_with_no_model_is_plain(self):
         assistant.model_status, assistant.chat = REAL_STATUS, REAL_CHAT
         try:
@@ -1003,21 +921,6 @@ class WholeProcess(unittest.TestCase):
         self.assertGreater(B.VIDEO_PIECE, 2.38e6)     # the largest request seen from a player
         self.assertGreaterEqual(B.VIDEO_PIECE, 4 * MiB)
         self.assertLessEqual(B.VIDEO_PIECE, 8 * MiB)
-
-
-def run_node(script, origin, key):
-    node = shutil.which('node')
-    if not node:
-        raise unittest.SkipTest('no node on this system')
-    p = DATA / 'tmp-top-script.js'
-    p.write_text(script)
-    try:
-        r = subprocess.run([node, str(HERE / 'top_script_test.mjs'), str(p), origin, key], capture_output=True, text=True, timeout=30)
-    finally:
-        os.unlink(p)
-    if r.returncode:
-        raise AssertionError(r.stderr[-1500:])
-    return json.loads(r.stdout)
 
 
 # ---- the stub: stands in for the model. handle_post, emit and wfile are the real ones.

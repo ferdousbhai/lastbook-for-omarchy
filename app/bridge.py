@@ -9,9 +9,9 @@ What holds:
     when a request has waited, because a slow answer mostly sleeps: it must not hold up a quick one behind it.
   - In flight. LANES below sums to TOTAL_INFLIGHT, the most bytes this process can be holding between the engine and
     the web view. What the web view keeps after it has them is its own, and has to be measured in the real window.
-  - The flood gate. An answer over BIG_BODY reaches only a navigation the app itself started (give_ticket).
-  - POST. Every POST needs the key made at launch, which only the app's top frame gets (top_script).
-  - The key also marks the top frame's own /api/ reads, which is how they keep a lane that a saved page cannot get into.
+  - The flood gate. An answer over BIG_BODY is refused before any of it moves: the window holds a whole answer in memory.
+  - POST. Every POST needs the key made at launch, which only engine_pipe.py holds.
+  - The key also marks the window's own /api/ reads, which keeps them in a lane of their own.
   - No PDF ever reaches the web view. A PDF can carry scripts and the system's viewers run them, so what arrives is a page of images PDFium has drawn (_answer_pdf).
 """
 import hashlib
@@ -31,17 +31,16 @@ ORIGIN = 'lastbook://app'
 MiB = 1024 * 1024
 CHUNK = MiB                         # largest piece handed to a stream Sink
 VIDEO_PIECE = 8 * MiB               # most bytes one video Range answer holds. The player asks for the rest.
-BIG_BODY = 32 * MiB                 # above this, only a navigation the app started gets the whole answer
-WHOLE_MAX = 256 * MiB               # the largest answer of any kind. The largest real page is 44 MB, and PDFs and videos come in pieces.
+BIG_BODY = 64 * MiB                 # the largest answer handed over whole. The largest real saved page is 44 MB.
+WHOLE_MAX = 256 * MiB               # above this the refusal says 413, not 403. PDFs and videos come in pieces.
 PER_REQUEST = 8 * MiB               # most unacknowledged bytes for one request
-TICKET_LIFE = 30
 MAX_POST = 256 * 1024               # the engine's own limit on a chat request is 200,000 bytes
 KEY_HEADER = 'x-lastbook-key'
 
 # name: (workers, most waiting, byte budget). Budgets are separate on purpose: one shared pool would let large files starve /api/.
 LANES = {
-    'small': (8, 5000, 24 * MiB),    # the app's own files, and /api/ asked for with the key: the top frame's own script
-    'guest': (8, 5000, 24 * MiB),    # /api/ with no key: a saved page, a worker, an <img> the top frame's script did not make
+    'small': (8, 5000, 24 * MiB),    # the app's own files, and /api/ asked for with the key: the window's own requests
+    'guest': (8, 5000, 24 * MiB),    # /api/ with no key
     'render': (2, 500, 8 * MiB),     # PDF page images: PDFium runs one at a time anyway, so more workers would only sit waiting
     'chat': (8, 32, 8 * MiB),        # long-lived: must not hold a small worker for the length of an answer
     'large': (6, 1000, 64 * MiB),    # video, PDF, saved pages, encyclopedia entries
@@ -52,8 +51,7 @@ GROW_AFTER = 0.05                       # seconds a request waits before a lane 
 SHRINK_AFTER = 10                       # seconds an added worker sits idle before it goes
 
 PASS_HEADERS = {'range', 'content-type', 'accept'}  # all a page can send the engine, besides the mapped Origin. The key never goes on.
-FRAME_PREFIXES = ('/documents/', '/pages/', '/videos/', '/videos-external/', '/transcripts/', '/metadata/videos/', '/courses/', '/collections/', '/assets/', '/zim/')
-FILE_PREFIXES = tuple(p for p in FRAME_PREFIXES if p != '/zim/')
+FILE_PREFIXES = ('/documents/', '/pages/', '/videos/', '/videos-external/', '/transcripts/', '/metadata/videos/', '/courses/', '/collections/', '/assets/')
 HOP = {'connection', 'keep-alive', 'transfer-encoding', 'te', 'upgrade', 'proxy-connection', 'trailer'}
 DROP = HOP | {'server', 'date'}
 VIDEO_SUFFIXES = ('.mp4', '.webm', '.mkv')
@@ -68,36 +66,8 @@ RENDER = re.compile(r'/api/page/[^/]+/\d+\.png$')
 TOO_LARGE = b'This file is too large to show here.'
 GONE = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
 
-TOP_SCRIPT = r"""(() => {
-  if (window.top !== window || window.origin === 'null') return;  // a saved page, in a frame or not, gets nothing
-  // Asking for a location goes to the system's location service, which can ask the network. The map's button shows this message.
-  const none = { getCurrentPosition(ok, no) { if (no) setTimeout(no, 0, { code: 1, message: 'Lastbook stays offline and does not ask where you are.' }) }, watchPosition() { return 0 }, clearWatch() { } };
-  try { Object.defineProperty(Navigator.prototype, 'geolocation', { get() { return none }, configurable: false }) } catch { }
-  const KEY = '__KEY__', own = location.protocol + '//' + location.host;
-  const real = window.fetch.bind(window);
-  const mine = u => u.protocol + '//' + u.host === own;
-  const keyed = (req) => { const headers = new Headers(req.headers); headers.set('X-Lastbook-Key', KEY); return real(new Request(req, { headers })) };
-  window.fetch = async function (input, init) {
-    const req = new Request(input, init);
-    const u = new URL(req.url);
-    if (!mine(u)) return real(req);
-    if (req.method !== 'POST') return u.pathname.startsWith('/api/') ? keyed(req) : real(req);
-    return keyed(req);
-  };
-})();
-"""
-
-def headers_dict(headers):
-    """For a platform call that takes a dictionary. Repeated names are joined, as HTTP allows."""
-    out = {}
-    for k, v in headers:
-        out[k] = f'{out[k]}, {v}' if k in out else v
-    return out
-
-
 class Sink:
-    """What the shell implements. All three run on a worker thread, in order, for one request, so post them to the
-    main thread in order. There, check `exchange.stopped` before touching the task, and never touch it once stopped."""
+    """What the caller implements (engine_pipe.PipeSink). All three run on a worker thread, in order, for one request."""
 
     def head(self, status, reason, headers):
         """headers: a list of (name, value)."""
@@ -107,7 +77,7 @@ class Sink:
         count against the lane's budget. Calling ack twice, or after a cancel, is harmless."""
 
     def finish(self, ok):
-        """The last call. ok False: the answer stopped short (didFailWithError, not didFinish)."""
+        """The last call. ok False: the answer stopped short."""
 
 
 class _Budget:
@@ -248,8 +218,8 @@ def _make_handler(base):
 class Exchange:
     """One request. `stopped` is safe to read from any thread; cancel() may be called from any thread."""
 
-    def __init__(self, bridge, method, target, raw, lane, is_document):
-        self.b, self.method, self.target, self.raw, self.lane, self.is_document = bridge, method, target, raw, lane, is_document
+    def __init__(self, bridge, method, target, raw, lane):
+        self.b, self.method, self.target, self.raw, self.lane = bridge, method, target, raw, lane
         self.budget = lane.budget if lane else None
         self.path = urllib.parse.unquote(target.split('?', 1)[0])
         self.stopped = False
@@ -262,7 +232,6 @@ class Exchange:
         self.announced = None    # Content-Length, when the engine gave one
         self.sent = 0
         self.local = None        # the file the engine is answering from, once it has found one
-        self.ticket = is_document is not False and bridge._take_ticket(target)   # now, not when the engine has its answer: that can take longer than a ticket lasts
         self.swallow = False     # the engine's body is not wanted: a refusal or a redirect replaced it
         self.note = None
         self.t0 = time.time()
@@ -390,10 +359,8 @@ class Exchange:
     def _flood_gate(self):
         if self.method != 'GET' or self.status not in (200, 206) or self.announced is None or self.announced <= BIG_BODY:
             return None
-        if self.b.whole_max and self.announced > self.b.whole_max:
+        if self.announced > WHOLE_MAX:
             return 413, 'Too Large'
-        if self.ticket:
-            return None
         return 403, 'Not For This Page'
 
     def file_body(self, source):
@@ -430,8 +397,8 @@ class Exchange:
 
 
 class _Streamed(Exchange):
-    def __init__(self, bridge, method, target, raw, lane, is_document, sink):
-        super().__init__(bridge, method, target, raw, lane, is_document)
+    def __init__(self, bridge, method, target, raw, lane, sink):
+        super().__init__(bridge, method, target, raw, lane)
         self.sink = sink
 
     def _send_head(self):
@@ -468,30 +435,26 @@ class _Streamed(Exchange):
 
 
 class Bridge:
-    def __init__(self, server_module, origin=ORIGIN, log=None, lanes=None, per_request=PER_REQUEST, piece=None, whole_max='default'):
+    def __init__(self, server_module, log=None, lanes=None, per_request=PER_REQUEST):
         """server_module: the imported engine, after server.init(). log: a function taking one dict per request; it never sees the key."""
-        self.server, self.origin = server_module, origin
+        self.server, self.origin = server_module, ORIGIN
         self.logger = log
         self.Handler = _make_handler(server_module.Handler)
         self.key = secrets.token_urlsafe(32)     # new each launch; never written to a log
-        self.piece = piece or VIDEO_PIECE
-        self.whole_max = WHOLE_MAX if whole_max == 'default' else whole_max
         self.lanes = {n: _Lane(n, w, q, b, per_request, GROW_TO.get(n)) for n, (w, q, b) in (lanes or LANES).items()}
         self.waiting_now = threading.Event()
         threading.Thread(target=self._grow_lanes, daemon=True, name='lane-grow').start()
-        self.tickets = {}
-        self.ticket_lock = threading.Lock()
         self.counts = {}
         self.count_lock = threading.Lock()
         self.pdf_sizes = {}
         self.pdf_lock = threading.Lock()
 
-    # ---- for the shell: requests
-    def start(self, method, url, headers, body, sink, is_document=None):
-        """Runs sink's calls on a worker. Returns the Exchange, whose cancel() the shell calls when the web view
-        stops the task, or None if the bridge answered at once (a refusal), in which case sink already has the whole answer.
-        headers: (name, value) pairs or a dict. body: bytes or None. is_document: False when the shell knows this is no document."""
-        refused, prepared = self._prepare(method, url, headers, body, is_document)
+    # ---- requests
+    def start(self, method, url, headers, body, sink):
+        """Runs sink's calls on a worker. Returns the Exchange, whose cancel() the caller uses to stop the request,
+        or None if the bridge answered at once (a refusal), in which case sink already has the whole answer.
+        headers: (name, value) pairs or a dict. body: bytes or None."""
+        refused, prepared = self._prepare(method, url, headers, body)
         if refused:
             status, reason, hs, text = refused
             sink.head(status, reason, hs)
@@ -500,7 +463,7 @@ class Bridge:
             sink.finish(True)
             return None
         target, raw, lane = prepared
-        ex = _Streamed(self, method, target, raw, lane, is_document, sink)
+        ex = _Streamed(self, method, target, raw, lane, sink)
         if not lane.submit(ex):
             self.count('queue-full')
             status, reason, hs, text = _plain(503, 'Busy', b'too many requests')
@@ -512,7 +475,7 @@ class Bridge:
         return ex
 
     def has_key(self, headers):
-        """Did this come from the app's top frame's own script? Tells a shell whether a POST's body is worth reading at all."""
+        """Did this come from the window itself (engine_pipe.py)?"""
         return secrets.compare_digest(_lower(headers).get(KEY_HEADER, '').encode('utf-8', 'replace'), self.key.encode())
 
     # ---- PDFs, as pictures
@@ -553,87 +516,8 @@ class Bridge:
                 '.p img{display:block;width:100%;height:auto;background:#fff}'
                 '</style></head><body>' + ''.join(rows) + '</body></html>').encode()
 
-    def is_pdf_viewer(self, url):
-        """A browser loads a picture lazily only where scripting is on, even with no script to run, so this one page has it on: see viewer_csp.
-        A library address ending in .pdf is always this page or a plain refusal, because _answer_pdf replaces every answer with that type."""
-        target = self.target_of(url)
-        if target is None or PDF_PAGE.search(target):
-            return False
-        path = urllib.parse.unquote(target.split('?', 1)[0])
-        return path.lower().endswith('.pdf') and path.startswith(FILE_PREFIXES)
-
     def viewer_csp(self):
         return 'sandbox allow-scripts; ' + self.server.Handler.NO_CODE_CSP     # no script is allowed from anywhere, and the page keeps no origin of its own
-
-    # ---- for the shell: what may go where
-    def frame_url_ok(self, url):
-        """What a frame may show: library content, never the app or its API. Not data: or blob:, which a link in a saved page could
-        otherwise open in its own frame: the new document would not have that page's policy, and would run its scripts."""
-        if url in ('about:blank', 'about:srcdoc'):
-            return True
-        target = self.target_of(url)
-        if target is None:
-            return False
-        path = urllib.parse.unquote(target.split('?', 1)[0])
-        return path.startswith(FRAME_PREFIXES) and '/..' not in path and '\\' not in path
-
-    def top_url_ok(self, url):
-        """The only thing the window's top level may show is the app's own page, at any of its # routes, or its setup page."""
-        return url.split('#', 1)[0] in (self.origin, self.origin + '/', self.origin + '/ui/setup.html')
-
-    def new_window(self, url, from_top, gesture):
-        """Every new-window request is cancelled by the shell. This says what, if anything, happens instead:
-        ('inside', url)   navigate the one window there: an address on the app's own page
-        ('nothing', None)
-        from_top: the request came from the app's top frame. A frame, or a shell that cannot tell, passes False.
-        gesture: True for a real user gesture, False for none, None when the shell cannot tell.
-        A gesture the shell cannot tell apart is accepted only from the top frame, and saved pages cannot be the top frame.
-        A web address does nothing: this app never hands anything to a browser, and the UI shows such an address as text."""
-        if not from_top or gesture is False:
-            return 'nothing', None
-        if self.target_of(url) is not None:
-            route = self.inside_route(url)
-            return ('inside', self.origin + '/' + route) if route else ('nothing', None)
-        return 'nothing', None
-
-    def inside_route(self, url):
-        """The app's own route for a library address, for the UI's 'open in its own tab' and 'open the original file' links."""
-        target = self.target_of(url)
-        if target is None:
-            return None
-        frag = url.split('#', 1)[1] if '#' in url else ''
-        path = urllib.parse.unquote(target.split('?', 1)[0])
-        if path in ('/', '/index.html'):
-            return '#' + frag if frag.startswith('/') else ''
-        if path.startswith('/zim/'):
-            parts = [p for p in path.split('/')[2:] if p]
-            if not parts:
-                return None
-            return '#/wiki/' + '/'.join(urllib.parse.quote(p, safe='') for p in parts)
-        rec = self.server.catalog()['by_path'].get(path.lstrip('/'))
-        if not rec:
-            return None
-        rid = urllib.parse.quote(str(rec['id']), safe='')
-        if rec.get('kind') == 'video':
-            return f'#/watch/{rid}'
-        if rec.get('kind') == 'pdf':
-            m = re.search(r'(?:^|&)page=(\d+)', frag)
-            return f'#/read/{rid}?p={m.group(1) if m else 1}&view=pdf'
-        return f'#/read/{rid}'
-
-    def give_ticket(self, url):
-        """A navigation the app's own top frame started: its target may get a whole big answer, once, within TICKET_LIFE seconds."""
-        target = self.target_of(url)
-        if target is None:
-            return
-        with self.ticket_lock:
-            now = time.time()
-            self.tickets = {k: t for k, t in self.tickets.items() if now - t < TICKET_LIFE}
-            self.tickets[target] = now
-
-    def top_script(self):
-        """Install in the top frame only (WebKit's TOP_FRAME); in any other frame it returns at once."""
-        return TOP_SCRIPT.replace('__KEY__', self.key)
 
     def target_of(self, url):
         if url == self.origin:
@@ -642,11 +526,6 @@ class Bridge:
             return None
         target = url[len(self.origin):].split('#', 1)[0]
         return re.sub(r'[\x80-\U0010ffff]', lambda m: urllib.parse.quote(m.group()), target)
-
-    def stats(self):
-        return {'counts': dict(self.counts), 'lanes': {n: {'active': l.active, 'waiting': len(l.waiting), 'peak_active': l.peak_active, 'peak_waiting': l.peak_waiting,
-                                                           'done': l.done, 'threads': l.threads, 'peak_threads': l.peak_threads, 'used': l.budget.used, 'peak_bytes': l.budget.peak, 'cap': l.budget.cap}
-                                                       for n, l in self.lanes.items()}}
 
     def count(self, what):
         with self.count_lock:
@@ -658,7 +537,7 @@ class Bridge:
         self._log(kind='refused', why=why, status=status, url=url[:300])
         return _plain(status, reason, b'refused')
 
-    def _prepare(self, method, url, headers, body, is_document):
+    def _prepare(self, method, url, headers, body):
         target = self.target_of(url)
         if target is None:
             return self._refusal('host', 400, 'Bad Request', url), None
@@ -669,8 +548,6 @@ class Bridge:
         low = _lower(headers)
         path = target.split('?', 1)[0]
         origin = low.get('origin')
-        if path.startswith('/__bridge/'):
-            return self._refusal('no-such-route', 404, 'Not Found', url), None
         if method == 'POST':
             # WebKit sends no Origin on the app's own POST, and none on a sandboxed page's no-cors POST either, so Origin alone
             # cannot tell them apart. Nor can Content-Type: a no-cors POST of a Blob typed application/json arrives with that type.
@@ -706,14 +583,14 @@ class Bridge:
         if method != 'GET':
             return asked
         if not asked:
-            return f'bytes=0-{self.piece - 1}'
+            return f'bytes=0-{VIDEO_PIECE - 1}'
         m = ENGINE_RANGE.match(asked)
         if not m:
             return asked   # the engine answers 416
         start = int(m.group(1))
         end = int(m.group(2)) if m.group(2) else None
-        if end is None or end - start + 1 > self.piece:
-            end = start + self.piece - 1
+        if end is None or end - start + 1 > VIDEO_PIECE:
+            end = start + VIDEO_PIECE - 1
         return f'bytes={start}-{end}'
 
     def _grow_lanes(self):
@@ -723,11 +600,6 @@ class Bridge:
             self.waiting_now.clear()
             if any([lane.grow() for lane in self.lanes.values()]):
                 self.waiting_now.set()
-
-    def _take_ticket(self, target):
-        with self.ticket_lock:
-            t = self.tickets.pop(target, None)
-        return t is not None and time.time() - t < TICKET_LIFE
 
     def _log(self, **kw):
         if self.logger:

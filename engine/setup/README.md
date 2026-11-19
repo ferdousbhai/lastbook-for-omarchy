@@ -14,7 +14,7 @@ The contract is `docs/SETUP-API.md`. This package fills it in.
 ## How it runs
 
 - **Setup mode.** `app/main.py` finds no library. It opens the window on `SetupServer` through the bridge, with no socket. The page is `web/setup.html` at `/`. The job downloads into `<parent>/LastbookData.setup/downloads/` and unpacks into `.../unpack/LastbookData`. Then it writes `pending.json`. `finish` remembers the target in `settings.json` and relaunches with `execv`. On the next start, `api.startup()` makes the switch before the engine opens anything. After the engine starts, `api.opened()` marks the model checked (`llm_local.mark_checked`), records the old library and removes the work folder.
-- **Normal mode.** `server.py` hands `/api/setup/` to `api.handle()`. `main.py` configures a manage-mode `Setup` for that. The setup page is at `/ui/setup.html`, and `bridge.top_url_ok` allows it as a top page. An upgrade is staged the same way and switches on relaunch, so nothing is renamed while files are open. Adding only the AI moves the model into the open library and marks it checked at once.
+- **Normal mode.** `server.py` hands `/api/setup/` to `api.handle()`. `main.py` configures a manage-mode `Setup` for that. The setup page is at `/ui/setup.html`. An upgrade is staged the same way and switches on relaunch, so nothing is renamed while files are open. Adding only the AI moves the model into the open library and marks it checked at once.
 - Only this computer gets answers: the bridge, or loopback when running as `server.py`.
 
 ## Routes added beyond the contract table
