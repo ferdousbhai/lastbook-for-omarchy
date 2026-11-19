@@ -83,6 +83,8 @@ pub fn grid(max: u32, spacing: u32) -> gtk::FlowBox {
     g.set_max_children_per_line(max);
     g.set_row_spacing(spacing);
     g.set_column_spacing(spacing);
+    // A click is the card's own; on a single click the grid would activate the cell too and open the page twice.
+    g.set_activate_on_single_click(false);
     // A cell is activated whole, by a screen reader or by Enter on the cell itself: its card opens what it shows.
     g.connect_child_activated(|_, cell| {
         if let Some(card) = cell.child() {
