@@ -29,6 +29,19 @@ RECOMMEND_MARGIN_MAX = 20 * 10 ** 9
 MAX_BODY = 64 * 1024
 WORLD_ESTIMATE = 650 * 10 ** 6     # the world map to city level (zoom 8) and place search, before it is measured
 ACTIVE = ('waiting', 'downloading', 'verifying', 'unpacking', 'activating')
+UNPACK = {'pack': 'unpack', 'map': 'unpack-map', 'addresses': 'unpack-addresses'}     # where each kind unpacks, in the work folder
+
+
+def _item(id, kind, title, total, state='waiting'):
+    return {'id': id, 'kind': kind, 'title': title, 'state': state, 'bytes_done': 0, 'bytes_total': total, 'rate_bps': 0,
+            'eta_s': None, 'error': None}
+
+
+def _file_names(kind, entry):
+    """The file names a manifest entry is downloaded as: the model's one file, a pack's, map's or address index's zips."""
+    if not entry or kind not in ('model', *UNPACK):
+        return []
+    return [entry['file']] if kind == 'model' else [f['name'] for f in entry['files']]
 
 
 def _now():
@@ -176,7 +189,7 @@ class Setup:
         wanted |= {('osm', x) for x in osm}
         if {(i.get('kind'), i.get('id')) for i in items} != wanted:
             return None
-        names = ([f['name'] for f in pack['files']] if pack else []) + ([f['name'] for f in mp['files']] if mp else []) + ([f['name'] for f in addresses['files']] if addresses else []) + ([model['file']] if model else [])
+        names = [n for k, e in (('pack', pack), ('map', mp), ('addresses', addresses), ('model', model)) for n in _file_names(k, e)]
         sources = {n: str(v) for n, v in (plan.get('sources') or {}).items()
                    if n in names and isinstance(v, str) and Path(v).name == n and Path(v).is_file()}
         switch = bool(plan.get('switch')) and pack is not None
@@ -198,15 +211,10 @@ class Setup:
         """(bytes done, bytes total) for an item found mid-run at startup, from what is on disk for the step it was in."""
         if it['kind'] == 'osm':
             return 0, it['bytes_total']        # a map cut starts over: its half-made file is set aside on the next run
-        if was == 'unpacking' and it['kind'] == 'map' and plan.get('map'):
-            total = plan['map']['installed_bytes']
-            return min(_tree_size(Path(plan['work']) / 'unpack-map'), total), total
-        if was == 'unpacking' and it['kind'] == 'addresses' and plan.get('addresses'):
-            total = plan['addresses']['installed_bytes']
-            return min(_tree_size(Path(plan['work']) / 'unpack-addresses'), total), total
-        if was == 'unpacking' and plan.get('pack'):
-            total = plan['pack']['installed_bytes']
-            return min(_tree_size(Path(plan['work']) / 'unpack'), total), total
+        kind = it['kind'] if it['kind'] in ('map', 'addresses') and plan.get(it['kind']) else 'pack'
+        if was == 'unpacking' and plan.get(kind):
+            total = plan[kind]['installed_bytes']
+            return min(_tree_size(Path(plan['work']) / UNPACK[kind]), total), total
         if it.get('source') == 'found':
             return it['bytes_total'], it['bytes_total']     # nothing to download: the file is already on this computer
         return self._on_disk(plan, it), it['bytes_total']
@@ -214,17 +222,10 @@ class Setup:
     @staticmethod
     def _on_disk(plan, it):
         """Bytes of this item already downloaded, from the files themselves."""
-        if it['kind'] == 'pack' and plan.get('pack'):
-            plan_files = plan['pack']['files']
-        elif it['kind'] == 'map' and plan.get('map'):
-            plan_files = plan['map']['files']
-        elif it['kind'] == 'addresses' and plan.get('addresses'):
-            plan_files = plan['addresses']['files']
-        else:
-            plan_files = [{'name': plan['model']['file']}] if plan.get('model') else []
+        kind = it['kind'] if it['kind'] in UNPACK and plan.get(it['kind']) else 'model'
         n = 0
-        for f in plan_files:
-            for p in (Path(plan['work']) / 'downloads' / f['name'], Path(plan['work']) / 'downloads' / (f['name'] + '.part')):
+        for name in _file_names(kind, plan.get(kind)):
+            for p in (Path(plan['work']) / 'downloads' / name, Path(plan['work']) / 'downloads' / (name + '.part')):
                 try:
                     n += p.stat().st_size
                 except OSError:
@@ -368,40 +369,29 @@ class Setup:
 
     def recommend(self, hw):
         available = [p for p in self.manifest.current['packs'] if p['available']]
-        packs = [p for p in available if p['id'] == 'small']
+        small = self.manifest.pack('small')
         parent = self.current.parent if self.current else self.default_parent
         free, total = hardware.disk_of(parent)
         model = self.manifest.model()
         need = {p['id']: install.need_bytes(p, None) for p in available}
         map_need = {x['id']: _map_need(x, ()) for x in self.manifest.current.get('maps', []) if x['available']}
-        if not packs:
+        if not small or not small['available']:
             return {'pack': None, 'ai': False, 'folder': str(parent), 'need_bytes': need, 'why': 'No library is ready to download yet.'}
         margin = _margin(total)
-        choice, folder, elsewhere = None, parent, None
-        for p in packs:        # the disk that holds the home folder (or the open library) whenever anything fits there
-            if free >= need[p['id']] + margin:
-                choice = p
-                break
-        if not choice:         # only then another disk for the default Small library
-            for p in packs:
-                for d in hw['disks']:
-                    if not _same_disk(d['path'], parent) and d['free_bytes'] >= need[p['id']] + _margin(d['total_bytes']):
-                        choice, folder, elsewhere = p, Path(d['path']), d
-                        break
-                if choice:
-                    break
-        if not choice:
-            small = packs[-1]
-            return {'pack': None, 'ai': False, 'folder': str(parent), 'need_bytes': need,
-                    'why': f'The smallest library, {small["title"]}, needs {_gb(need[small["id"]])} free, and this computer has {_gb(free)} free.'}
-        if elsewhere:
-            home_free = free
+        folder, elsewhere = parent, None
+        if free < need['small'] + margin:   # the disk that holds the home folder (or the open library) whenever Small fits there; only then another
+            elsewhere = next((d for d in hw['disks'] if not _same_disk(d['path'], parent)
+                              and d['free_bytes'] >= need['small'] + _margin(d['total_bytes'])), None)
+            if not elsewhere:
+                return {'pack': None, 'ai': False, 'folder': str(parent), 'need_bytes': need,
+                        'why': f'The smallest library, {small["title"]}, needs {_gb(need["small"])} free, and this computer has {_gb(free)} free.'}
+            folder, home_free = Path(elsewhere['path']), free
             free, margin = elsewhere['free_bytes'], _margin(elsewhere['total_bytes'])
-        left = free - need[choice['id']]
+        left = free - need['small']
         ai = bool(model and hw['ai']['fits'] and left >= model['size'] + margin)
         if elsewhere:
             name = Path(elsewhere['path']).name or elsewhere['path']
-            why = (f'This computer’s own disk has {_gb(home_free)} free, not enough for any library, so {choice["title"]} goes on {name}. '
+            why = (f'This computer’s own disk has {_gb(home_free)} free, not enough for any library, so {small["title"]} goes on {name}. '
                    'Keep that disk connected: Lastbook reads the library from it.')
         else:
             why = 'Small is selected to get started. You can choose a larger library.'
@@ -409,7 +399,7 @@ class Setup:
             why += ' The local AI fits this computer’s memory, but not on the disk as well.'
         elif model and not hw['ai']['fits']:
             why += ' ' + hw['ai']['why']
-        return {'pack': choice['id'], 'ai': ai, 'folder': str(folder), 'need_bytes': need, 'map_need_bytes': map_need, 'address_need_bytes': {x['id']: _map_need(x, ()) for x in self.manifest.current.get('address_indexes', []) if x['available']}, 'why': why}
+        return {'pack': 'small', 'ai': ai, 'folder': str(folder), 'need_bytes': need, 'map_need_bytes': map_need, 'address_need_bytes': {x['id']: _map_need(x, ()) for x in self.manifest.current.get('address_indexes', []) if x['available']}, 'why': why}
 
     def state(self):
         self.manifest.fetch_once()
@@ -500,7 +490,7 @@ class Setup:
             for f in self.found():
                 if f.get('size_ok') and f['name'] not in srcs and f['kind'] in ('pack', 'model', 'map', 'addresses'):
                     srcs[f['name']] = f['path']
-            names = ([f['name'] for f in pack['files']] if pack else []) + ([model['file']] if model else []) + ([f['name'] for f in mp['files']] if mp else []) + ([f['name'] for f in addresses['files']] if addresses else [])
+            names = [n for k, e in (('pack', pack), ('model', model), ('map', mp), ('addresses', addresses)) for n in _file_names(k, e)]
             have = set(srcs)
             need = install.need_bytes(pack, model, have) + _map_need(mp, have) + _map_need(addresses, have) + (WORLD_ESTIMATE if 'world' in osm else 0)
             preserve_map = bool(pack and cur.get('pack') == pack['id'] and target == self.current and not mp and cur.get('map') not in (None, 'base'))
@@ -520,33 +510,31 @@ class Setup:
                         'code': 'no_space', 'need_bytes': need, 'free_bytes': free}
             items = []
             if pack:
-                items.append({'id': pack['id'], 'kind': 'pack', 'title': pack['title'], 'state': 'waiting', 'bytes_done': 0,
-                              'bytes_total': pack['download_bytes'], 'rate_bps': 0, 'eta_s': None, 'error': None})
+                items.append(_item(pack['id'], 'pack', pack['title'], pack['download_bytes']))
             if mp:                 # after the pack: with a pack, the map replaces the pack's own map set in the staged library
-                items.append({'id': mp['id'], 'kind': 'map', 'title': mp['title'], 'state': 'waiting', 'bytes_done': 0,
-                              'bytes_total': mp['download_bytes'], 'rate_bps': 0, 'eta_s': None, 'error': None})
+                items.append(_item(mp['id'], 'map', mp['title'], mp['download_bytes']))
             if addresses:
-                items.append({'id': addresses['id'], 'kind': 'addresses', 'title': addresses['title'] + ' address search', 'state': 'waiting', 'bytes_done': 0,
-                              'bytes_total': addresses['download_bytes'], 'rate_bps': 0, 'eta_s': None, 'error': None})
+                items.append(_item(addresses['id'], 'addresses', addresses['title'] + ' address search', addresses['download_bytes']))
             for x in osm:          # sizes are known once each cut is measured, when its turn comes
                 title = {'world': 'World map', 'places': 'Place search'}.get(x) or maps.region(x)['name'] + ' streets'
-                items.append({'id': x, 'kind': 'osm', 'title': title, 'state': 'waiting', 'bytes_done': 0,
-                              'bytes_total': WORLD_ESTIMATE if x == 'world' else 0, 'rate_bps': 0, 'eta_s': None, 'error': None})
+                items.append(_item(x, 'osm', title, WORLD_ESTIMATE if x == 'world' else 0))
             if model:
-                items.append({'id': model['id'], 'kind': 'model', 'title': model['title'], 'state': 'waiting', 'bytes_done': 0,
-                              'bytes_total': model['size'], 'rate_bps': 0, 'eta_s': None, 'error': None})
-            self.job = {'id': uuid.uuid4().hex[:12], 'state': 'waiting', 'items': items, 'error': None, 'started': _now(),
-                        'folder': str(target),
-                        'plan': {'pack': pack, 'model': model, 'map': mp, 'addresses': addresses, 'parent': str(parent), 'target': str(target), 'work': str(work),
-                                 'sources': {k: v for k, v in srcs.items() if k in names}, 'explicit': explicit,
-                                 'retried': {}, 'switch': bool(pack), 'osm': osm}}
-            s = self._settings()
-            s['work'] = str(work)
-            self._save_settings(s)
-            _tag_sources(self.job)
-            self._save_job()
-            self._run()
-            return self.public_job()
+                items.append(_item(model['id'], 'model', model['title'], model['size']))
+            return self._begin(items, target, work, {
+                'pack': pack, 'model': model, 'map': mp, 'addresses': addresses, 'parent': str(parent), 'target': str(target), 'work': str(work),
+                'sources': {k: v for k, v in srcs.items() if k in names}, 'explicit': explicit, 'retried': {}, 'switch': bool(pack), 'osm': osm})
+
+    def _begin(self, items, target, work, plan, **extra):
+        """The new job, saved and started (the caller holds the lock)."""
+        self.job = {'id': uuid.uuid4().hex[:12], 'state': 'waiting', 'items': items, 'error': None, 'started': _now(), 'folder': str(target),
+                    **extra, 'plan': plan}
+        s = self._settings()
+        s['work'] = str(work)
+        self._save_settings(s)
+        _tag_sources(self.job)
+        self._save_job()
+        self._run()
+        return self.public_job()
 
     def _start_repair(self, ai):
         """Re-check the open library's files (pack-manifest.tsv) and the model's SHA-256. What is wrong is fetched again: the pack is
@@ -564,24 +552,14 @@ class Setup:
             parent, target = self.current.parent, self.current
             work = _work_for(target)
             srcs = {f['name']: f['path'] for f in self.found() if f.get('size_ok') and f['kind'] in ('pack', 'model')}
-            items = [{'id': pack['id'], 'kind': 'pack', 'title': pack['title'], 'state': 'waiting', 'bytes_done': 0,
-                      'bytes_total': pack['installed_bytes'], 'rate_bps': 0, 'eta_s': None, 'error': None}]
+            items = [_item(pack['id'], 'pack', pack['title'], pack['installed_bytes'])]
             if model:
-                items.append({'id': model['id'], 'kind': 'model', 'title': model['title'], 'state': 'waiting', 'bytes_done': 0,
-                              'bytes_total': model['size'], 'rate_bps': 0, 'eta_s': None, 'error': None})
-            names = [f['name'] for f in pack['files']] + ([model['file']] if model else [])
-            self.job = {'id': uuid.uuid4().hex[:12], 'state': 'waiting', 'items': items, 'error': None, 'started': _now(), 'folder': str(target),
-                        'repair': True,
-                        'plan': {'pack': pack, 'model': model, 'parent': str(parent), 'target': str(target), 'work': str(work),
-                                 'sources': {k: v for k, v in srcs.items() if k in names}, 'explicit': False, 'retried': {},
-                                 'switch': True, 'repair': True}}
-            s = self._settings()
-            s['work'] = str(work)
-            self._save_settings(s)
-            _tag_sources(self.job)
-            self._save_job()
-            self._run()
-            return self.public_job()
+                items.append(_item(model['id'], 'model', model['title'], model['size']))
+            names = _file_names('pack', pack) + _file_names('model', model)
+            return self._begin(items, target, work, {
+                'pack': pack, 'model': model, 'parent': str(parent), 'target': str(target), 'work': str(work),
+                'sources': {k: v for k, v in srcs.items() if k in names}, 'explicit': False, 'retried': {}, 'switch': True, 'repair': True},
+                repair=True)
 
     def _check_library(self, it, lib, control):
         """Files of the open library that are missing or differ from its pack-manifest.tsv (path, bytes, sha256)."""
@@ -677,7 +655,7 @@ class Setup:
     def _clean(self, job):
         """What the job made in its work folder goes; the person's own files and any library stay."""
         work = Path(job['plan']['work'])
-        for sub in ('downloads', 'unpack', 'unpack-map', 'unpack-addresses'):
+        for sub in ('downloads', *UNPACK.values()):
             shutil.rmtree(work / sub, ignore_errors=True)
 
     def use(self, path):
@@ -701,48 +679,37 @@ class Setup:
                 if self.job and self.job['state'] in ACTIVE:
                     return {'error': 'A download is under way. Pause or cancel it first.', 'code': 'busy'}
                 self.job = {'id': uuid.uuid4().hex[:12], 'state': 'done', 'error': None, 'started': _now(), 'folder': str(lib),
-                            'items': [{'id': 'library', 'kind': 'pack', 'title': lib.name, 'state': 'done', 'bytes_done': 0, 'bytes_total': 0,
-                                       'rate_bps': 0, 'eta_s': None, 'error': None}],
+                            'items': [_item('library', 'pack', lib.name, 0, state='done')],
                             'plan': {'use_library': str(lib), 'work': str(_work_for(lib)), 'target': str(lib)}}
                 return self.public_job()
-        name = p.name
-        for pk in self.manifest.current['packs']:
-            for f in pk['files']:
-                if f['name'] == name:
-                    if p.stat().st_size != f['size']:
-                        return {'error': f'That file is {_gb(p.stat().st_size)}, not the {_gb(f["size"])} of the published {name}. The download may not have finished.', 'code': 'size'}
-                    if not pk['available']:
-                        return {'error': 'That library is not available in this version.', 'code': 'unavailable'}
-                    self.sources[name] = str(p)
-                    return self.start(pk['id'], False, None, {name: str(p)}, explicit=True)
-        for x in self.manifest.current.get('maps', []):
-            for f in x['files']:
-                if f['name'] == name:
-                    if p.stat().st_size != f['size']:
-                        return {'error': f'That file is {_gb(p.stat().st_size)}, not the {_gb(f["size"])} of the published {name}. The download may not have finished.', 'code': 'size'}
-                    self.sources[name] = str(p)
-                    if self.mode == 'manage':
-                        return self.start(None, False, None, {name: str(p)}, explicit=True, map_id=x['id'])
-                    return self.public_job() or {'job': None, 'noted': True}
-        for entry in self.manifest.current.get('address_indexes', []):
-            for file in entry['files']:
-                if file['name'] != name:
-                    continue
-                if p.stat().st_size != file['size']:
-                    return {'error': 'The address index download is incomplete.', 'code': 'size'}
-                self.sources[name] = str(p)
-                if self.mode == 'manage':
-                    return self.start(sources={name: str(p)}, explicit=True, address_id=entry['id'])
-                return self.public_job() or {'job': None, 'noted': True}
+        name, known = p.name, {}        # file name -> (kind, entry, size); a pack's name wins, then a map's, an address index's, the model's
+        for kind, key in (('pack', 'packs'), ('map', 'maps'), ('addresses', 'address_indexes')):
+            for entry in self.manifest.current.get(key, []):
+                for f in entry['files']:
+                    known.setdefault(f['name'], (kind, entry, f['size']))
         m = self.manifest.model()
-        if m and name == m['file']:
-            if p.stat().st_size != m['size']:
-                return {'error': f'That file is {_gb(p.stat().st_size)}, not the {_gb(m["size"])} of the model. The download may not have finished.', 'code': 'size'}
-            self.sources[name] = str(p)
-            if self.mode == 'manage':
-                return self.start(None, True, None, {name: str(p)}, explicit=True)
+        if m:
+            known.setdefault(m['file'], ('model', m, m['size']))
+        if name not in known:
+            return {'error': 'That is not a file Lastbook knows. Choose a Lastbook library zip or the model file.', 'code': 'unknown'}
+        kind, entry, size = known[name]
+        if p.stat().st_size != size:
+            if kind == 'addresses':
+                return {'error': 'The address index download is incomplete.', 'code': 'size'}
+            what = 'model' if kind == 'model' else f'published {name}'
+            return {'error': f'That file is {_gb(p.stat().st_size)}, not the {_gb(size)} of the {what}. The download may not have finished.', 'code': 'size'}
+        if kind == 'pack' and not entry['available']:
+            return {'error': 'That library is not available in this version.', 'code': 'unavailable'}
+        self.sources[name] = str(p)
+        if kind == 'pack':
+            return self.start(entry['id'], False, None, {name: str(p)}, explicit=True)
+        if self.mode != 'manage':
             return self.public_job() or {'job': None, 'noted': True}
-        return {'error': 'That is not a file Lastbook knows. Choose a Lastbook library zip or the model file.', 'code': 'unknown'}
+        if kind == 'map':
+            return self.start(None, False, None, {name: str(p)}, explicit=True, map_id=entry['id'])
+        if kind == 'addresses':
+            return self.start(sources={name: str(p)}, explicit=True, address_id=entry['id'])
+        return self.start(None, True, None, {name: str(p)}, explicit=True)
 
     def finish(self):
         with self.lock:
@@ -834,16 +801,8 @@ class Setup:
             for it in job['items']:
                 if it['state'] == 'done':
                     continue
-                if it['kind'] == 'pack':
-                    self._do_pack(it, plan, work, control)
-                elif it['kind'] == 'map':
-                    self._do_map(it, plan, work, control)
-                elif it['kind'] == 'addresses':
-                    self._do_addresses(it, plan, work, control)
-                elif it['kind'] == 'osm':
-                    self._do_osm(it, plan, work, control)
-                else:
-                    self._do_model(it, plan, work, control)
+                do = {'pack': self._do_pack, 'map': self._do_map, 'addresses': self._do_addresses, 'osm': self._do_osm}
+                do.get(it['kind'], self._do_model)(it, plan, work, control)
                 with self.lock:
                     it['state'], it['rate_bps'], it['eta_s'] = 'done', 0, None
                     self._save_job()
@@ -917,6 +876,14 @@ class Setup:
                 plan['retried'][name] = tries + 1
                 print(f'setup: {name} failed its checksum; downloading it once more', flush=True)
 
+    def _get_files(self, it, files, plan, work, control):
+        """Every file of one item, each counted after the ones before it: [(path, ours)], ours when it is a download to delete."""
+        got, offset = [], 0
+        for f in files:
+            got.append(self._get_file(it, f, plan, work, control, offset))
+            offset += f['size']
+        return got
+
     def _do_pack(self, it, plan, work, control):
         pack = plan['pack']
         if plan.get('repair') and 'damaged' not in plan:
@@ -933,11 +900,7 @@ class Setup:
             with self.lock:
                 it['bytes_total'], it['bytes_done'] = pack['download_bytes'], 0
         staged = work / 'unpack'
-        got, offset = [], 0
-        for f in pack['files']:
-            path, ours = self._get_file(it, f, plan, work, control, offset)
-            got.append((path, ours))
-            offset += f['size']
+        got = self._get_files(it, pack['files'], plan, work, control)
         tracker = _Item(it)
         self._set(it, 'unpacking', bytes_done=0, bytes_total=pack['installed_bytes'])
         total = sum(install.check_zip(path, pack['installed_bytes'])[1] for path, _ in got)   # every member checked before any is written
@@ -964,11 +927,7 @@ class Setup:
         """A state map: download, check, unpack (map files only) into unpack-map/. With a pack, it replaces the staged library's own
         map set at once; on its own it is staged and switched in when the app restarts (install._apply_map)."""
         mp = plan['map']
-        got, offset = [], 0
-        for f in mp['files']:
-            path, ours = self._get_file(it, f, plan, work, control, offset)
-            got.append((path, ours))
-            offset += f['size']
+        got = self._get_files(it, mp['files'], plan, work, control)
         tracker = _Item(it)
         self._set(it, 'unpacking', bytes_done=0, bytes_total=mp['installed_bytes'])
         staged = work / 'unpack-map'
@@ -1000,12 +959,7 @@ class Setup:
             if not path.is_file() or path.stat().st_size != entry['installed_bytes']:
                 raise install.Refused('unpack', 'The address index is missing or the wrong size.')
 
-        got = []
-        offset = 0
-        for file in entry['files']:
-            path, ours = self._get_file(it, file, plan, work, control, offset)
-            got.append((path, ours))
-            offset += file['size']
+        got = self._get_files(it, entry['files'], plan, work, control)
         for path, _ in got:
             install.check_zip(path, entry['installed_bytes'], allowed)
         self._set(it, 'unpacking', bytes_done=0, bytes_total=entry['installed_bytes'])
@@ -1099,16 +1053,7 @@ def _tag_sources(job):
     """Each item's source: 'found' when all its files are already on this computer (plan.sources), else 'download'."""
     plan = job['plan']
     for it in job['items']:
-        if it['kind'] == 'pack' and plan.get('pack'):
-            names = [f['name'] for f in plan['pack']['files']]
-        elif it['kind'] == 'map' and plan.get('map'):
-            names = [f['name'] for f in plan['map']['files']]
-        elif it['kind'] == 'addresses' and plan.get('addresses'):
-            names = [f['name'] for f in plan['addresses']['files']]
-        elif it['kind'] == 'model' and plan.get('model'):
-            names = [plan['model']['file']]
-        else:
-            names = []
+        names = _file_names(it['kind'], plan.get(it['kind']))
         it['source'] = 'found' if names and all(n in plan['sources'] for n in names) else 'download'
 
 
