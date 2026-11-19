@@ -110,28 +110,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
   url=urllib.parse.urlsplit(self.path)
   if url.path=='/api/health':
    self.send_data(b'{"service":"survival-library","offline":true}');return
-  if url.path=='/api/collection-search':
-   try:
-    from libzim.search import Searcher,Query
-    params=urllib.parse.parse_qs(url.query);q=params.get('q',[''])[0];hits=[];tried=failed=0
-    for path in (ROOT/'collections').glob('*.zim'):
-     try:zim_file(path.name)
-     except ValueError:continue
-     tried+=1
-     try:
-      arc=open_zim(path.name)
-      if not arc.has_fulltext_index:continue
-      result=Searcher(arc).search(Query().set_query(q))
-      for p in result.getResults(0,8):
-       entry=arc.get_entry_by_path(p)
-       hits.append({'title':entry.title,'collection':path.stem,'path':'zim/'+urllib.parse.quote(path.name)+'/'+urllib.parse.quote(p,safe='/')})
-     except Exception as e:  # one damaged file must not cost the answers from the others
-      failed+=1;print(f'collection search skipped {path.name}: {type(e).__name__}',flush=True)
-    if tried and failed==tried:raise ValueError('no collection could be searched')
-    self.send_data(json.dumps(hits).encode())
-   except CLIENT_GONE:pass
-   except Exception:self.send_data(json.dumps({'error':'Encyclopedia search failed.'}).encode(),status=500)
-   return
   if url.path.startswith('/zim/'):
    try:
     parts=url.path.split('/',3);name=urllib.parse.unquote(parts[2]);entrypath=urllib.parse.unquote(parts[3]) if len(parts)>3 else ''

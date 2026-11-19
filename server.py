@@ -994,7 +994,7 @@ class Handler(library.Handler):
     # The only parts of the library the window gets: no worker state, logs, tools, sign-in settings or reports.
     SERVED_PREFIXES = ('/api/', '/zim/', '/documents/', '/pages/', '/videos/', '/videos-external/', '/transcripts/', '/metadata/videos/', '/courses/', '/collections/', '/assets/')
     SERVED_ONLY = True  # engine/library.py: a file must really sit in one of these folders, whatever links lead there
-    LIBRARY_ROUTES = ('/api/health', '/api/collection-search')  # answered in engine/library.py
+    LIBRARY_ROUTES = ('/api/health',)  # answered in engine/library.py
     LIBRARY_PREFIXES = tuple(p for p in SERVED_PREFIXES if p not in ('/api/', '/zim/'))
     # What a browser runs scripts in when it is opened directly. An <img> never runs them and shows it as before.
     ACTIVE_SUFFIXES = ('', '.html', '.htm', '.shtml', '.xhtml', '.xht', '.svg', '.svgz', '.xml', '.xsl', '.xslt', '.rdf', '.mht', '.mhtml')

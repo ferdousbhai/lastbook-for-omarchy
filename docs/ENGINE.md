@@ -27,7 +27,6 @@ the engine starts in setup and answers `/api/setup/*` only ([SETUP-API.md](SETUP
 | `/api/transcript/<video id>` | Timed transcript cues |
 | `/api/videos`, `/api/videos/<row>?q=` | The Videos screen's rows; one row, or a search of all |
 | `/api/shelves`, `/api/shelf/<id>` | The library by plain-language shelf |
-| `/api/collection-search?q=` | Encyclopedia articles, from each ZIM file's own full-text index |
 | `/api/places?q=` | Place search: addresses, ZIP codes, towns and named places (US data from an upstream pack), and the world's countries, regions and towns (GeoNames, built in setup) |
 | `/api/library`, `/api/assistant/status` | What this library holds; the state of the model and of the search index |
 | `POST /api/chat` | One assistant turn, streamed as server-sent events |
