@@ -12,7 +12,7 @@ use gtk::{glib, prelude::*};
 use serde_json::Value;
 
 use crate::{
-    cards::{activate, card, clear, clock, route_of, section},
+    cards::{self, activate, card, clear, clock, column, label, route_of, section},
     ui::{App, Route},
 };
 
@@ -28,20 +28,10 @@ pub struct Guides {
     waiting: RefCell<Option<String>>,
 }
 
-fn column() -> (gtk::ScrolledWindow, gtk::Box) {
-    let b = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    b.set_margin_top(28);
-    b.set_margin_bottom(28);
-    b.set_margin_start(32);
-    b.set_margin_end(32);
-    let s = gtk::ScrolledWindow::builder().child(&b).vexpand(true).hscrollbar_policy(gtk::PolicyType::Never).build();
-    (s, b)
-}
-
 impl Guides {
     pub fn build(app: &Rc<App>) -> Rc<Self> {
-        let (list_scroll, list) = column();
-        let (page_scroll, page) = column();
+        let (list_scroll, list) = column(12);
+        let (page_scroll, page) = column(12);
         let g = Rc::new(Self {
             list_root: list_scroll.upcast(),
             page_root: page_scroll.clone().upcast(),
@@ -82,13 +72,7 @@ impl Guides {
                 continue;
             }
             self.list.append(&section(heading));
-            let grid = gtk::FlowBox::new();
-            grid.set_selection_mode(gtk::SelectionMode::None);
-            grid.set_homogeneous(true);
-            grid.set_min_children_per_line(2);
-            grid.set_max_children_per_line(3);
-            grid.set_row_spacing(8);
-            grid.set_column_spacing(8);
+            let grid = cards::grid(3, 8);
             for t in topics {
                 let c = card(t["title"].as_str().unwrap_or_default(), &glib::markup_escape_text(t["short"].as_str().unwrap_or_default()), "", None);
                 c.add_css_class("guide-card");
@@ -107,14 +91,6 @@ impl Guides {
         }
         let t = self.topics.borrow().iter().find(|t| t["id"] == id).cloned()?;
         let title = t["title"].as_str().unwrap_or_default().to_owned();
-        let h = gtk::Label::new(Some(&title));
-        h.add_css_class("page-title");
-        h.set_xalign(0.0);
-        h.set_wrap(true);
-        let intro = gtk::Label::new(t["intro"].as_str());
-        intro.add_css_class("dim");
-        intro.set_wrap(true);
-        intro.set_xalign(0.0);
         let ask = gtk::Button::with_label("Ask about this guide");
         ask.add_css_class("chip");
         ask.set_halign(gtk::Align::Start);
@@ -125,8 +101,8 @@ impl Guides {
                 app.navigate(Route::Chat { id: None, about: Some(about.clone()) });
             }
         });
-        self.page.append(&h);
-        self.page.append(&intro);
+        self.page.append(&label(&title, "page-title"));
+        self.page.append(&label(t["intro"].as_str().unwrap_or_default(), "dim"));
         self.page.append(&ask);
 
         if let Some(choices) = t["choices"].as_array().filter(|c| !c.is_empty()) {
@@ -135,17 +111,9 @@ impl Guides {
                 let exp = gtk::Expander::new(None);
                 exp.add_css_class("choice");
                 let head = gtk::Box::new(gtk::Orientation::Vertical, 2);
-                let l = gtk::Label::new(c["label"].as_str());
-                l.add_css_class("result-title");
-                l.set_xalign(0.0);
-                l.set_wrap(true);
-                head.append(&l);
+                head.append(&label(c["label"].as_str().unwrap_or_default(), "result-title"));
                 if let Some(hint) = c["hint"].as_str() {
-                    let hl = gtk::Label::new(Some(hint));
-                    hl.add_css_class("meta");
-                    hl.set_xalign(0.0);
-                    hl.set_wrap(true);
-                    head.append(&hl);
+                    head.append(&label(hint, "meta"));
                 }
                 exp.set_label_widget(Some(&head));
                 let items = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -204,11 +172,7 @@ impl Guides {
                 l.set_xalign(0.0);
                 self.page.append(&l);
                 if let Some(goal) = step["goal"].as_str() {
-                    let g = gtk::Label::new(Some(goal));
-                    g.add_css_class("dim");
-                    g.set_xalign(0.0);
-                    g.set_wrap(true);
-                    self.page.append(&g);
+                    self.page.append(&label(goal, "dim"));
                 }
                 for r in step["read"].as_array().into_iter().flatten() {
                     self.page.append(&self.item(r));

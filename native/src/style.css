@@ -20,9 +20,8 @@ window.csd.tiled-bottom, window.csd.tiled-left {
 }
 
 button, entry, tooltip { border-radius: 5px; }
-popover > contents { border-radius: 9px; }
 
-button:focus-visible, entry:focus-visible, row:focus-visible, flowboxchild:focus-visible {
+button:focus-visible, entry:focus-visible, row:focus-visible {
   outline: 2px solid @lb_accent;
   outline-offset: -2px;
 }
@@ -57,7 +56,7 @@ button.header-action {
   transition: transform 160ms ease-out, background 160ms ease-out;
 }
 
-button.header-action:hover, button.header-action.active { background: alpha(@lb_accent, 0.15); }
+button.header-action:hover { background: alpha(@lb_accent, 0.15); }
 button.header-action:active { background: alpha(@lb_accent, 0.22); transform: scale(0.97); }
 button.header-action:disabled { color: alpha(@lb_text, 0.35); background: transparent; }
 button.header-action image { -gtk-icon-size: 16px; }
@@ -126,7 +125,7 @@ button.chip {
   transition: background 160ms ease-out;
 }
 button.chip:hover { background: alpha(@lb_accent, 0.15); }
-button.chip:checked, button.chip.active { background: alpha(@lb_accent, 0.18); border-color: alpha(@lb_accent, 0.6); }
+button.chip:checked { background: alpha(@lb_accent, 0.18); border-color: alpha(@lb_accent, 0.6); }
 
 button.primary {
   background: alpha(@lb_accent, 0.18);
@@ -166,7 +165,7 @@ button.primary:hover { background: alpha(@lb_accent, 0.26); }
   transition: background-color 160ms ease-out, border-color 160ms ease-out;
 }
 .result:hover { background: alpha(@lb_text, 0.04); border-color: alpha(@lb_border, 0.8); }
-.result:selected, .result:focus-visible { background: alpha(@lb_accent, 0.12); border-color: alpha(@lb_accent, 0.6); }
+.result:focus-visible { background: alpha(@lb_accent, 0.12); border-color: alpha(@lb_accent, 0.6); }
 .result .result-title { font-weight: 650; }
 .result .snippet { color: @lb_text; }
 
@@ -182,7 +181,6 @@ button.primary:hover { background: alpha(@lb_accent, 0.26); }
   border-bottom: 1px solid alpha(@lb_border, 0.6);
   padding: 4px 10px;
 }
-.reader-bar > box { border-spacing: 6px; }
 .reader-canvas { background: @lb_bg; }
 .paper {
   background: #ffffff;
@@ -214,7 +212,6 @@ spinner { color: @lb_accent; }
   border-right: 1px solid alpha(@lb_border, 0.6);
 }
 .chat-list { background: transparent; padding: 0 5px 5px 5px; }
-.chat-list .sidebar-row { padding: 6px 8px; }
 
 .question {
   background: alpha(@lb_accent, 0.14);
@@ -282,7 +279,6 @@ expander-widget.choice > box > box { padding-left: 12px; }
   border-radius: 6px;
   padding: 10px 12px;
 }
-image.danger { color: @lb_danger; }
 
 /* ------------------------------------------------------------------------------------------------------- videos -- */
 .video-card { padding: 4px; border-radius: 6px; transition: background-color 160ms ease-out; }
@@ -322,7 +318,7 @@ dropdown > button {
   border-radius: 5px;
   padding: 4px 8px;
 }
-popover > contents { background: @lb_surface; border: 1px solid alpha(@lb_border, 0.6); color: @lb_text; padding: 4px; }
+popover > contents { background: @lb_surface; border: 1px solid alpha(@lb_border, 0.6); border-radius: 9px; color: @lb_text; padding: 4px; }
 popover listview, popover scrolledwindow, popover viewport { background: transparent; color: @lb_text; }
 popover listview > row { padding: 5px 8px; border-radius: 5px; }
 popover listview > row:selected, popover listview > row:hover { background: alpha(@lb_accent, 0.18); }

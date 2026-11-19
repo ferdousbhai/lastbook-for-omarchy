@@ -43,6 +43,57 @@ pub fn card(title: &str, snippet_markup: &str, meta: &str, trust: Option<&str>) 
     card
 }
 
+/// A page's content: a padded column that scrolls. Returns (the scroller, the column).
+pub fn column(spacing: i32) -> (gtk::ScrolledWindow, gtk::Box) {
+    let b = gtk::Box::new(gtk::Orientation::Vertical, spacing);
+    b.set_margin_top(28);
+    b.set_margin_bottom(28);
+    b.set_margin_start(32);
+    b.set_margin_end(32);
+    let s = gtk::ScrolledWindow::builder().child(&b).vexpand(true).hscrollbar_policy(gtk::PolicyType::Never).build();
+    (s, b)
+}
+
+/// A left-aligned label that wraps.
+pub fn label(text: &str, class: &str) -> gtk::Label {
+    let l = gtk::Label::new(Some(text));
+    l.add_css_class(class);
+    l.set_xalign(0.0);
+    l.set_wrap(true);
+    l
+}
+
+/// A grid of equal cards, two to `max` a row.
+pub fn grid(max: u32, spacing: u32) -> gtk::FlowBox {
+    let g = gtk::FlowBox::new();
+    g.set_selection_mode(gtk::SelectionMode::None);
+    g.set_homogeneous(true);
+    g.set_min_children_per_line(2);
+    g.set_max_children_per_line(max);
+    g.set_row_spacing(spacing);
+    g.set_column_spacing(spacing);
+    g
+}
+
+/// A borderless icon button with a tooltip, as in the header bar.
+pub fn icon_button(icon: &str, tip: &str) -> gtk::Button {
+    let b = gtk::Button::from_icon_name(icon);
+    b.add_css_class("header-action");
+    b.set_tooltip_text(Some(tip));
+    b
+}
+
+/// An encyclopedia's name, from its ZIM file's name.
+pub fn encyclopedia_name(file: &str) -> &str {
+    if file.starts_with("mdwiki") {
+        "Medical encyclopedia (MDWiki)"
+    } else if file.starts_with("appropedia") {
+        "Appropedia"
+    } else {
+        file
+    }
+}
+
 /// A button whose label wraps: a long one must not set the window's minimum width (a half-screen tile is ~840 px).
 pub fn wrap_button(text: &str) -> gtk::Button {
     let l = gtk::Label::new(Some(text));

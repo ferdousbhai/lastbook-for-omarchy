@@ -3,7 +3,7 @@
 //! turned into links ("cite:S3") the chat page answers.
 
 use gtk::{glib, prelude::*};
-use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 /// One block of the answer: its Pango markup and how it is shown.
 #[derive(Debug, PartialEq)]
@@ -90,9 +90,9 @@ pub fn blocks(md: &str, cited: &dyn Fn(&str) -> bool) -> Vec<Block> {
     };
     for ev in Parser::new_ext(md, Options::ENABLE_STRIKETHROUGH) {
         match ev {
-            Event::Start(Tag::Heading { level, .. }) => {
+            Event::Start(Tag::Heading { .. }) => {
                 flush(&mut cur, &mut out, heading, in_item, &lists, &item_marker);
-                heading = level <= HeadingLevel::H6;
+                heading = true;
             }
             Event::End(TagEnd::Heading(_)) => {
                 flush(&mut cur, &mut out, heading, in_item, &lists, &item_marker);
@@ -152,15 +152,13 @@ pub fn blocks(md: &str, cited: &dyn Fn(&str) -> bool) -> Vec<Block> {
 
 /// The answer as widgets in `into` (emptied first). `on_link` gets "cite:S3" when a citation is clicked.
 pub fn render(into: &gtk::Box, md: &str, cited: &dyn Fn(&str) -> bool, on_link: impl Fn(&str) + Clone + 'static) {
-    while let Some(c) = into.first_child() {
-        into.remove(&c);
-    }
+    crate::cards::clear(into);
     for b in blocks(md, cited) {
-        let (markup, class, indent, marker) = match &b {
-            Block::Para(m) => (m.clone(), "md-p", 0, None),
-            Block::Heading(m) => (m.clone(), "md-h", 0, None),
-            Block::Item { depth, marker, markup } => (markup.clone(), "md-li", *depth, Some(marker.clone())),
-            Block::Code(m) => (m.clone(), "md-code", 0, None),
+        let (markup, class, indent, marker) = match b {
+            Block::Para(m) => (m, "md-p", 0, None),
+            Block::Heading(m) => (m, "md-h", 0, None),
+            Block::Item { depth, marker, markup } => (markup, "md-li", depth, Some(marker)),
+            Block::Code(m) => (m, "md-code", 0, None),
         };
         let label = gtk::Label::new(None);
         if valid_markup(&markup) {

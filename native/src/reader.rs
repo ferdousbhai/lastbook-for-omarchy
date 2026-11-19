@@ -9,52 +9,36 @@ use std::{
 };
 
 use gtk::{gdk, glib, prelude::*};
-use serde_json::Value;
 
-use crate::{pdf, ui::App};
+use crate::{cards::icon_button, pdf, ui::App};
 
 pub struct Reader {
     pub root: gtk::Widget,
     app: Weak<App>,
     picture: gtk::Picture,
     scroll: gtk::ScrolledWindow,
-    title: gtk::Label,
     meta: gtk::Label,
     entry: gtk::Entry,
     total: gtk::Label,
     note: gtk::Label,
-    doc: RefCell<Option<(String, poppler::Document, Value)>>,
+    doc: RefCell<Option<(String, poppler::Document)>>,
     page: Cell<i32>,
     zoom: Cell<f64>,
     last_width: Cell<i32>,
     pending: RefCell<Option<glib::SourceId>>,
 }
 
-fn bar_button(icon: &str, tip: &str) -> gtk::Button {
-    let b = gtk::Button::from_icon_name(icon);
-    b.add_css_class("header-action");
-    b.set_tooltip_text(Some(tip));
-    b
-}
-
 impl Reader {
     pub fn build(app: &Rc<App>) -> Rc<Self> {
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         bar.add_css_class("reader-bar");
-        let titles = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        titles.set_hexpand(true);
-        let title = gtk::Label::new(None);
-        title.add_css_class("result-title");
-        title.set_xalign(0.0);
-        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        // The header bar names the document; this bar says whose it is.
         let meta = gtk::Label::new(None);
         meta.add_css_class("meta");
         meta.set_xalign(0.0);
+        meta.set_hexpand(true);
         meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        title.set_visible(false);   // the header bar names the document; the bar says whose it is
-        titles.append(&title);
-        titles.append(&meta);
-        let prev = bar_button("go-previous-symbolic", "Previous page (Left, Page Up)");
+        let prev = icon_button("go-previous-symbolic", "Previous page (Left, Page Up)");
         let entry = gtk::Entry::new();
         entry.add_css_class("page-entry");
         entry.set_width_chars(4);
@@ -62,13 +46,13 @@ impl Reader {
         gtk::prelude::EditableExt::set_alignment(&entry, 1.0);
         let total = gtk::Label::new(None);
         total.add_css_class("meta");
-        let next = bar_button("go-next-symbolic", "Next page (Right, Page Down)");
-        let out = bar_button("zoom-out-symbolic", "Smaller (-)");
-        let fit = bar_button("zoom-fit-best-symbolic", "Fit the width (0)");
-        let inn = bar_button("zoom-in-symbolic", "Larger (+)");
+        let next = icon_button("go-next-symbolic", "Next page (Right, Page Down)");
+        let out = icon_button("zoom-out-symbolic", "Smaller (-)");
+        let fit = icon_button("zoom-fit-best-symbolic", "Fit the width (0)");
+        let inn = icon_button("zoom-in-symbolic", "Larger (+)");
         let ask = gtk::Button::with_label("Ask about this page");
         ask.add_css_class("chip");
-        bar.append(&titles);
+        bar.append(&meta);
         for w in [prev.upcast_ref::<gtk::Widget>(), entry.upcast_ref(), total.upcast_ref(), next.upcast_ref(), out.upcast_ref(), fit.upcast_ref(), inn.upcast_ref(), ask.upcast_ref()] {
             bar.append(w);
         }
@@ -99,7 +83,6 @@ impl Reader {
             app: Rc::downgrade(app),
             picture,
             scroll,
-            title,
             meta,
             entry,
             total,
@@ -123,7 +106,7 @@ impl Reader {
         let r = Rc::downgrade(&reader);
         ask.connect_clicked(move |_| {
             let Some(r) = r.upgrade() else { return };
-            let doc = r.doc.borrow().as_ref().map(|(id, _, _)| id.clone());
+            let doc = r.doc.borrow().as_ref().map(|(id, _)| id.clone());
             if let (Some(app), Some(doc)) = (r.app.upgrade(), doc) {
                 app.navigate(crate::ui::Route::Chat { id: None, about: Some(format!("doc:{doc}:{}", r.page.get())) });
             }
@@ -165,13 +148,12 @@ impl Reader {
     }
 
     pub fn open(self: &Rc<Self>, doc_id: &str, page: i32) {
-        if self.doc.borrow().as_ref().is_some_and(|(id, _, _)| id == doc_id) {
+        if self.doc.borrow().as_ref().is_some_and(|(id, _)| id == doc_id) {
             self.go_to(page);
             return;
         }
         self.doc.replace(None);
         self.picture.set_paintable(gdk::Paintable::NONE);
-        self.title.set_text("Opening…");
         self.meta.set_text("");
         self.note.set_visible(false);
         let Some(app) = self.app.upgrade() else { return };
@@ -187,7 +169,6 @@ impl Reader {
             };
             let title = rec["title"].as_str().unwrap_or_default().to_owned();
             app.set_title(&title);
-            me.title.set_text(&title);
             let mut meta = vec![rec["publisher"].as_str().unwrap_or_default().to_owned()];
             if let Some(y) = rec["year"].as_str() {
                 meta.push(y.to_owned());
@@ -206,7 +187,6 @@ impl Reader {
                     // Saved web pages and slides open in the web view, as the engine serves them.
                     let path = format!("/{}", rec["path"].as_str().unwrap_or_default());
                     app.replace_route(crate::ui::Route::Web { path, meta: meta.join(" · ") }, true);
-                    me.doc.replace(None);
                     return;
                 }
             }
@@ -215,7 +195,7 @@ impl Reader {
                 return me.fail("The file could not be opened.");
             };
             me.total.set_text(&format!("of {}", doc.n_pages()));
-            me.doc.replace(Some((id, doc, rec)));
+            me.doc.replace(Some((id, doc)));
             me.go_to(page);
         });
     }
@@ -228,7 +208,7 @@ impl Reader {
     }
 
     fn pages(&self) -> i32 {
-        self.doc.borrow().as_ref().map(|(_, d, _)| d.n_pages()).unwrap_or(0)
+        self.doc.borrow().as_ref().map(|(_, d)| d.n_pages()).unwrap_or(0)
     }
 
     fn turn(&self, step: i32) {
@@ -272,7 +252,7 @@ impl Reader {
 
     fn render(&self) {
         let doc = self.doc.borrow();
-        let Some((_, doc, _)) = doc.as_ref() else { return };
+        let Some((_, doc)) = doc.as_ref() else { return };
         let avail = (self.scroll.width() - 48).max(320);
         self.last_width.set(self.scroll.width());
         // Fit the width up to a comfortable reading size, then zoom from there.

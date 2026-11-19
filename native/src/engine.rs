@@ -24,7 +24,7 @@ pub enum Piece {
     Head(u16, String),
     Chunk(String),
     Bytes(Vec<u8>),
-    End(bool),
+    End,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -133,12 +133,12 @@ impl Engine {
                     } else if let Some(b) = msg.get("b64").and_then(Value::as_str) {
                         use base64::Engine as _;
                         Piece::Bytes(base64::engine::general_purpose::STANDARD.decode(b).unwrap_or_default())
-                    } else if let Some(ok) = msg.get("end").and_then(Value::as_bool) {
-                        Piece::End(ok)
+                    } else if msg.get("end").is_some() {
+                        Piece::End
                     } else {
                         continue;
                     };
-                    let end = matches!(piece, Piece::End(_));
+                    let end = matches!(piece, Piece::End);
                     let tx = if end { w.lock().unwrap().remove(&id) } else { w.lock().unwrap().get(&id).cloned() };
                     if let Some(tx) = tx {
                         let _ = tx.send_blocking(piece);
@@ -146,7 +146,7 @@ impl Engine {
                 }
                 // The engine ended: every request still waiting gets an end, so nothing hangs.
                 for (_, tx) in w.lock().unwrap().drain() {
-                    let _ = tx.send_blocking(Piece::End(false));
+                    let _ = tx.send_blocking(Piece::End);
                 }
             })
             .expect("thread");
@@ -163,10 +163,10 @@ impl Engine {
             req["body"] = b.clone();
         }
         let line = req.to_string() + "\n";
-        if self.stdin.lock().unwrap().write_all(line.as_bytes()).is_err() {
-            if let Some(tx) = self.waiters.lock().unwrap().remove(&id) {
-                let _ = tx.send_blocking(Piece::End(false));
-            }
+        if self.stdin.lock().unwrap().write_all(line.as_bytes()).is_err()
+            && let Some(tx) = self.waiters.lock().unwrap().remove(&id)
+        {
+            let _ = tx.send_blocking(Piece::End);
         }
         (id, rx)
     }
@@ -186,17 +186,8 @@ impl Engine {
     }
 
     async fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, EngineError> {
-        let (_, rx) = self.request(method, path, body);
-        let (mut status, mut text) = (0, String::new());
-        while let Ok(piece) = rx.recv().await {
-            match piece {
-                Piece::Head(s, _) => status = s,
-                Piece::Chunk(c) => text.push_str(&c),
-                Piece::Bytes(_) => {}
-                Piece::End(_) => break,
-            }
-        }
-        match serde_json::from_str::<Value>(&text) {
+        let (status, _, text) = self.collect(method, path, body).await;
+        match serde_json::from_slice::<Value>(&text) {
             Ok(v) if status == 200 || (method == "POST" && v.get("error").is_some()) => Ok(v),
             Ok(v) if v.get("error").is_some() => Err(EngineError(v["error"].as_str().unwrap_or("error").to_owned())),
             _ if status != 200 => Err(EngineError(format!("{path}: {status}"))),
@@ -204,22 +195,25 @@ impl Engine {
             Err(e) => Err(EngineError(format!("{path}: {e}"))),
         }
     }
-}
 
-impl Engine {
     /// The whole answer to a GET as bytes, with its status and content type (pages and their images, for the web view).
     pub async fn fetch(&self, path: &str) -> (u16, String, Vec<u8>) {
-        let (_, rx) = self.request("GET", path, None);
-        let (mut status, mut ctype, mut body) = (0, String::new(), Vec::new());
+        self.collect("GET", path, None).await
+    }
+
+    /// The whole answer to a request: its status, content type and body.
+    async fn collect(&self, method: &str, path: &str, body: Option<&Value>) -> (u16, String, Vec<u8>) {
+        let (_, rx) = self.request(method, path, body);
+        let (mut status, mut ctype, mut bytes) = (0, String::new(), Vec::new());
         while let Ok(piece) = rx.recv().await {
             match piece {
                 Piece::Head(s, t) => (status, ctype) = (s, t),
-                Piece::Chunk(c) => body.extend_from_slice(c.as_bytes()),
-                Piece::Bytes(b) => body.extend_from_slice(&b),
-                Piece::End(_) => break,
+                Piece::Chunk(c) => bytes.extend_from_slice(c.as_bytes()),
+                Piece::Bytes(b) => bytes.extend_from_slice(&b),
+                Piece::End => break,
             }
         }
-        (status, ctype, body)
+        (status, ctype, bytes)
     }
 }
 

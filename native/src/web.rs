@@ -28,7 +28,6 @@ pub struct WebPage {
     pub root: gtk::Widget,
     app: Weak<App>,
     view: webkit6::WebView,
-    title: gtk::Label,
     meta: gtk::Label,
     manager: webkit6::UserContentManager,
     tokens: RefCell<Option<Tokens>>,
@@ -100,24 +99,16 @@ impl WebPage {
 
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         bar.add_css_class("reader-bar");
-        let titles = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        titles.set_hexpand(true);
-        let title = gtk::Label::new(None);
-        title.add_css_class("result-title");
-        title.set_xalign(0.0);
-        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        title.set_visible(false);
         let meta = gtk::Label::new(None);
         meta.add_css_class("meta");
         meta.set_xalign(0.0);
+        meta.set_hexpand(true);
         meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        titles.append(&title);
-        titles.append(&meta);
-        bar.append(&titles);
+        bar.append(&meta);
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.append(&bar);
         root.append(&view);
-        let page = Rc::new(Self { root: root.upcast(), app: Rc::downgrade(app), view, title, meta, manager, tokens: RefCell::new(None), themed: RefCell::new(false) });
+        let page = Rc::new(Self { root: root.upcast(), app: Rc::downgrade(app), view, meta, manager, tokens: RefCell::new(None), themed: RefCell::new(false) });
         let p = Rc::downgrade(&page);
         page.view.connect_title_notify(move |v| {
             if let Some(p) = p.upgrade()
@@ -170,6 +161,5 @@ impl WebPage {
         if self.view.uri().as_deref() != Some(uri.as_str()) {
             self.view.load_uri(&uri);
         }
-        let _ = &self.title;
     }
 }

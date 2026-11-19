@@ -15,7 +15,7 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use gtk::{gdk, glib, prelude::*};
+use gtk::{gdk, glib, pango, prelude::*};
 use serde_json::Value;
 
 use crate::{
@@ -117,7 +117,7 @@ impl Style {
             minor: blend(bg, &t.text, 0.24),
             major: blend(bg, &t.text, 0.40),
             highway: blend(bg, &t.accent, 0.55),
-            casing: blend(bg, if t.light { "#000000" } else { "#000000" }, 0.25),
+            casing: blend(bg, "#000000", 0.25),
             rail: blend(bg, &t.text, 0.30),
             boundary: blend(bg, &t.text, 0.40),
             text: t.text.clone(),
@@ -160,7 +160,6 @@ pub struct MapPage {
     area: gtk::DrawingArea,
     sources: RefCell<Vec<Source>>,
     style: RefCell<Style>,
-    style_gen: Cell<u64>,
     /// Map centre in world units (0..1) and zoom.
     cx: Cell<f64>,
     cy: Cell<f64>,
@@ -196,14 +195,8 @@ impl MapPage {
         results_pop.set_parent(&search);
         results_pop.set_autohide(true);
         results_pop.set_has_arrow(false);
-        let zoom_in = gtk::Button::from_icon_name("zoom-in-symbolic");
-        let zoom_out = gtk::Button::from_icon_name("zoom-out-symbolic");
-        for b in [&zoom_in, &zoom_out] {
-            b.add_css_class("header-action");
-            b.add_css_class("map-button");
-        }
-        zoom_in.set_tooltip_text(Some("Zoom in (+)"));
-        zoom_out.set_tooltip_text(Some("Zoom out (-)"));
+        let zoom_in = crate::cards::icon_button("zoom-in-symbolic", "Zoom in (+)");
+        let zoom_out = crate::cards::icon_button("zoom-out-symbolic", "Zoom out (-)");
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         top.add_css_class("map-bar");
         top.set_halign(gtk::Align::Start);
@@ -230,7 +223,6 @@ impl MapPage {
             area,
             sources: RefCell::new(Vec::new()),
             style: RefCell::new(Style::from(&app.theme.tokens.borrow())),
-            style_gen: Cell::new(0),
             cx: Cell::new(0.5),
             cy: Cell::new(0.42),
             zoom: Cell::new(2.0),
@@ -256,7 +248,6 @@ impl MapPage {
         app.theme.on_change(move |t| {
             if let Some(me) = me.upgrade() {
                 me.style.replace(Style::from(t));
-                me.style_gen.set(me.style_gen.get() + 1);
                 me.tiles.borrow_mut().clear();
                 me.area.queue_draw();
             }
@@ -559,9 +550,6 @@ impl MapPage {
         for pass in 0..2 {
             for (key, sx, sy) in &visible {
                 let Some(c) = tiles.get(key) else { continue };
-                if c.from != *key && pass == 0 {
-                    // a scaled-up tile's labels belong to its coarser zoom: draw them, but after the tile's own
-                }
                 labels(cr, &layout, c, *key, *sx, *sy, size, zoom, &st, &mut taken, pass);
             }
         }
@@ -620,8 +608,7 @@ fn draw_layers(cr: &cairo::Context, layers: &[Layer], st: &Style, z: f64, lw: f6
         let colour = match f.str("kind").unwrap_or_default() {
             "forest" | "wood" | "park" | "nature_reserve" | "national_park" | "protected_area" | "garden" | "golf_course" | "grass" | "grassland" | "scrub" | "meadow" | "cemetery" | "playground" => &st.park,
             "farmland" | "farm" | "orchard" | "vineyard" | "allotments" => &st.farm,
-            "urban_area" | "residential" | "industrial" | "commercial" | "retail" | "hospital" | "school" | "university" | "college" | "railway" | "military" => &st.urban,
-            "glacier" | "beach" | "sand" | "barren" | "bare_rock" => &st.urban,
+            "urban_area" | "residential" | "industrial" | "commercial" | "retail" | "hospital" | "school" | "university" | "college" | "railway" | "military" | "glacier" | "beach" | "sand" | "barren" | "bare_rock" => &st.urban,
             _ => continue,
         };
         rgb(cr, colour, 1.0);

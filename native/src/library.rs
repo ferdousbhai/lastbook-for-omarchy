@@ -12,33 +12,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    cards::{activate, card, clear, route_of, section},
+    cards::{self, activate, card, clear, column, encyclopedia_name, label, route_of, section},
     engine::query,
     ui::{App, Route},
 };
 
-fn column() -> (gtk::ScrolledWindow, gtk::Box) {
-    let b = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    b.set_margin_top(28);
-    b.set_margin_bottom(28);
-    b.set_margin_start(32);
-    b.set_margin_end(32);
-    let s = gtk::ScrolledWindow::builder().child(&b).vexpand(true).hscrollbar_policy(gtk::PolicyType::Never).build();
-    (s, b)
-}
-
 fn title(text: &str, sub: &str, into: &gtk::Box) {
-    let t = gtk::Label::new(Some(text));
-    t.add_css_class("page-title");
-    t.set_xalign(0.0);
-    t.set_wrap(true);
-    into.append(&t);
+    into.append(&label(text, "page-title"));
     if !sub.is_empty() {
-        let s = gtk::Label::new(Some(sub));
-        s.add_css_class("dim");
-        s.set_xalign(0.0);
-        s.set_wrap(true);
-        into.append(&s);
+        into.append(&label(sub, "dim"));
     }
 }
 
@@ -96,7 +78,6 @@ pub struct Browse {
     app: Weak<App>,
     library: gtk::Box,
     shelf: gtk::Box,
-    enc: gtk::Box,
     enc_results: gtk::Box,
     saved: gtk::Box,
     about: gtk::Box,
@@ -104,11 +85,11 @@ pub struct Browse {
 
 impl Browse {
     pub fn build(app: &Rc<App>) -> Rc<Self> {
-        let (ls, library) = column();
-        let (ss, shelf) = column();
-        let (es, enc) = column();
-        let (sv, saved) = column();
-        let (ab, about) = column();
+        let (ls, library) = column(12);
+        let (ss, shelf) = column(12);
+        let (es, enc) = column(12);
+        let (sv, saved) = column(12);
+        let (ab, about) = column(12);
         title("Encyclopedias", "Community-written: check safety-critical steps against a manual.", &enc);
         let entry = gtk::SearchEntry::new();
         entry.set_placeholder_text(Some("Search the encyclopedias"));
@@ -124,7 +105,6 @@ impl Browse {
             app: Rc::downgrade(app),
             library,
             shelf,
-            enc,
             enc_results,
             saved,
             about,
@@ -135,7 +115,6 @@ impl Browse {
                 me.search_encyclopedias(e.text().as_str());
             }
         });
-        let _ = &b.enc;
         b
     }
 
@@ -149,13 +128,7 @@ impl Browse {
         glib::spawn_future_local(async move {
             let Ok(shelves) = engine.get("/api/shelves").await else { return };
             let Some(me) = me.upgrade() else { return };
-            let grid = gtk::FlowBox::new();
-            grid.set_selection_mode(gtk::SelectionMode::None);
-            grid.set_homogeneous(true);
-            grid.set_min_children_per_line(2);
-            grid.set_max_children_per_line(3);
-            grid.set_row_spacing(8);
-            grid.set_column_spacing(8);
+            let grid = cards::grid(3, 8);
             for s in shelves.as_array().into_iter().flatten() {
                 let (read, video) = (s["read"].as_u64().unwrap_or(0), s["video"].as_u64().unwrap_or(0));
                 if read + video == 0 {
@@ -221,9 +194,9 @@ impl Browse {
                 return;
             }
             for h in hits {
-                let name = h["collection"].as_str().unwrap_or_default();
-                let label = if name.starts_with("mdwiki") { "Medical encyclopedia (MDWiki)" } else if name.starts_with("appropedia") { "Appropedia — appropriate technology" } else { name };
-                let c = card(h["title"].as_str().unwrap_or_default(), "", label, None);
+                let name = encyclopedia_name(h["collection"].as_str().unwrap_or_default());
+                let name = if name == "Appropedia" { format!("{name} — appropriate technology") } else { name.to_owned() };
+                let c = card(h["title"].as_str().unwrap_or_default(), "", &name, None);
                 let path = h["path"].as_str().unwrap_or_default().trim_start_matches("zim/").to_owned();
                 activate(&c, me.app.clone(), Route::Wiki { path });
                 me.enc_results.append(&c);

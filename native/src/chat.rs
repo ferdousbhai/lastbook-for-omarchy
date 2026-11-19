@@ -6,7 +6,7 @@
 //! and the sources it cited, each opening where it came from. Chats are kept in the user's data folder.
 
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     path::PathBuf,
     rc::{Rc, Weak},
     time::Duration,
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    cards::{activate, card, clear, plain_markup, route_of, section, source_meta},
+    cards::{activate, card, clear, icon_button, plain_markup, route_of, section, source_meta},
     engine::{Piece, query},
     md,
     ui::{App, Route},
@@ -47,13 +47,19 @@ pub struct Conversation {
     pub messages: Vec<Msg>,
 }
 
+/// One answer on screen: the steps taken, the answer's text, a note under it, and its sources.
+struct Answer {
+    frame: gtk::Box,
+    steps: gtk::Box,
+    body: gtk::Box,
+    note: gtk::Label,
+    sources: gtk::Box,
+}
+
 struct Live {
     request: u64,
     chat: String,
-    answer: gtk::Box,
-    steps: gtk::Box,
-    sources: gtk::Box,
-    note: gtk::Label,
+    shown: Answer,
     text: String,
     dirty: bool,
 }
@@ -73,7 +79,6 @@ pub struct ChatPage {
     current: RefCell<Option<String>>,
     pending_about: RefCell<Option<String>>,
     live: RefCell<Option<Live>>,
-    online: Cell<bool>,
 }
 
 fn store_path() -> PathBuf {
@@ -116,9 +121,7 @@ impl ChatPage {
         about_label.set_xalign(0.0);
         about_label.set_hexpand(true);
         about_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        let about_x = gtk::Button::from_icon_name("window-close-symbolic");
-        about_x.add_css_class("header-action");
-        about_x.set_tooltip_text(Some("Don't use this page as context"));
+        let about_x = icon_button("window-close-symbolic", "Don't use this page as context");
         about_bar.append(&gtk::Image::from_icon_name("x-office-document-symbolic"));
         about_bar.append(&about_label);
         about_bar.append(&about_x);
@@ -174,7 +177,6 @@ impl ChatPage {
             current: RefCell::new(None),
             pending_about: RefCell::new(None),
             live: RefCell::new(None),
-            online: Cell::new(false),
         });
 
         let p = Rc::downgrade(&page);
@@ -285,7 +287,6 @@ impl ChatPage {
             let Some(me) = me.upgrade() else { return };
             let local = &s["local"];
             let state = local["state"].as_str().unwrap_or_default();
-            me.online.set(s["online"].as_bool().unwrap_or(false) || matches!(state, "ready" | "stopped" | "loading"));
             let line = match state {
                 "ready" => format!("{} is ready on this computer.", local["name"].as_str().unwrap_or("The local AI")),
                 "loading" => format!("Starting the local AI{}…", local["pct"].as_i64().map(|p| format!(" ({p}%)")).unwrap_or_default()),
@@ -382,46 +383,24 @@ impl ChatPage {
             if m.role == "user" {
                 self.convo.append(&user_bubble(&m.content));
             } else {
-                let w = self.answer_widget();
+                let w = answer_widget();
                 self.fill_answer(&w, m);
-                self.convo.append(&w.0);
+                self.convo.append(&w.frame);
             }
         }
         self.scroll_to_end();
     }
 
-    /// (frame, steps, answer, sources, note)
-    fn answer_widget(&self) -> (gtk::Box, gtk::Box, gtk::Box, gtk::Box, gtk::Label) {
-        let frame = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        frame.add_css_class("answer");
-        let steps = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        steps.add_css_class("steps");
-        let answer = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        let note = gtk::Label::new(None);
-        note.add_css_class("meta");
-        note.set_xalign(0.0);
-        note.set_wrap(true);
-        let sources = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        frame.append(&steps);
-        frame.append(&answer);
-        frame.append(&note);
-        frame.append(&sources);
-        (frame, steps, answer, sources, note)
-    }
-
-    fn fill_answer(self: &Rc<Self>, w: &(gtk::Box, gtk::Box, gtk::Box, gtk::Box, gtk::Label), m: &Msg) {
-        let (_, steps, answer, sources, note) = w;
+    fn fill_answer(&self, w: &Answer, m: &Msg) {
         for s in &m.steps {
-            steps.append(&step_label(s));
+            w.steps.append(&step_label(s));
         }
-        let cited = m.cited.clone();
-        let srcs = m.sources.clone();
-        md::render(answer, &m.content, &|k| cited.iter().any(|c| c == k), self.citation_opener(srcs.clone()));
+        md::render(&w.body, &m.content, &|k| m.cited.iter().any(|c| c == k), self.citation_opener(m.sources.clone()));
         if let Some(e) = &m.error {
-            note.set_text(e);
-            note.add_css_class("danger");
+            w.note.set_text(e);
+            w.note.add_css_class("danger");
         }
-        self.draw_sources(sources, &m.sources, &m.cited);
+        self.draw_sources(&w.sources, &m.sources, &m.cited);
     }
 
     fn citation_opener(&self, sources: Vec<Value>) -> impl Fn(&str) + Clone + 'static {
@@ -496,18 +475,15 @@ impl ChatPage {
             (history, c.about.clone())
         };
         self.fill_list();
-        if self.convo.first_child().is_some_and(|w| w.has_css_class("conversation-hello")) || self.chats.borrow().iter().find(|c| c.id == id).is_some_and(|c| c.messages.len() == 1) {
-            clear(&self.convo);
-        }
         self.convo.append(&user_bubble(&text));
-        let w = self.answer_widget();
-        self.convo.append(&w.0);
+        let shown = answer_widget();
+        self.convo.append(&shown.frame);
         let thinking = step_label("Searching the library…");
-        w.1.append(&thinking);
+        shown.steps.append(&thinking);
         self.scroll_to_end();
         self.send.set_label("Stop");
         let (request, rx) = app.engine.request("POST", "/api/chat", Some(&json!({"messages": history, "about": about})));
-        self.live.replace(Some(Live { request, chat: id.clone(), answer: w.2.clone(), steps: w.1.clone(), sources: w.3.clone(), note: w.4.clone(), text: String::new(), dirty: false }));
+        self.live.replace(Some(Live { request, chat: id, shown, text: String::new(), dirty: false }));
         let me = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let mut buf = String::new();
@@ -531,7 +507,7 @@ impl ChatPage {
                             }
                         }
                     }
-                    Piece::End(_) => break,
+                    Piece::End => break,
                 }
             }
             let Some(me) = me.upgrade() else { return };
@@ -559,12 +535,12 @@ impl ChatPage {
                     _ => String::new(),
                 };
                 if !text.is_empty() {
-                    l.note.set_text(&text);
+                    l.shown.note.set_text(&text);
                 }
             }
             "tool" if ev["phase"] == "done" => {
                 let s = step_text(ev);
-                l.steps.append(&step_label(&s));
+                l.shown.steps.append(&step_label(&s));
                 msg.steps.push(s);
             }
             "delta" => {
@@ -611,17 +587,16 @@ impl ChatPage {
     }
 
     fn redraw_live(self: &Rc<Self>) {
-        let (text, answer, sources) = {
+        let (text, body) = {
             let mut live = self.live.borrow_mut();
             let Some(l) = live.as_mut() else { return };
             if !l.dirty {
                 return;
             }
             l.dirty = false;
-            (l.text.clone(), l.answer.clone(), l.sources.clone())
+            (l.text.clone(), l.shown.body.clone())
         };
-        let _ = sources;
-        md::render(&answer, &text, &|_| false, |_| {});
+        md::render(&body, &text, &|_| false, |_| {});
         self.scroll_to_end();
     }
 
@@ -637,10 +612,9 @@ impl ChatPage {
                 msg.sources = r["results"].as_array().cloned().unwrap_or_default();
             }
         }
-        clear(&l.steps);
-        l.note.set_text("");
-        let w = (gtk::Box::new(gtk::Orientation::Vertical, 0), l.steps.clone(), l.answer.clone(), l.sources.clone(), l.note.clone());
-        self.fill_answer(&w, &msg);
+        clear(&l.shown.steps);
+        l.shown.note.set_text("");
+        self.fill_answer(&l.shown, &msg);
         {
             let mut chats = self.chats.borrow_mut();
             if let Some(c) = chats.iter_mut().find(|c| c.id == l.chat) {
@@ -666,6 +640,24 @@ impl ChatPage {
     }
 }
 
+fn answer_widget() -> Answer {
+    let frame = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    frame.add_css_class("answer");
+    let steps = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    steps.add_css_class("steps");
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let note = gtk::Label::new(None);
+    note.add_css_class("meta");
+    note.set_xalign(0.0);
+    note.set_wrap(true);
+    let sources = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    frame.append(&steps);
+    frame.append(&body);
+    frame.append(&note);
+    frame.append(&sources);
+    Answer { frame, steps, body, note, sources }
+}
+
 fn user_bubble(text: &str) -> gtk::Widget {
     let l = gtk::Label::new(Some(text));
     l.add_css_class("question");
@@ -685,7 +677,7 @@ fn step_label(text: &str) -> gtk::Label {
     l
 }
 
-/// What a tool call did, in a few words (as the web page said it).
+/// What a tool call did, in a few words.
 fn step_text(ev: &Value) -> String {
     let (a, r) = (&ev["args"], &ev["summary"]);
     let s = |v: &Value| v.as_str().unwrap_or_default().to_owned();

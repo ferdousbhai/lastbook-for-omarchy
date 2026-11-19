@@ -15,7 +15,10 @@ use std::{
 use gtk::{gio, glib, prelude::*};
 use serde_json::{Value, json};
 
-use crate::{cards::clear, engine::Engine};
+use crate::{
+    cards::{clear, label},
+    engine::Engine,
+};
 
 pub struct SetupPage {
     pub root: gtk::Widget,
@@ -26,7 +29,6 @@ pub struct SetupPage {
     status: gtk::Label,
     state: RefCell<Value>,
     pack: RefCell<Option<String>>,
-    map: RefCell<Option<String>>,
     /// The world map and place search (cut from OpenStreetMap on this computer, engine/setup/maps.py).
     world: Cell<bool>,
     /// Street-level areas to add (Geofabrik region ids).
@@ -42,26 +44,11 @@ fn gb(bytes: f64) -> String {
     if bytes >= 1e9 { format!("{:.1} GB", bytes / 1e9) } else { format!("{:.0} MB", bytes / 1e6) }
 }
 
-fn label(text: &str, class: &str) -> gtk::Label {
-    let l = gtk::Label::new(Some(text));
-    l.add_css_class(class);
-    l.set_xalign(0.0);
-    l.set_wrap(true);
-    l
-}
-
 impl SetupPage {
     pub fn build(engine: Arc<Engine>) -> Rc<Self> {
-        let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        body.set_margin_top(28);
-        body.set_margin_bottom(28);
-        body.set_margin_start(32);
-        body.set_margin_end(32);
+        let (scroll, body) = crate::cards::column(12);
         let status = label("", "meta");
         let job_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        outer.append(&body);
-        let scroll = gtk::ScrolledWindow::builder().child(&outer).vexpand(true).hscrollbar_policy(gtk::PolicyType::Never).build();
         Rc::new(Self {
             root: scroll.upcast(),
             engine,
@@ -71,7 +58,6 @@ impl SetupPage {
             status,
             state: RefCell::new(Value::Null),
             pack: RefCell::new(None),
-            map: RefCell::new(None),
             world: Cell::new(true),
             regions: RefCell::new(Vec::new()),
             ai: Cell::new(false),
@@ -304,7 +290,7 @@ impl SetupPage {
     }
 
     fn use_existing(self: &Rc<Self>) {
-        let dialog = gtk::FileDialog::builder().title("Choose a LastbookData folder or a pack zip").modal(true).build();
+        let dialog = gtk::FileDialog::builder().title("Choose a LastbookData folder, or the folder that holds a pack zip").modal(true).build();
         let me = Rc::downgrade(self);
         let parent = self.window.borrow().clone();
         dialog.select_folder(parent.as_ref(), gio::Cancellable::NONE, move |r| {
@@ -418,14 +404,13 @@ impl SetupPage {
 
     fn start(self: &Rc<Self>) {
         let regions = self.regions.borrow().clone();
-        let mut body = json!({"pack": *self.pack.borrow(), "ai": self.ai.get(), "map": *self.map.borrow(),
-                              "world": self.world.get(), "regions": regions});
+        let mut body = json!({"pack": *self.pack.borrow(), "ai": self.ai.get(), "world": self.world.get(), "regions": regions});
         if let Some(f) = self.folder.borrow().as_ref()
             && self.state.borrow()["mode"] == "first-run"
         {
             body["folder"] = json!(f);
         }
-        if body["pack"].is_null() && !self.ai.get() && body["map"].is_null() && !self.world.get() && self.regions.borrow().is_empty() {
+        if body["pack"].is_null() && !self.ai.get() && !self.world.get() && self.regions.borrow().is_empty() {
             self.status.set_text("Choose something to download first.");
             return;
         }

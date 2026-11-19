@@ -11,6 +11,7 @@ use std::{
 use gtk::{gdk, glib, prelude::*};
 
 use crate::{
+    cards::{encyclopedia_name, icon_button},
     chat::ChatPage,
     engine::Engine,
     guides::Guides,
@@ -121,24 +122,17 @@ pub struct App {
     pub manage: RefCell<Option<Rc<crate::setup::SetupPage>>>,
 }
 
-fn header_button(icon: &str, tip: &str) -> gtk::Button {
-    let b = gtk::Button::from_icon_name(icon);
-    b.add_css_class("header-action");
-    b.set_tooltip_text(Some(tip));
-    b
-}
-
 impl App {
     pub fn build(app: &gtk::Application, engine: Arc<Engine>, theme: Rc<Theme>) -> Rc<Self> {
         let window = gtk::ApplicationWindow::builder().application(app).title("Lastbook").default_width(1280).default_height(820).build();
 
         let header = gtk::HeaderBar::new();
         header.set_show_title_buttons(false);   // Hyprland tiles the window and Super+W closes it
-        let toggle = header_button("sidebar-show-symbolic", "Show or hide the sidebar (Ctrl+B)");
+        let toggle = icon_button("sidebar-show-symbolic", "Show or hide the sidebar (Ctrl+B)");
         toggle.add_css_class("sidebar-toggle");
-        let back = header_button("go-previous-symbolic", "Back (Alt+Left)");
-        let forward = header_button("go-next-symbolic", "Forward (Alt+Right)");
-        let star = header_button("non-starred-symbolic", "Save this (Ctrl+D)");
+        let back = icon_button("go-previous-symbolic", "Back (Alt+Left)");
+        let forward = icon_button("go-next-symbolic", "Forward (Alt+Right)");
+        let star = icon_button("non-starred-symbolic", "Save this (Ctrl+D)");
         header.pack_start(&toggle);
         header.pack_start(&back);
         header.pack_start(&forward);
@@ -437,8 +431,7 @@ impl App {
                 ("watch", "videos", String::new())
             }
             Route::Wiki { path } => {
-                let name = path.split('/').next().unwrap_or_default();
-                let enc = if name.starts_with("mdwiki") { "Medical encyclopedia (MDWiki)" } else if name.starts_with("appropedia") { "Appropedia" } else { name };
+                let enc = encyclopedia_name(path.split('/').next().unwrap_or_default());
                 if let Some(w) = self.web.borrow().as_ref() {
                     w.open(&format!("/zim/{path}"), &format!("{enc} · community-written: check safety-critical steps against a manual"), true);
                 }

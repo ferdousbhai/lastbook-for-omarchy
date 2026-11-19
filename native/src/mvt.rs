@@ -82,9 +82,7 @@ impl<'a> Reader<'a> {
     }
     fn bytes(&mut self) -> Option<&'a [u8]> {
         let n = self.varint()? as usize;
-        let s = self.b.get(self.p..self.p + n)?;
-        self.p += n;
-        Some(s)
+        self.fixed(n)
     }
     fn fixed(&mut self, n: usize) -> Option<&'a [u8]> {
         let s = self.b.get(self.p..self.p + n)?;

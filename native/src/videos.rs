@@ -14,7 +14,7 @@ use gtk::{gdk, glib, prelude::*};
 use serde_json::Value;
 
 use crate::{
-    cards::{activate, clear, clock, section},
+    cards::{self, activate, clear, clock, section},
     engine::query,
     ui::{App, Route},
 };
@@ -46,11 +46,7 @@ fn texture(app: &App, rel: &str) -> Option<gdk::Texture> {
 impl Videos {
     pub fn build(app: &Rc<App>) -> Rc<Self> {
         // The list: search, then rails.
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        column.set_margin_top(28);
-        column.set_margin_bottom(28);
-        column.set_margin_start(32);
-        column.set_margin_end(32);
+        let (list_scroll, column) = cards::column(12);
         let t = gtk::Label::new(Some("Videos"));
         t.add_css_class("page-title");
         t.set_xalign(0.0);
@@ -60,7 +56,6 @@ impl Videos {
         column.append(&t);
         column.append(&entry);
         column.append(&rails);
-        let list_scroll = gtk::ScrolledWindow::builder().child(&column).vexpand(true).hscrollbar_policy(gtk::PolicyType::Never).build();
 
         // The player: video above, transcript beside.
         let video = gtk::Video::new();
@@ -68,10 +63,7 @@ impl Videos {
         video.set_hexpand(true);
         video.set_vexpand(true);
         video.add_css_class("player");
-        let title = gtk::Label::new(None);
-        title.add_css_class("section-title");
-        title.set_xalign(0.0);
-        title.set_wrap(true);
+        let title = cards::label("", "section-title");
         let meta = gtk::Label::new(None);
         meta.add_css_class("meta");
         meta.set_xalign(0.0);
@@ -141,9 +133,6 @@ impl Videos {
 
     /// Loads the rails the first time the list is shown.
     pub fn show_list(self: &Rc<Self>) {
-        if let Some(s) = self.video.media_stream() {
-            s.pause();
-        }
         if self.loaded.replace(true) {
             return;
         }
@@ -185,13 +174,7 @@ impl Videos {
     }
 
     fn grid(&self, items: &[Value]) -> gtk::FlowBox {
-        let grid = gtk::FlowBox::new();
-        grid.set_selection_mode(gtk::SelectionMode::None);
-        grid.set_homogeneous(true);
-        grid.set_min_children_per_line(2);
-        grid.set_max_children_per_line(5);
-        grid.set_row_spacing(10);
-        grid.set_column_spacing(10);
+        let grid = cards::grid(5, 10);
         let Some(app) = self.app.upgrade() else { return grid };
         for it in items {
             let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
@@ -296,7 +279,6 @@ impl Videos {
                 for c in tx["cues"].as_array().into_iter().flatten() {
                     let t = c["t"].as_f64().unwrap_or(0.0);
                     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-                    row.add_css_class("cue");
                     let tl = gtk::Label::new(Some(&clock(t)));
                     tl.add_css_class("cue-time");
                     tl.set_valign(gtk::Align::Start);

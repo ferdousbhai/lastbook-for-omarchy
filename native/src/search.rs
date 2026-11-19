@@ -13,7 +13,7 @@ use gtk::{glib, prelude::*};
 use serde_json::Value;
 
 use crate::{
-    cards::{activate, card, clear, mark_markup, plain_markup, route_of, section, source_meta},
+    cards::{self, activate, card, clear, mark_markup, plain_markup, route_of, section, source_meta},
     engine::query,
     pdf,
     ui::{App, Route},
@@ -39,15 +39,7 @@ pub struct SearchPage {
 
 impl SearchPage {
     pub fn build(app: &Rc<App>) -> Rc<Self> {
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 14);
-        column.set_margin_top(28);
-        column.set_margin_bottom(28);
-        column.set_margin_start(32);
-        column.set_margin_end(32);
-        let clamp = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        clamp.set_halign(gtk::Align::Fill);
-        clamp.append(&column);
-
+        let (scroll, column) = cards::column(14);
         let title = gtk::Label::new(Some("Search the library"));
         title.add_css_class("page-title");
         title.set_xalign(0.0);
@@ -73,7 +65,6 @@ impl SearchPage {
         column.append(&chips_box);
         column.append(&status);
         column.append(&results);
-        let scroll = gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).child(&clamp).vexpand(true).build();
 
         let page = Rc::new(Self {
             root: scroll.upcast(),
