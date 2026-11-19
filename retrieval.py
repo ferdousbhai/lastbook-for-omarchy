@@ -198,8 +198,9 @@ def vtt_windows(path, span=45):
 
 
 class Index:
-    def __init__(self, catalog_fn, trust_fn, fts_db, recall=None, excluded_fn=lambda: set()):
-        """excluded_fn: the ids of rejected videos and of their records (server.excluded_videos); never indexed or returned."""
+    def __init__(self, catalog_fn, trust_fn, fts_db, recall=None, excluded_fn=lambda: set(), truncate=True):
+        """excluded_fn: the ids of rejected videos and of their records (server.excluded_videos); never indexed or returned.
+        truncate=False for a process that never indexes: vectors past the committed rows may be another process's, mid-write."""
         self.catalog_fn, self.trust_fn, self.fts_db, self.excluded = catalog_fn, trust_fn, fts_db, excluded_fn
         IDX.mkdir(parents=True, exist_ok=True)
         self.db_path = IDX / 'semantic.sqlite'
@@ -220,7 +221,7 @@ class Index:
         self.active = np.zeros(0, dtype=bool)
         self._qcache = {}
         self.status = {'state': 'starting', 'chunks': 0, 'docs': 0, 'pending': None, 'rate': None}
-        self._load()
+        self._load(truncate=truncate)
 
     def _db(self):
         """Writer connection: autocommit, so no transaction is ever left open by accident; writes use tx()."""

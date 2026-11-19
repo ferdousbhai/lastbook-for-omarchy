@@ -1257,7 +1257,8 @@ def init(no_index=False):
     """Everything the engine needs before it can answer a request. Opens no socket."""
     global INDEX
     catalog()
-    INDEX = retrieval.Index(catalog, trust, library.DB, excluded_fn=excluded_videos)
+    # Without the indexer this process only reads the index (the command line, beside a window that may be indexing).
+    INDEX = retrieval.Index(catalog, trust, library.DB, excluded_fn=excluded_videos, truncate=not no_index)
     assistant.init(sys.modules[__name__], INDEX)
     if not no_index:
         threading.Thread(target=INDEX.run_forever, daemon=True).start()

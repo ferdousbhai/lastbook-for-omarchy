@@ -139,6 +139,27 @@ class Semantic(unittest.TestCase):
             fake.close()
             self.sock.unlink(missing_ok=True)
 
+    def test_a_reader_leaves_vectors_an_indexer_is_writing(self):
+        """The command line opens the index beside a window that may be indexing: vectors are appended before their rows
+        are committed, and a process that cut the file back to the committed rows would take them from the indexer."""
+        fake = FakeRecall(self.sock)
+        fake.start()
+        try:
+            ix = self.index()
+            self.assertEqual(ix.update(), 3)
+            vec = retrieval.IDX / 'vectors.f16'
+            with open(vec, 'ab') as f:   # another process, mid-write
+                f.write(np.zeros(DIM, dtype=np.float16).tobytes())
+            size = vec.stat().st_size
+            reader = retrieval.Index(lambda: self.cat, lambda r: ('Reference', 1.0), self.db, retrieval.Recall(self.sock), truncate=False)
+            self.assertEqual((vec.stat().st_size, len(reader.mat)), (size, 4))
+            self.assertEqual(reader.semantic('how long do I boil cloudy water', k=1, floor=0.1)[0]['doc_id'], 'water')
+            retrieval.Index(lambda: self.cat, lambda r: ('Reference', 1.0), self.db, retrieval.Recall(self.sock))   # the indexing engine realigns
+            self.assertEqual(vec.stat().st_size, size - DIM * 2)
+        finally:
+            fake.close()
+            self.sock.unlink(missing_ok=True)
+
     def test_a_new_model_empties_the_index(self):
         fake = FakeRecall(self.sock)
         fake.start()
