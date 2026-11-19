@@ -1,8 +1,7 @@
-"""What this computer has: OS, processor type, memory, graphics memory and room on each disk.
+"""What this computer has: memory, graphics memory and room on each disk.
 No new dependency and no subprocess for any of it, except the AI's own measure (measure_ai), which runs lastbook-llm."""
 import json
 import os
-import platform
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,15 +9,6 @@ from pathlib import Path
 GiB = 2 ** 30
 RESERVE = int(2.5 * GiB)     # the same reserve llm_local.judge keeps for the system and the rest of Lastbook
 VRAM_KEPT = GiB              # graphics memory the estimate leaves for the card's own work
-
-
-def os_name():
-    return 'linux'
-
-
-def arch():
-    m = platform.machine().lower()
-    return 'arm64' if m in ('arm64', 'aarch64') else 'x64' if m in ('x86_64', 'amd64', 'x64') else m
 
 
 # ------------------------------------------------------------------------------------------------------------- Linux --
@@ -97,16 +87,6 @@ def _nvidia_card(dev, name, vram):
     return name, vram
 
 
-def linux_ai_runtime():
-    """What lastbook-llm on Linux can use: 'cuda' with an NVIDIA driver loaded, 'vulkan' with a Vulkan loader, else 'cpu'. For the setup screen only."""
-    if Path('/proc/driver/nvidia/version').is_file():
-        return 'cuda'
-    for d in ('/usr/lib/x86_64-linux-gnu', '/usr/lib64', '/usr/lib'):
-        if Path(d, 'libvulkan.so.1').exists():
-            return 'vulkan'
-    return 'cpu'
-
-
 # ------------------------------------------------------------------------------------------------------------- disks --
 def disk_of(path):
     """(free, total) on the disk that holds path, or the nearest folder above it that exists."""
@@ -133,7 +113,7 @@ def candidate_disks(extra=()):
         except OSError:
             continue
         seen.add(dev)
-        out.append({'path': str(p), 'name': None, 'free_bytes': free, 'total_bytes': total})
+        out.append({'path': str(p), 'free_bytes': free, 'total_bytes': total})
     return out
 
 
@@ -185,7 +165,6 @@ def measure_ai(llm_local, model_path, timeout=180):
 
 def detect(extra_disks=()):
     """Everything but the AI's fit, which the caller adds (estimate_ai or measure_ai)."""
-    name = os_name()
     ram, gpus, unified = None, [], False
     try:
         ram = _linux_ram()
@@ -194,5 +173,4 @@ def detect(extra_disks=()):
             gpus, unified = [{'name': model, 'vram_bytes': 0}], True
     except Exception as e:      # a strange driver must not stop setup: it then estimates from what it has
         print('setup: hardware detection:', type(e).__name__, e, flush=True)
-    return {'os': name, 'arch': arch(), 'ram_bytes': ram, 'unified_memory': unified, 'gpus': gpus, 'disks': candidate_disks(extra_disks),
-            'ai_runtime': linux_ai_runtime()}
+    return {'ram_bytes': ram, 'unified_memory': unified, 'gpus': gpus, 'disks': candidate_disks(extra_disks)}

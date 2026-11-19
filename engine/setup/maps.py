@@ -167,7 +167,6 @@ class Archive:
             raise download.Failed('network', 'The map server sent something that is not a map archive.')
         u64 = lambda o: int.from_bytes(head[o:o + 8], 'little')
         self.root_off, self.root_len = u64(8), u64(16)
-        self.meta_off, self.meta_len = u64(24), u64(32)
         self.leaf_off, self.data_off = u64(40), u64(56)
         self.compression, self.tile_type = head[97], head[99]
         if self.tile_type != 1:
@@ -180,9 +179,6 @@ class Archive:
 
     def _inflate(self, data):
         return gzip.decompress(data) if self.compression == 2 else data
-
-    def metadata(self):
-        return json.loads(self._inflate(self.get(self.meta_off, self.meta_len)))
 
     def entries(self, lo, hi, d=None, end=None):
         """Tile entries (id, run, length, offset) with lo <= id < hi; only the leaf directories that overlap are fetched."""
@@ -226,7 +222,7 @@ class Cut:
             for z in range(self.minzoom, self.maxzoom + 1):
                 x0, y0, x1, y1 = tile_range(*self.bbox, z)
                 ids = [zxy_to_id(z, x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)] if (x1 - x0 + 1) * (y1 - y0 + 1) <= 400_000 else None
-                lo = min(ids) if ids else zxy_to_id(z, 0, 0) - 0
+                lo = min(ids) if ids else zxy_to_id(z, 0, 0)
                 hi = max(ids) + 1 if ids else sum(4 ** i for i in range(z + 1))
                 spans.append((lo, hi, (z, x0, y0, x1, y1)))
         todo = []
@@ -288,14 +284,12 @@ class Cut:
 
 
 # ------------------------------------------------------------------------------------------------------ gazetteer --
-def build_places(dest, control, allowed=None, context=None, fetch=None):
+def build_places(dest, control, allowed=None, context=None):
     """The world gazetteer from GeoNames, same tables as places.sqlite (place, place_fts), so the engine searches it the
     same way. rank: countries 0, regions and cities over a million 1, over 100,000 2, the rest 3."""
     csv.field_size_limit(10_000_000)
 
     def get(name, limit):
-        if fetch:
-            return fetch(GEONAMES + name)
         data = download.fetch_small(GEONAMES + name, limit=limit, allowed=allowed, context=context, timeout=60)
         if data is None:
             raise download.Failed('network', 'Lastbook could not download the place names. Try again later.')

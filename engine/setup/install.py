@@ -23,7 +23,6 @@ DATA_NAME = 'LastbookData'
 CATALOG = Path('library-data') / 'catalog.json'
 SLACK = 1.02            # installed_bytes is measured; a zip's members may add a little in directory entries
 SPACE_MARGIN = 2 * 10 ** 9
-PENDING = 'pending.json'
 COPY = 4 * 1024 * 1024
 
 
@@ -117,8 +116,7 @@ def unpack(zip_path, into, installed_bytes, control, progress, allowed=None, ver
     members, total = check_zip(zip_path, installed_bytes, allowed)
     into = Path(into)
     into.mkdir(parents=True, exist_ok=True)
-    plain = into.resolve()
-    root = plain
+    root = into.resolve()
     done = 0
     with zipfile.ZipFile(zip_path) as z:
         for info, parts in members:
@@ -155,7 +153,7 @@ def unpack(zip_path, into, installed_bytes, control, progress, allowed=None, ver
             os.replace(part, dest)
             t = time.mktime(info.date_time + (0, 0, -1))
             os.utime(dest, (t, t))
-    lib = plain / DATA_NAME
+    lib = root / DATA_NAME
     if verify:
         verify(lib)
     elif allowed:
@@ -412,7 +410,7 @@ def _apply_map(work, pend, d, target, note):
 
 
 def _real(p):
-    return os.path.normcase(os.path.realpath(str(p)))
+    return os.path.realpath(str(p))
 
 
 def _pending_ok(d, work):

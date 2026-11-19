@@ -499,7 +499,7 @@ class Jobs(Base):
         self.assertEqual([i['state'] for i in j['items']], ['done', 'done'])
         work = self.parent / 'LastbookData.setup'
         self.assertTrue(api._pending_file(self.settings).is_file())         # in the app's settings, not the work folder
-        self.assertFalse((work / install.PENDING).exists())
+        self.assertFalse((work / 'pending.json').exists())
         self.assertFalse((work / 'downloads' / 'Lastbook-Small.zip').exists())   # deleted once unpacked
         self.assertFalse((self.parent / 'LastbookData').exists())               # nothing in place until the switch
         finished = []
@@ -826,7 +826,7 @@ class Switching(Base):
 
 
 class Manage(Base):
-    """Repair, removing the AI, and the folder picker's answer."""
+    """Repair and removing the AI."""
 
     def installed_library(self):
         """A library as setup installs it: the test pack unpacked, with a pack-manifest.tsv of its files, and the model."""
@@ -885,20 +885,6 @@ class Manage(Base):
         self.assertTrue((lib / 'library-data' / 'catalog.json').exists())
         self.assertEqual(s.remove_ai()['code'], 'nothing')
         self.assertEqual(self.setup().remove_ai()['code'], 'nothing')
-
-    def test_file_picker_is_explicit(self):
-        picker = mock.Mock(return_value=str(self.tmp / 'model.gguf'))
-        s = self.setup(pick_folder=picker)
-        self.assertEqual(s.pick(files=True)['path'], str(self.tmp / 'model.gguf'))
-        picker.assert_called_once_with(files=True)
-
-    def test_pick_answer(self):
-        s = self.setup(pick_folder=lambda: str(self.tmp))
-        r = s.pick()
-        self.assertEqual(r['path'], str(self.tmp))
-        self.assertGreater(r['free_bytes'], 0)
-        self.assertEqual(self.setup(pick_folder=lambda: None).pick(), {'path': None, 'cancelled': True})
-        self.assertTrue(all('name' in d for d in hardware.detect([self.parent])['disks']))
 
 
 def make_map(path, state='CA', extra=None):
@@ -1314,8 +1300,6 @@ class Recommend(Base):
 
     def test_hardware_here(self):
         hw = hardware.detect([self.parent])
-        self.assertEqual(hw['os'], 'linux')
-        self.assertIn(hw['ai_runtime'], ('cuda', 'vulkan', 'cpu'))
         self.assertGreater(hw['ram_bytes'], 2 ** 30)
         self.assertTrue(hw['disks'] and hw['disks'][0]['free_bytes'] > 0)
 
@@ -1353,7 +1337,7 @@ class Through(Base):
             r = ask('POST', '/api/setup/pause', {'Content-Type': 'application/json'}, b'{}')
             self.assertEqual(r.status, 200)
             r = ask('GET', '/')
-            self.assertEqual(r.status, 200)
+            self.assertEqual(r.status, 404)
             r = ask('GET', '/documents/x.pdf')
             self.assertEqual(r.status, 404)
 

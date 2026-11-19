@@ -77,11 +77,11 @@ class PipeSink:
 
 def options(app_main):
     """Setup's hooks for this window: a finished setup asks the window to restart on the new library (it starts this
-    engine again); folders are chosen by the window's own dialog, so the engine's picker is not used."""
+    engine again)."""
     def finished(folder):
         app_main.remember(Path(folder))
         send({'restart': str(folder)})
-    return dict(app_main.setup_options(), on_finish=finished, pick_folder=lambda files=False: None)
+    return dict(app_main.setup_options(), on_finish=finished)
 
 
 def version():

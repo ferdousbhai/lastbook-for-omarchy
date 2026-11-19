@@ -48,7 +48,7 @@ def real_path(path):
 
 def parts_below(real,root):
  """The path parts of real below root, or None when real is not inside root."""
- real,root=os.path.normcase(real),os.path.normcase(str(root))
+ root=str(root)
  if real==root:return ()
  prefix=root.rstrip(os.sep)+os.sep
  return tuple(real[len(prefix):].split(os.sep)) if real.startswith(prefix) else None

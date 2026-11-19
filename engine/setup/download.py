@@ -65,7 +65,7 @@ class BadChecksum(Failed):
 
 
 def disk_full(e):
-    return isinstance(e, OSError) and (e.errno in (errno.ENOSPC, getattr(errno, 'EDQUOT', -1)) or getattr(e, 'winerror', None) in (112, 39))
+    return getattr(e, 'errno', None) in (errno.ENOSPC, errno.EDQUOT)
 
 
 def host_allowed(host, allowed=None):
@@ -131,15 +131,18 @@ class Control:
             raise Stopped(self.why or 'paused')
 
 
-def _open(url, start, etag, allowed, context, timeout):
-    """(connection, response, final url) for a GET from byte `start`, after following allowed redirects."""
+def _open(url, start, etag, allowed, context, timeout, end=None):
+    """(connection, response, final url) for a GET from byte `start`, after following allowed redirects. With `end`, exactly
+    bytes start..end are asked for (always as a Range, from byte 0 too) and no If-Range is sent."""
     for _ in range(MAX_REDIRECTS + 1):
         if not url_allowed(url, allowed):
             raise Failed('network', 'Lastbook refused to download from an address it does not know.')
         u = urllib.parse.urlsplit(url)
         conn = http.client.HTTPSConnection(u.hostname, u.port or 443, timeout=timeout, context=context)
         headers = {'User-Agent': USER_AGENT, 'Accept-Encoding': 'identity'}
-        if start:
+        if end is not None:
+            headers['Range'] = f'bytes={start}-{end}'
+        elif start:
             headers['Range'] = f'bytes={start}-'
             if etag:
                 headers['If-Range'] = etag
@@ -164,21 +167,7 @@ def fetch_range(url, start, length, control, allowed=None, context=None, timeout
     for attempt in range(NETWORK_TRIES):
         control.check()
         try:
-            u = url
-            for _ in range(MAX_REDIRECTS + 1):
-                if not url_allowed(u, allowed):
-                    raise Failed('network', 'Lastbook refused to download from an address it does not know.')
-                p = urllib.parse.urlsplit(u)
-                conn = http.client.HTTPSConnection(p.hostname, p.port or 443, timeout=timeout, context=context)
-                conn.request('GET', (p.path or '/') + ('?' + p.query if p.query else ''),
-                             headers={'User-Agent': USER_AGENT, 'Accept-Encoding': 'identity', 'Range': f'bytes={start}-{start + length - 1}'})
-                r = conn.getresponse()
-                if r.status in (301, 302, 303, 307, 308) and r.getheader('Location'):
-                    u = urllib.parse.urljoin(u, r.getheader('Location'))
-                    r.close()
-                    conn.close()
-                    continue
-                break
+            conn, r, _ = _open(url, start, None, allowed, context, timeout, end=start + length - 1)
             try:
                 if r.status != 206:
                     raise Failed('network', f'The map server answered {r.status} to a part request.')
@@ -303,13 +292,8 @@ class Download:
         while start < self.size:
             self.control.check()
             try:
-                got = self._fetch(start, etag, h, ctx)
-                start, etag = got
+                start, etag = self._fetch(start, etag, h, ctx)
                 tries = 0
-            except Stopped:
-                raise
-            except Failed:
-                raise
             except _Restart as r:
                 if r.whole and not ignored_once:      # one 200 to a Range can be a passing hiccup at the edge: ask once more first
                     ignored_once = True
@@ -349,7 +333,7 @@ class Download:
         """Reads until the end or a break. Returns (bytes done, etag). Raises _Restart when the server's file is not the one begun."""
         conn, r, final = _open(self.url, start, etag, self.allowed, ctx, self.timeout)
         try:
-            if r.status == 416 or r.status >= 400:
+            if r.status >= 400:
                 if 500 <= r.status < 600:
                     raise OSError(f'HTTP {r.status}')
                 raise Failed('network', f'The download server refused the file (HTTP {r.status}).')

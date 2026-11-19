@@ -109,9 +109,8 @@ def libraries_here():
 
 
 def setup_options():
-    """Setup's hooks. The window that runs setup supplies on_finish and its own folder picker (app/engine_pipe.py)."""
-    return {'settings_dir': app_folders()[0], 'default_parent': default_parent(), 'on_finish': remember,
-            'pick_folder': lambda files=False: None, 'look_for_libraries': libraries_here}
+    """Setup's hooks. The window that runs setup supplies on_finish (app/engine_pipe.py)."""
+    return {'settings_dir': app_folders()[0], 'default_parent': default_parent(), 'look_for_libraries': libraries_here}
 
 
 class RotatingLog:

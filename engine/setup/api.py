@@ -1,8 +1,8 @@
 """/api/setup/*: the engine side of first-run setup and of Library → Library and local AI. Contract: docs/SETUP-API.md.
 
 Two ways in, one module:
-  - setup mode (no library yet): app/engine_pipe.py makes a Bridge around SetupServer, whose Handler serves web/setup.html at /, the web
-    folder at /ui/, and /api/setup/* here. Nothing else.
+  - setup mode (no library yet): app/engine_pipe.py makes a Bridge around SetupServer, whose Handler serves /api/setup/* here.
+    Nothing else.
   - normal mode: server.py hands /api/setup/ to handle(). The app's main.py configures it first (configure(...)); a bare
     server.py gets a manage-mode Setup on first use, with no relaunch (finish then answers restart: true).
 
@@ -12,7 +12,6 @@ import hashlib
 import json
 import os
 import shutil
-import sys
 import threading
 import time
 import traceback
@@ -25,7 +24,6 @@ from .manifest import Manifest
 
 DATA_NAME = install.DATA_NAME
 WORK_SUFFIX = '.setup'
-SAVE_EVERY = 2.0
 RECOMMEND_MARGIN = 5 * 10 ** 9     # beyond what the install needs, so the disk is not left full
 RECOMMEND_MARGIN_MAX = 20 * 10 ** 9
 MAX_BODY = 64 * 1024
@@ -92,20 +90,19 @@ class _Item:
 
 class Setup:
     def __init__(self, mode, settings_dir, default_parent, current=None, manifest=None, allowed=None, context=None,
-                 on_finish=None, pick_folder=None, look_for_libraries=None, home=None, llm_local=None):
+                 on_finish=None, look_for_libraries=None, home=None, llm_local=None):
         """mode: 'first-run' or 'manage'. current: the open library (manage). on_finish(folder): the app opens that library
-        (it relaunches). pick_folder(): a folder the person chose, or None. look_for_libraries(): LastbookData folders found."""
+        (it relaunches). look_for_libraries(): LastbookData folders found."""
         self.mode, self.current = mode, Path(current) if current else None
         self.settings_dir, self.default_parent = Path(settings_dir), Path(default_parent)
         self.manifest = manifest or Manifest(allowed=allowed, context=context)
         self.allowed, self.context = allowed, context
-        self.on_finish, self.pick_folder, self.look_for_libraries = on_finish, pick_folder, look_for_libraries
+        self.on_finish, self.look_for_libraries = on_finish, look_for_libraries
         self._llm = llm_local
         self.lock = threading.RLock()
         self.job, self.control, self.thread = None, None, None
         self.sources = {}          # file name -> a file already on this computer the person chose with `use`
         self.ai_measure, self.measuring = None, False
-        self.deleting = set()
         self.rejected = {}         # path -> (size, mtime) of a file already here that failed its SHA-256: not offered or used again
         self.job = self._load_job()
 
@@ -403,7 +400,7 @@ class Setup:
         left = free - need[choice['id']]
         ai = bool(model and hw['ai']['fits'] and left >= model['size'] + margin)
         if elsewhere:
-            name = elsewhere.get('name') or Path(elsewhere['path']).name or elsewhere['path']
+            name = Path(elsewhere['path']).name or elsewhere['path']
             why = (f'This computer’s own disk has {_gb(home_free)} free, not enough for any library, so {choice["title"]} goes on {name}. '
                    'Keep that disk connected: Lastbook reads the library from it.')
         else:
@@ -445,7 +442,7 @@ class Setup:
                 return {'error': 'That library is not available yet.', 'code': 'unavailable'}
             cur = self.current_info() or {}
             if folder and self.current and install._real(Path(folder).expanduser()) == install._real(self.current):
-                folder = None
+                folder = None      # the window sends the shown folder, which in manage mode is the open library itself
             same_revision = pack and (not pack.get('revision') or pack['revision'] == cur.get('content_revision', ''))
             if pack and self.mode == 'manage' and cur.get('pack') == pack['id'] and same_revision and not folder:
                 pack = None        # the same library again: only the AI is wanted
@@ -464,8 +461,6 @@ class Setup:
                 if requested_address:
                     return {'error': 'That state’s address search is not available yet.', 'code': 'unavailable'}
                 addresses = None
-            if folder and self.current and install._real(Path(folder).expanduser()) == install._real(self.current):
-                folder = None      # the window sends the shown folder, which in manage mode is the open library itself
             parent = self._parent_for(folder)
             target = self.current if self.current and not folder else parent / DATA_NAME   # the open library as it is, whatever its name
             parent = target.parent
@@ -761,22 +756,6 @@ class Setup:
         threading.Timer(0.4, self.on_finish, [folder]).start()     # after this answer has reached the window
         return {'ok': True, 'folder': folder}
 
-    def pick(self, files=False):
-        """{path, free_bytes, disk}, or {path: null, cancelled: true}."""
-        path = None
-        if self.pick_folder:
-            try:
-                path = (self.pick_folder(files=True) if files else self.pick_folder()) or None
-            except Exception:
-                traceback.print_exc()
-        if not path:
-            return {'path': None, 'cancelled': True}
-        try:
-            free, _ = hardware.disk_of(path)
-        except OSError:
-            free = None
-        return {'path': path, 'free_bytes': free, 'disk': None}
-
     def remove_ai(self):
         """Manage mode: the model file goes from the open library. The library itself is not touched."""
         m = self.manifest.model()
@@ -818,8 +797,6 @@ class Setup:
             s2 = self._settings()
             s2['old'] = [o for o in s2.get('old', []) if o != path or Path(o).exists()]
             self._save_settings(s2)
-            self.deleting.discard(path)
-        self.deleting.add(path)
         threading.Thread(target=gone, daemon=True, name='setup-delete-old').start()
         return {'ok': True, 'deleting': path}
 
@@ -1266,7 +1243,6 @@ ROUTES = {
     ('POST', 'retry'): lambda s, b: s.retry(),
     ('POST', 'use'): lambda s, b: s.use(b.get('path')),
     ('POST', 'finish'): lambda s, b: s.finish(),
-    ('POST', 'pick'): lambda s, b: s.pick(files=b.get('files') is True),
     ('POST', 'delete-old'): lambda s, b: s.delete_old(b.get('path')),
     ('POST', 'remove-ai'): lambda s, b: s.remove_ai(),
 }
@@ -1314,18 +1290,8 @@ def handle(h, method, path):
 
 
 # ------------------------------------------------------------------------------------------------ setup mode's Handler --
-def web_dir():
-    if getattr(sys, 'frozen', False):
-        return Path(getattr(sys, '_MEIPASS', Path(sys.executable).parent)) / 'web'
-    return Path(__file__).resolve().parents[2] / 'web'
-
-
-TYPES = {'.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml',
-         '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2'}
-
-
 class SetupHandler(BaseHTTPRequestHandler):
-    """All there is in setup mode: the setup page, the app's web files, and /api/setup/*."""
+    """All there is in setup mode: /api/setup/*."""
     server_version = 'Lastbook'
     sys_version = ''
     NO_CODE_CSP = ("default-src 'none'; script-src 'none'; connect-src 'none'; worker-src 'none'; object-src 'none'; manifest-src 'none'; "
@@ -1339,31 +1305,9 @@ class SetupHandler(BaseHTTPRequestHandler):
         import urllib.parse
         return urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
 
-    def _static(self, p):
-        try:
-            data = p.read_bytes()
-        except OSError:
-            return _send_json(self, {'error': 'not found'}, 404)
-        self.send_response(200)
-        self.send_header('Content-Type', TYPES.get(p.suffix, 'application/octet-stream'))
-        self.send_header('Content-Length', str(len(data)))
-        self.send_header('Cache-Control', 'no-cache')
-        self.send_header('X-Content-Type-Options', 'nosniff')
-        self.end_headers()
-        if self.command != 'HEAD':
-            self.wfile.write(data)
-
     def do_GET(self):
         path = self._path()
         if '\0' in path or '/..' in path or '\\' in path:
-            return _send_json(self, {'error': 'not found'}, 404)
-        web = web_dir()
-        if path in ('/', '/index.html', '/ui/setup.html'):
-            return self._static(web / 'setup.html')
-        if path.startswith('/ui/'):
-            p = (web / path[4:]).resolve()
-            if web.resolve() in p.parents and p.is_file():
-                return self._static(p)
             return _send_json(self, {'error': 'not found'}, 404)
         if path.startswith('/api/setup/'):
             return handle(self, self.command, path)

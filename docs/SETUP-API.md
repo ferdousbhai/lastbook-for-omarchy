@@ -93,20 +93,19 @@ are served by `engine/setup/api.py` alone. In normal mode `server.py` hands `/ap
 | `POST /api/setup/pause`, `/resume`, `/cancel`, `/retry` | `job` |
 | `POST /api/setup/use` `{path}` | uses a library or file already on this computer: `job` (verify, then unpack or activate) |
 | `POST /api/setup/finish` | `{ok: true}`; the app then opens the library (see below) |
-| `POST /api/setup/pick` | `{path}` from the system's folder picker, or `{path: null}`: a place to install (`start {folder}`) or something to `use` (a LastbookData, a folder holding one, or a folder holding a pack zip) |
 | `POST /api/setup/delete-old` `{path}` | deletes a `LastbookData.old-*` setup moved aside itself (listed in `current.old`): `{ok, deleting}` |
 | `POST /api/setup/remove-ai` | manage mode: deletes `LastbookData/models/<file>` (the library stays): `{ok, freed_bytes}` |
 | `POST /api/setup/start` `{repair: true, ai}` | manage mode: re-checks every file against the library's `pack-manifest.tsv` and the model's SHA-256 (items `verifying`); fetches again only what is wrong (the pack: downloaded and switched to like an upgrade; the model: replaced in place). All well: `done`, nothing downloaded |
 
-Added by setup-backend on 2026-11-12: `pick` (answers `{path, free_bytes, disk}` or `{path: null, cancelled: true}`), `delete-old`, `remove-ai` and repair above; `hardware.disks[].name` (Macintosh HD, "Data (D:)"); `current.old` (old libraries kept after an upgrade);
+Added by setup-backend on 2026-11-12: `delete-old`, `remove-ai` and repair above; `current.old` (old libraries kept after an upgrade);
 `recommend.folder` (where it would go) and `recommend.need_bytes` (`{pack id: bytes}` per pack); each `found` entry is
 `{kind: "library" or "pack" or "model", path, name, id, size, size_ok}`. An error answer is `{error, code}` (with HTTP 400,
 409 for `busy`/`not_done`, 507 for `no_space`). In normal mode the setup page is `/ui/setup.html`, which the bridge now allows as
 the window's top page; in setup mode it is also served at `/`. An upgrade or a new library is switched to when the app restarts
 after `finish` (the job ends `done` with the switch staged), so nothing is renamed while it is open.
 
-`hardware` = `{os: "linux", arch: "arm64" or "x64", ram_bytes, unified_memory: true or false, gpus: [{name,
-vram_bytes}], disks: [{path, name, free_bytes, total_bytes}], ai_runtime: "cuda", "vulkan" or "cpu", ai: {fits, needs_bytes, why}}`.
+`hardware` = `{ram_bytes, unified_memory: true or false, gpus: [{name,
+vram_bytes}], disks: [{path, free_bytes, total_bytes}], ai: {fits, needs_bytes, why}}`.
 `ai.fits` comes from `llm_local.judge` of a real `lastbook-llm --measure` once the model file is present. Before that, it is
 an estimate from `memory_bytes` and RAM (plus a graphics card's own memory, read from `/sys` and the NVIDIA driver's files;
 Apple silicon under Asahi counts as one unified memory), marked `"estimate": true`.
