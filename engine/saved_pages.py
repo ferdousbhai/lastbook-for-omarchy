@@ -361,7 +361,11 @@ def rewrite(data, read_local=None):
     if vtt:
         block = b'<details class="lb-transcript" open><summary>Transcript</summary><p>' + html.escape(transcript_text(vtt)).encode() + b'</p></details>'
         i = data.find(b'video-tab-content-section')
-        i = data.find(b'>', i) + 1 if i >= 0 else data.find(b'</video>') + 8
+        if i >= 0:
+            i = data.find(b'>', i) + 1
+        else:
+            i = data.find(b'</video>')
+            i = i + 8 if i >= 0 else _upto(data)      # no closing tag: after the page's last tag, never in the middle of one
         data = data[:i] + block + data[i:]
     end = _upto(data)
     m = _HEAD.search(data, 0, end) or _DOCTYPE.search(data, 0, end)

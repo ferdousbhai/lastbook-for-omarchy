@@ -141,7 +141,7 @@ class Manifest:
             return
         try:
             m = validate(json.loads(data.decode('utf-8')), self.allowed)
-        except ValueError:
+        except (ValueError, TypeError, KeyError, AttributeError):     # not JSON, or JSON in another shape: the bundled one stays
             m = None
         if m:      # merge() keeps every pinned entry, so a fetched copy can only add or mark available, whatever its date
             self.current, self.source = merge(self.current, m), 'fetched'

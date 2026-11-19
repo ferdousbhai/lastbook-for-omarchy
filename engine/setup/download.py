@@ -156,7 +156,8 @@ def _open(url, start, etag, allowed, context, timeout, end=None):
 
 
 def fetch_range(url, start, length, control, allowed=None, context=None, timeout=TIMEOUT):
-    """Exactly `length` bytes of `url` from byte `start` (one HTTP Range request), retried with backoff on a broken connection.
+    """Exactly `length` bytes of `url` from byte `start` (one HTTP Range request), retried with backoff on a broken connection
+    or a 429 or 5xx answer.
     The map is cut from a large archive this way (engine/setup/maps.py). Raises Failed, or Stopped when paused or cancelled."""
     context = context or tls_context()
     for attempt in range(NETWORK_TRIES):
@@ -164,6 +165,8 @@ def fetch_range(url, start, length, control, allowed=None, context=None, timeout
         try:
             conn, r, _ = _open(url, start, None, allowed, context, timeout, end=start + length - 1)
             try:
+                if r.status == 429 or 500 <= r.status < 600:
+                    raise OSError(f'HTTP {r.status}')     # the server is busy or briefly broken: tried again below, as a broken connection is
                 if r.status != 206:
                     raise Failed('network', f'The map server answered {r.status} to a part request.')
                 out = bytearray()
@@ -217,6 +220,16 @@ def _save_meta(path, d):
     os.replace(tmp, path)
 
 
+def _sha256(path, control, progress):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        while b := f.read(8 * CHUNK):
+            control.check()
+            h.update(b)
+            progress(f.tell())
+    return h.hexdigest()
+
+
 def _content_range(v):
     """(start, total) from 'bytes 100-199/1000', or None."""
     try:
@@ -268,7 +281,10 @@ class Download:
 
     def run(self):
         if os.path.isfile(self.dest) and os.path.getsize(self.dest) == self.size and not os.path.exists(self.part):
-            return self.dest     # finished and checked before a restart
+            if _sha256(self.dest, self.control, lambda done: self.progress(done, self.size, 'verifying')) == self.sha256:
+                return self.dest     # finished before a restart, and still what it was
+            print(f'setup: {os.path.basename(self.dest)} is here at the right size but is not the published file; downloading it again', flush=True)
+            os.unlink(self.dest)
         os.makedirs(os.path.dirname(self.dest) or '.', exist_ok=True)
         meta = _load_meta(self.meta)
         if meta and (meta.get('sha256') != self.sha256 or meta.get('size') != self.size):

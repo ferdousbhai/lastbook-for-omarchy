@@ -63,6 +63,53 @@ def _sha256(path, control, progress):
     return h.hexdigest()
 
 
+def _staging(folder, files):
+    """An unpack folder for exactly these files (their SHA-256s). What an earlier job left there for other files is removed
+    first, since unpacking over it keeps any file that happens to have the right size; the same files carry on where
+    they stopped."""
+    key, mark = [f['sha256'] for f in files], folder.with_name(folder.name + '.json')
+    try:
+        same = json.loads(mark.read_text(encoding='utf-8')) == key
+    except (OSError, ValueError):
+        same = False
+    if not same:
+        shutil.rmtree(folder, ignore_errors=True)
+        if folder.exists():
+            raise install.Refused('unpack', 'Lastbook could not clear what an earlier download left behind.')
+        folder.parent.mkdir(parents=True, exist_ok=True)
+        install._write_json(mark, key)
+
+
+def _bring(src, dest, control, progress=lambda done, total: None):
+    """The person's own file (one they chose, or one found in a library) at `dest`, with theirs left where it is, whole:
+    it is never moved into a folder that a cancel or a failed switch clears. A hard link when the disk allows (no time,
+    no room, the same bytes), else a copy made in pieces, so a pause or cancel stops it and what it wrote is removed."""
+    src, dest = Path(src), Path(dest)
+    tmp = dest.with_name(dest.name + '.partial')
+    tmp.unlink(missing_ok=True)
+    try:
+        try:
+            os.link(src, tmp)
+        except OSError:
+            total = src.stat().st_size
+            free, _ = hardware.disk_of(dest.parent)
+            if free < total + 512 * 2 ** 20:
+                raise download.Failed('no_space', f'Copying {src.name} needs {_gb(total)} free, and the disk has {_gb(free)}. Free some space, then try again.',
+                                      need_bytes=total, free_bytes=free)
+            done = 0
+            with open(src, 'rb') as f, open(tmp, 'wb') as out:
+                while b := f.read(install.COPY):
+                    control.check()
+                    out.write(b)
+                    done += len(b)
+                    progress(done, total)
+        control.check()
+        os.replace(tmp, dest)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def _same_disk(a, b):
     try:
         pa, pb = Path(a), Path(b)
@@ -590,7 +637,22 @@ class Setup:
     def _run(self):
         self.control = download.Control()
         self.thread = threading.Thread(target=self._work, args=(self.control,), daemon=True, name='setup-job')
+        self.thread.control = self.control
         self.thread.start()
+
+    def _live(self):
+        """For the job's own thread, before it changes the job (the caller holds the lock): Stopped if its run was cancelled
+        or another run has begun. Cancel waits 30 s for the thread; one that outlives that changes nothing afterwards."""
+        c = getattr(threading.current_thread(), 'control', None)
+        if c is not None and (c.why == 'cancelled' or c is not self.control):
+            raise download.Stopped('cancelled')
+
+    def _unstage(self):
+        """A switch staged by an earlier job is off: its staging folder is about to be changed."""
+        try:
+            _pending_file(self.settings_dir).unlink()
+        except OSError:
+            pass
 
     def pause(self):
         with self.lock:
@@ -723,6 +785,7 @@ class Setup:
     # ------------------------------------------------------------------------------------------------------ the work --
     def _set(self, it, state, **kw):
         with self.lock:
+            self._live()
             if it is not None:
                 it['state'] = state
                 it.update(kw)
@@ -731,6 +794,10 @@ class Setup:
 
     def _fail(self, it, code, message, **extra):
         with self.lock:
+            try:
+                self._live()
+            except download.Stopped:
+                return      # cancelled meanwhile: the job already says so
             err = {'code': code, 'message': message, **extra}
             if it is not None:
                 it['state'], it['error'], it['rate_bps'], it['eta_s'] = 'failed', err, 0, None
@@ -757,13 +824,14 @@ class Setup:
                 do = {'pack': self._do_pack, 'map': self._do_map, 'addresses': self._do_addresses, 'osm': self._do_osm}
                 do.get(it['kind'], self._do_model)(it, plan, work, control)
                 with self.lock:
+                    self._live()
                     it['state'], it['rate_bps'], it['eta_s'] = 'done', 0, None
                     self._save_job()
             it = None
             self._finish_job(plan, work)
         except download.Stopped as s:
             with self.lock:
-                if s.why == 'paused':
+                if s.why == 'paused' and control is self.control and control.why != 'cancelled':
                     if it is not None:
                         it['state'], it['rate_bps'], it['eta_s'] = 'paused', 0, None
                     job['state'] = 'paused'
@@ -856,6 +924,8 @@ class Setup:
         got = self._get_files(it, pack['files'], plan, work, control)
         tracker = _Item(it)
         self._set(it, 'unpacking', bytes_done=0, bytes_total=pack['installed_bytes'])
+        self._unstage()
+        _staging(staged, pack['files'])
         total = sum(install.check_zip(path, pack['installed_bytes'])[1] for path, _ in got)   # every member checked before any is written
         still = max(total - _tree_size(staged), 0)
         free, _ = hardware.disk_of(work)
@@ -884,6 +954,9 @@ class Setup:
         tracker = _Item(it)
         self._set(it, 'unpacking', bytes_done=0, bytes_total=mp['installed_bytes'])
         staged = work / 'unpack-map'
+        if not plan['switch']:
+            self._unstage()
+        _staging(staged, mp['files'])
         for path, _ in got:
             install.check_zip(path, mp['installed_bytes'], install.map_member)
         for path, _ in got:
@@ -917,6 +990,7 @@ class Setup:
             install.check_zip(path, entry['installed_bytes'], allowed)
         self._set(it, 'unpacking', bytes_done=0, bytes_total=entry['installed_bytes'])
         tracker = _Item(it)
+        _staging(work / 'unpack-addresses', entry['files'])
         for path, _ in got:
             lib = install.unpack(path, work / 'unpack-addresses', entry['installed_bytes'], control,
                                  lambda done, total: tracker.progress(done, total, 'unpacking'), allowed=allowed, verify=verify)
@@ -965,12 +1039,13 @@ class Setup:
         dest = lib / 'models' / m['file']
         dest.parent.mkdir(parents=True, exist_ok=True)
         self._set(it, 'activating')
-        if ours or _same_disk(path, dest):
+        if ours:
+            control.check()
             os.replace(path, dest)
         else:
-            tmp = dest.with_name(dest.name + '.partial')
-            shutil.copyfile(path, tmp)
-            os.replace(tmp, dest)
+            _bring(path, dest, control)
+        with self.lock:
+            self._live()
         plan['model_file'] = str(Path(plan['target']) / 'models' / m['file']) if plan['switch'] else str(dest)
         plan['model_sha256'] = m['sha256']           # what _get_file just matched: the streamed or re-read hash equalled this
         if not plan['switch'] and self.current:      # the library open now: the AI can use it at once
@@ -989,6 +1064,7 @@ class Setup:
 
     def _finish_job(self, plan, work):
         with self.lock:
+            self._live()
             if plan['switch']:
                 lib = work / 'unpack' / DATA_NAME
                 if not install.is_library(lib):
@@ -1073,6 +1149,19 @@ def startup(settings_dir, only=None):
         except OSError:
             pass
         return None, None
+
+
+def rolled_back(settings_dir):
+    """app/engine_pipe.py calls this when the library a switch has just put in place does not open: the old one goes back
+    (install.roll_back). A sentence saying so, or None when there was nothing to go back to."""
+    work = _read_settings(settings_dir).get('work')
+    if not work or not isinstance(work, str):
+        return None
+    try:
+        return install.roll_back(_pending_file(settings_dir), work)
+    except Exception as e:
+        print('setup: the old library could not be put back:', type(e).__name__, e, flush=True)
+        return None
 
 
 _SETTINGS = threading.Lock()      # around a read-change-write of setup.json

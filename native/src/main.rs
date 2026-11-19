@@ -64,17 +64,19 @@ fn main() -> glib::ExitCode {
                 let t = gtk::Label::new(Some("Set up Lastbook"));
                 t.add_css_class("title");
                 w.set_titlebar(Some(&omui::header(Some(t.upcast_ref()))));
-                let page = setup::SetupPage::build(engine);
+                let page = setup::SetupPage::build(engine.clone());
                 page.set_window(&w);
                 w.set_child(Some(&page.root));
                 page.refresh();
                 w.present();
+                say(&engine, w.upcast_ref());
                 unsafe { app.set_data("lastbook-setup", page) };
             }
             Ok(engine) => {
                 setup::restart_on_notice(app, &engine);
-                let ui = ui::App::build(app, engine, theme);
+                let ui = ui::App::build(app, engine.clone(), theme);
                 ui.window.present();
+                say(&engine, ui.window.upcast_ref());
                 // The window lives as long as the application does.
                 unsafe { app.set_data("lastbook-ui", ui) };
             }
@@ -93,4 +95,11 @@ fn main() -> glib::ExitCode {
     // NON_UNIQUE: the library's own lock (the engine) decides whether a second window may start.
     app.set_flags(gio::ApplicationFlags::NON_UNIQUE);
     app.run_with_args::<&str>(&[])
+}
+
+/// Shows what the engine had to tell the person when it started (a library switch that failed or was undone).
+fn say(engine: &engine::Engine, window: &gtk::Window) {
+    if let Some(notice) = engine.ready.notice.as_deref().filter(|n| !n.is_empty()) {
+        gtk::AlertDialog::builder().modal(true).message("About your library").detail(notice).build().show(Some(window));
+    }
 }

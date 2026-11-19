@@ -108,6 +108,17 @@ class Semantic(unittest.TestCase):
         self.assertEqual(ix.semantic('boil water'), [])
         self.assertIsNone(ix.query_vector('boil water'))
 
+    def test_vectors_that_are_not_numbers_mean_no_recall(self):
+        """Whatever Recall answers that is not rows of numbers of one width is RecallUnavailable, which search treats as
+        "by keyword only", never an error of another kind."""
+        r = retrieval.Recall(TMP / 'no-such.sock')
+        for bad in ([{'vector': ['a', 'b']}], [{'vector': [[1, 2]]}], [{'vector': 'ab'}], [{'vector': 7}], [{'vector': {'x': 1}}],
+                    [{'vector': [1, None]}], [{'vector': [float('nan'), 1]}], [{'vector': []}], [{}], [5], 'ab', {'x': 1}):
+            with self.subTest(bad), mock.patch.object(r, 'call', return_value={'api': 1, 'embeddings': bad}), self.assertRaises(retrieval.RecallUnavailable):
+                r.embed(['one'])
+        with mock.patch.object(r, 'call', return_value={'api': 1, 'embeddings': [{'vector': [0.6, 0.8]}]}):
+            self.assertEqual(r.embed(['one']).shape, (1, 2))
+
     def test_index_search_and_one_document(self):
         fake = FakeRecall(self.sock)
         fake.start()

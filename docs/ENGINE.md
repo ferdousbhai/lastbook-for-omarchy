@@ -12,7 +12,8 @@ input and output. The engine is Python. It opens no port and no socket of its ow
 3. The answer comes back as lines with the same id: one `head` (status and type), any number of `chunk` (text) or `b64`
    (anything else) lines as the handler writes them, and one `end`. `{"cancel": 7}` stops a request.
 
-The first line the engine writes is `{"ready": {...}}` with the data and library folders. The window reads thumbnails,
+The first line the engine writes is `{"ready": {...}}` with the data and library folders (and `notice`, a sentence, when
+a library switch failed or was undone at this start). The window reads thumbnails,
 PDFs and videos from those folders directly; only answers that need the engine come through the pipe. With no library,
 the engine starts in setup and answers `/api/setup/*` only ([SETUP-API.md](SETUP-API.md)).
 

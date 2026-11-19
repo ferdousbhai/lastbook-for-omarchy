@@ -49,6 +49,7 @@ class Files:
         self.ignore_range = set()
         self.ignore_once = {}     # name -> how many more Range requests get a 200 with the whole file
         self.redirect = {}        # name -> Location
+        self.status = {}          # name -> statuses the next answers carry instead of the file (one each)
         self.pace = 0             # seconds to sleep per 64 KiB
         self.lock = threading.Lock()
 
@@ -64,6 +65,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         name = self.path.split('?')[0].lstrip('/')
         with F.lock:
             F.log.append((name, self.headers.get('Range'), self.headers.get('If-Range')))
+        with F.lock:
+            status = F.status[name].pop(0) if F.status.get(name) else None
+        if status:
+            self.send_response(status)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
         if name in F.redirect:
             self.send_response(302)
             self.send_header('Location', F.redirect[name])
@@ -173,7 +181,7 @@ class Base(unittest.TestCase):
 
     def setUp(self):
         F = self.files
-        F.data.clear(); F.etag.clear(); F.log.clear(); F.cut_after.clear(); F.corrupt.clear(); F.ignore_range.clear(); F.ignore_once.clear(); F.redirect.clear()
+        F.data.clear(); F.etag.clear(); F.log.clear(); F.cut_after.clear(); F.corrupt.clear(); F.ignore_range.clear(); F.ignore_once.clear(); F.redirect.clear(); F.status.clear()
         F.pace = 0
         self.tmp = Path(tempfile.mkdtemp(prefix='lastbook-setup-')).resolve()
         self.home = self.tmp / 'home'
@@ -307,6 +315,33 @@ class Downloads(Base):
         p = self.dl('model.gguf').run()
         self.assertEqual(Path(p).read_bytes(), self.model)
         self.assertFalse(Path(p + '.part').exists())
+
+    def test_a_finished_file_is_checked_again_before_it_is_used(self):
+        """A download found whole at its name and size is hashed all the same: one that is not the published file is fetched again."""
+        dest = self.tmp / 'dl' / 'model.gguf'
+        dest.parent.mkdir(parents=True)
+        dest.write_bytes(self.model)
+        self.assertEqual(Path(self.dl('model.gguf').run()).read_bytes(), self.model)
+        self.assertEqual(self.files.log, [])                    # the right file: nothing asked of the server
+        dest.write_bytes(bytes(len(self.model)))                # the right size, other bytes
+        self.assertEqual(Path(self.dl('model.gguf').run()).read_bytes(), self.model)
+        self.assertEqual([name for name, _, _ in self.files.log], ['model.gguf'])
+
+    def test_a_part_request_is_asked_again_after_a_busy_answer(self):
+        """The map cutter's range requests: 429 and 5xx are tried again like a broken connection; a plain refusal is not."""
+        url = f'{self.base}/model.gguf'
+        with fast_backoff():
+            self.files.status['model.gguf'] = [503, 429, 500]
+            got = download.fetch_range(url, 1000, 5000, download.Control(), allowed=ALLOWED, context=self.ctx)
+            self.assertEqual(got, self.model[1000:6000])
+            self.assertEqual(len(self.files.log), 4)
+            self.files.status['model.gguf'] = [403]
+            with self.assertRaises(download.Failed):
+                download.fetch_range(url, 0, 10, download.Control(), allowed=ALLOWED, context=self.ctx)
+            self.assertEqual(len(self.files.log), 5)
+            self.files.status['model.gguf'] = [503] * download.NETWORK_TRIES
+            with self.assertRaises(download.Failed):
+                download.fetch_range(url, 0, 10, download.Control(), allowed=ALLOWED, context=self.ctx)
 
     def test_cut_mid_file_resumes_with_range(self):
         self.files.cut_after['model.gguf'] = [700_000, 1_500_000]
@@ -631,6 +666,75 @@ class Jobs(Base):
         self.assertEqual(self.wait(s)['state'], 'done')
         self.assertNotIn('model.gguf', [name for name, _, _ in self.files.log])
         self.assertEqual((self.parent / 'LastbookData.setup' / 'unpack' / 'LastbookData' / 'models' / 'model.gguf').read_bytes(), self.model)
+        self.assertEqual(model.read_bytes(), self.model)        # the person's own file is still theirs, where it was
+        s.cancel()                                              # the staged library goes; their file does not
+        self.assertFalse((self.parent / 'LastbookData.setup' / 'unpack').exists())
+        self.assertEqual(model.read_bytes(), self.model)
+
+    def test_the_persons_model_is_copied_in_pieces_and_a_cancel_stops_it(self):
+        src, dest = self.home / 'Downloads' / 'model.gguf', self.tmp / 'lib' / 'models' / 'model.gguf'
+        src.write_bytes(self.model)
+        dest.parent.mkdir(parents=True)
+        with mock.patch.object(api.os, 'link', side_effect=OSError('no links on this disk')), mock.patch.object(install, 'COPY', 64 * 1024):
+            control, seen = download.Control(), []
+
+            def progress(done, total):
+                seen.append(done)
+                if done > 300_000:
+                    control.stop('cancelled')
+            with self.assertRaises(download.Stopped):
+                api._bring(src, dest, control, progress)
+            self.assertLess(seen[-1], len(self.model))
+            self.assertEqual(list(dest.parent.iterdir()), [])       # nothing half copied is left
+            self.assertEqual(src.read_bytes(), self.model)
+            api._bring(src, dest, download.Control())
+            self.assertEqual((dest.read_bytes(), src.read_bytes()), (self.model, self.model))
+            self.assertEqual(os.stat(dest).st_nlink, 1)
+        dest.unlink()
+        api._bring(src, dest, download.Control())                   # where the disk allows: the same bytes, no second copy
+        self.assertTrue(os.path.samefile(src, dest))
+
+    def test_a_thread_that_outlives_its_cancel_changes_nothing(self):
+        model = self.home / 'Downloads' / 'model.gguf'
+        model.write_bytes(self.model)
+        cur = self.parent / 'LastbookData'
+        (cur / 'library-data').mkdir(parents=True)
+        (cur / 'library-data' / 'catalog.json').write_text('{}')
+        (cur / 'pack.json').write_text('{"name": "small"}')
+        s = self.setup('manage', current=cur)
+        entered, let_go = threading.Event(), threading.Event()
+
+        def slow(src, dest, control, progress=None):       # a step that does not notice the cancel for a long time
+            entered.set()
+            let_go.wait(20)
+            Path(dest).write_bytes(Path(src).read_bytes())
+        with mock.patch.object(api, '_bring', slow), mock.patch.object(api.Setup, '_join', lambda self: self.thread.join(0.2)):
+            self.assertIsNone(s.use(str(model)).get('error'))
+            self.assertTrue(entered.wait(20))
+            j = s.cancel()
+            self.assertEqual((j['state'], j['error']['code']), ('failed', 'cancelled'))
+            thread = s.thread
+            let_go.set()
+            thread.join(20)
+        j = s.public_job()
+        self.assertEqual((j['state'], j['error']['code']), ('failed', 'cancelled'))      # not 'done', whatever the thread did after
+        self.assertEqual(self.marked, [])
+        self.assertEqual(json.loads(api._job_file(self.settings).read_text())['state'], 'failed')
+
+    def test_a_new_job_does_not_unpack_over_another_packs_staging(self):
+        """What an earlier job unpacked for other files is cleared: a file of the same name and size would otherwise be kept."""
+        staged = self.parent / 'LastbookData.setup' / 'unpack' / 'LastbookData'
+        (staged / 'library-data').mkdir(parents=True)
+        (staged / 'library-data' / 'big.bin').write_bytes(bytes(3 * MiB))          # the size of the new pack's own, other bytes
+        (staged / 'library-data' / 'left-over.sqlite').write_bytes(b'from the other pack')
+        (self.parent / 'LastbookData.setup' / 'unpack.json').write_text(json.dumps(['0' * 64]))
+        s = self.setup()
+        s.start('small', False)
+        self.assertEqual(self.wait(s)['state'], 'done')
+        with zipfile.ZipFile(io.BytesIO(self.zip)) as z:
+            self.assertEqual((staged / 'library-data' / 'big.bin').read_bytes(), z.read('LastbookData/library-data/big.bin'))
+        self.assertFalse((staged / 'library-data' / 'left-over.sqlite').exists())
+        self.assertEqual(json.loads((self.parent / 'LastbookData.setup' / 'unpack.json').read_text()), [sha(self.zip)])
 
     def test_found_zip_is_used_without_network(self):
         self.parent.mkdir()
@@ -815,27 +919,120 @@ class Switching(Base):
         self.assertEqual((elsewhere / 'library-data' / 'catalog.json').read_text(), 'x')
         self.assertEqual((lib / 'library-data' / 'catalog.json').read_text(), 'open')
 
-    def test_new_library_that_does_not_open_is_rolled_back(self):
+    def staged(self):
+        """An open library holding the person's model and world map, and a new one staged to replace it at the next start."""
         cur = self.lib(self.parent / 'LastbookData', 'old')
+        (cur / 'models').mkdir()
+        (cur / 'models' / 'model.gguf').write_bytes(self.model)
+        (cur / 'derived' / 'geo').mkdir(parents=True)
+        (cur / 'derived' / 'geo' / 'world.mbtiles').write_bytes(b'the world')
         new = self.lib(self.parent / 'LastbookData.setup' / 'unpack' / 'LastbookData', 'new')
         install.stage_switch(api._pending_file(self.settings), new, cur)
         (self.settings / 'setup.json').write_text(json.dumps({'work': str(self.parent / 'LastbookData.setup')}))
-        real = install.is_library
-        calls = []
+        return cur, new
 
-        def flaky(folder):      # the new one goes missing after the rename: it "does not open"
-            calls.append(folder)
-            if Path(folder) == cur and len(calls) > 2:
-                return False
-            return real(folder)
-        with mock.patch.object(install, 'is_library', flaky):
+    def theirs(self, lib):
+        return ((lib / 'models' / 'model.gguf').is_file() and (lib / 'models' / 'model.gguf').read_bytes() == self.model
+                and (lib / 'derived' / 'geo' / 'world.mbtiles').is_file())
+
+    def test_new_library_that_does_not_open_is_rolled_back(self):
+        """The engine cannot open what the switch put in place: the old library goes back, once, with the model and the map."""
+        sys.path.insert(0, str(ROOT / 'app'))
+        out = sys.stdout
+        import engine_pipe          # importing it points sys.stdout at the log, as the engine process wants
+        sys.stdout = out
+        cur, new = self.staged()
+        lib, note = api.startup(self.settings)
+        self.assertEqual(((lib / 'library-data' / 'catalog.json').read_text(), self.theirs(lib)), ('new', True))
+        opened = []
+
+        def init():
+            opened.append((cur / 'library-data' / 'catalog.json').read_text())
+            if opened[-1] == 'new':
+                raise ValueError('a library that does not open')
+        with mock.patch.dict(sys.modules, {'server': mock.Mock(init=init)}):
+            engine_pipe.open_library(api, self.settings, note)
+            self.assertEqual(opened, ['new', 'old'])
+            self.assertEqual((cur / 'library-data' / 'catalog.json').read_text(), 'old')
+            self.assertTrue(self.theirs(cur))
+            self.assertIn('put the old one back', note['error'])
+            self.assertIsNone(note['old'])
+            self.assertIsNone(api.opened(self.settings, lib, note))      # the old library, open again, is not deleted
+            self.assertEqual((cur / 'library-data' / 'catalog.json').read_text(), 'old')
+            self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData', 'LastbookData.failed'])
+            self.assertEqual((self.parent / 'LastbookData.failed' / 'library-data' / 'catalog.json').read_text(), 'new')
+            self.assertIsNone(api.rolled_back(self.settings))            # once: there is no going back a second time
+            opened.clear()
+            (cur / 'library-data' / 'catalog.json').write_text('new')    # a library that fails with no switch behind it
+            with self.assertRaises(ValueError):
+                engine_pipe.open_library(api, self.settings, None)
+            self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData', 'LastbookData.failed'])
+
+    def test_a_rename_that_fails_leaves_the_old_library_whole(self):
+        """Nothing of the person's is moved until both renames are made, so neither failure can strand the model in a
+        folder that is then cleared."""
+        for failing in ('the old library aside', 'the new library in'):
+            with self.subTest(failing):
+                shutil.rmtree(self.parent, ignore_errors=True)
+                shutil.rmtree(self.settings, ignore_errors=True)
+                self.settings.mkdir(parents=True)
+                cur, new = self.staged()
+                real = os.replace
+
+                def replace(a, b):
+                    if Path(a) == (cur if failing.startswith('the old') else new):
+                        raise PermissionError('in use')
+                    return real(a, b)
+                with mock.patch.object(install.os, 'replace', replace):
+                    lib, note = api.startup(self.settings)
+                self.assertEqual(lib, cur)
+                self.assertIn('error', note)
+                self.assertEqual(((cur / 'library-data' / 'catalog.json').read_text(), self.theirs(cur)), ('old', True))
+                api.opened(self.settings, lib, note)                     # clears the work folder: nothing of theirs was in it
+                self.assertTrue(self.theirs(cur))
+                self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData'])
+
+    def test_a_switch_cut_short_is_finished_at_the_next_start(self):
+        """The program stops (power, a crash) before, between or after the renames, or half way through bringing the
+        person's files across: the next start carries on from what is on disk."""
+        class Stop(BaseException):
+            pass
+        for at in (1, 2, 3, 4, 5, 6):     # saving the plan, the two renames, the model, the map, saving that it is done
+            with self.subTest(replace_call=at):
+                shutil.rmtree(self.parent, ignore_errors=True)
+                shutil.rmtree(self.settings, ignore_errors=True)
+                self.settings.mkdir(parents=True)
+                cur, new = self.staged()
+                real, calls = os.replace, []
+
+                def replace(a, b):
+                    calls.append(a)
+                    if len(calls) == at:
+                        raise Stop
+                    return real(a, b)
+                with mock.patch.object(install.os, 'replace', replace), self.assertRaises(Stop):
+                    api.startup(self.settings)
+                lib, note = api.startup(self.settings)
+                self.assertEqual(lib, cur)
+                self.assertNotIn('error', note)
+                self.assertEqual(((cur / 'library-data' / 'catalog.json').read_text(), self.theirs(cur)), ('new', True))
+                old = Path(note['old'])
+                self.assertEqual((old / 'library-data' / 'catalog.json').read_text(), 'old')
+                api.opened(self.settings, lib, note).join(20)            # and the old one is listed, so it goes
+                self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData'])
+                self.assertTrue(self.theirs(cur))
+
+    def test_what_cannot_be_brought_across_stays_in_an_old_library_that_is_kept(self):
+        cur, new = self.staged()
+        with mock.patch.object(install, 'carry_over', side_effect=PermissionError('in use')):
             lib, note = api.startup(self.settings)
-        self.assertEqual((cur / 'library-data' / 'catalog.json').read_text(), 'old')
-        self.assertIn('error', note)
+        self.assertEqual((lib, (cur / 'library-data' / 'catalog.json').read_text()), (cur, 'new'))
+        self.assertIn('kept as LastbookData.old-', note['error'])
         self.assertIsNone(note['old'])
-        self.assertIsNone(api.opened(self.settings, lib, note))      # the old library, open again, is not deleted
-        self.assertEqual((cur / 'library-data' / 'catalog.json').read_text(), 'old')
-        self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData', 'LastbookData.failed'])
+        self.assertIsNone(api.opened(self.settings, lib, note))          # not listed for deletion: it still holds the model
+        old = [p for p in self.parent.iterdir() if p.name.startswith('LastbookData.old-')]
+        self.assertEqual(len(old), 1)
+        self.assertTrue(self.theirs(old[0]))
 
     def test_failed_switch_leaves_library(self):
         cur = self.lib(self.parent / 'LastbookData', 'old')

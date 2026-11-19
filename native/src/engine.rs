@@ -37,6 +37,9 @@ pub struct Ready {
     #[serde(default)]
     pub library: PathBuf,
     pub version: Option<String>,
+    /// A sentence for the person, when a library switch failed or was undone at this start.
+    #[serde(default)]
+    pub notice: Option<String>,
 }
 
 type Waiters = Arc<Mutex<HashMap<u64, async_channel::Sender<Piece>>>>;

@@ -66,10 +66,12 @@ class PipeSink:
                 send({'id': self.rid, 'b64': base64.b64encode(chunk).decode('ascii')})
 
     def finish(self, ok):
-        send({'id': self.rid, 'end': bool(ok)})
-        with _open:
-            _running.pop(self.rid, None)
-            _open.notify_all()
+        try:
+            send({'id': self.rid, 'end': bool(ok)})
+        finally:     # also when the window has gone and the pipe is closed: the request is over, and main() is waiting to leave
+            with _open:
+                _running.pop(self.rid, None)
+                _open.notify_all()
 
 
 def start(bridge, rid, method, path, body):
@@ -87,6 +89,24 @@ def cancel(rid):
         _open.notify_all()
     if ex:
         ex.cancel()
+
+
+def open_library(setup_api, settings_dir, note):
+    """The engine, on the library LASTBOOK_DATA names. If it does not open and a switch has just put it there (note), the
+    old library is put back, once, and opened instead; note['error'] then says so. Any other failure is raised as it is."""
+    import server
+    try:
+        server.init()
+    except Exception:
+        said = setup_api.rolled_back(settings_dir) if note else None
+        if not said:
+            raise
+        import traceback
+        traceback.print_exc()
+        print('setup:', said, flush=True)
+        note['error'], note['old'] = said, None
+        server.init()
+    return server
 
 
 def options(app_main):
@@ -126,13 +146,15 @@ def main():
         os.environ['LASTBOOK_DATA'] = str(data)
         os.environ.setdefault('LASTBOOK_LOCAL_AI', '1')
         app_main.open_log(data)     # the installed app's output goes to the log from here; the protocol stays on OUT
-        import server
-        server.init()
+        server = open_library(setup_api, app_main.app_folders()[0], note)
         if not given or note:   # the library opened: mark the model checked, delete the old library an upgrade moved aside
             setup_api.opened(app_main.app_folders()[0], data, note)
         setup_api.configure(mode='manage', current=data, **options(app_main))
         bridge = B.Bridge(server)
-        send({'ready': {'setup': False, 'data': str(data), 'library': str(server.LIB), 'version': app_main.version()}})
+        ready = {'setup': False, 'data': str(data), 'library': str(server.LIB), 'version': app_main.version()}
+        if note and note.get('error'):
+            ready['notice'] = note['error']     # a switch that failed or was undone at this start, in a sentence
+        send({'ready': ready})
     for line in sys.stdin:
         try:
             req = json.loads(line)

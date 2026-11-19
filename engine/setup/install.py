@@ -6,9 +6,11 @@
 Every member of a zip is checked before anything is written: a relative name under LastbookData/, no '..', no drive or root,
 no symbolic link, no device, and a total no larger than the manifest's installed_bytes. Files are written as <name>.partial and
 renamed when whole, so an unpack that stops (a crash, power) carries on where it was. Switching is one rename on one disk.
-An upgrade first moves the old library aside to LastbookData.old-<date>; when the app restarts it opens the new one, and only if
-that fails to open is the old one put back (apply_pending, called by app/engine_pipe.py before the engine starts). Once the new
-one has opened, the old one is deleted (api.opened; is_old_of says which folders that may be).
+An upgrade first moves the old library aside to LastbookData.old-<date>, puts the new one in its place, and only then brings
+the person's own files across (the model, their maps): apply_pending, called by app/engine_pipe.py before the engine starts.
+Each step is written down first, so a switch cut short is finished at the next start. If the engine then cannot open the new
+library, the old one is put back, once (roll_back). Once the new one has opened, the old one is deleted (api.opened;
+is_old_of says which folders that may be).
 """
 import json
 import os
@@ -28,9 +30,9 @@ COPY = 4 * 1024 * 1024
 
 
 class Refused(Exception):
-    def __init__(self, code, message):
+    def __init__(self, code, message, kept=None):
         super().__init__(message)
-        self.code, self.message = code, message
+        self.code, self.message, self.kept = code, message, kept
 
 
 def is_library(folder):
@@ -252,27 +254,72 @@ def carry_over(old, new):
     return moved
 
 
-def switch(new_lib, target):
-    """The renames. Returns the old library's new name, or None when there was none. Raises Refused, leaving things as they were."""
+def switch(new_lib, target, old=None, resume=False):
+    """The renames, then the person's own files brought across from the old library (carry_over). Returns the old library's
+    new name, or None when there was none. Raises Refused with things as they were: nothing of the person's is moved until
+    both renames have been made, so a rename that fails leaves the old library whole, model and maps in it.
+
+    old: the name the old library goes to, when the caller chose and saved it beforehand (apply_pending). resume: this
+    switch was begun before and cut short (the program stopped), so whatever of it is already done is taken as done and
+    the rest is carried out. Raises Refused with code 'carry' if the new library is in place but something could not be
+    brought across; .kept is then the old library, which still holds it."""
     new_lib, target = Path(new_lib), Path(target)
-    if not is_library(new_lib):
-        raise Refused('activate', 'The new library is not complete.')
-    old = None
-    if target.exists():
-        old = old_name(target)
-        if is_library(target):
-            carry_over(target, new_lib)
+    old = Path(old) if old else None
+    if is_library(new_lib):
+        if target.exists():
+            old = old or old_name(target)
+            if os.path.lexists(old):
+                raise Refused('activate', 'Lastbook could not move the old library aside: its new name is already taken.')
+            try:
+                os.replace(target, old)
+            except OSError as e:
+                raise Refused('activate', f'Lastbook could not move the old library aside ({type(e).__name__}). Close anything using it, then try again.')
+        elif not (resume and old and old.exists()):
+            old = None      # nothing was there: a first install
         try:
-            os.replace(target, old)
+            os.replace(new_lib, target)
         except OSError as e:
-            raise Refused('activate', f'Lastbook could not move the old library aside ({type(e).__name__}). Close anything using it, then try again.')
-    try:
-        os.replace(new_lib, target)
-    except OSError as e:
-        if old:
-            os.replace(old, target)
-        raise Refused('activate', f'Lastbook could not put the new library in place ({type(e).__name__}).')
+            if old:
+                os.replace(old, target)
+            raise Refused('activate', f'Lastbook could not put the new library in place ({type(e).__name__}).')
+    elif resume and is_library(target):
+        old = old if old and old.exists() else None     # both renames were made before the program stopped
+    else:
+        raise Refused('activate', 'The new library is not complete.')
+    if old and is_library(old):
+        try:
+            carry_over(old, target)
+        except OSError as e:
+            raise Refused('carry', f'The new library is in place, but Lastbook could not bring everything across from the old one '
+                                   f'({type(e).__name__}). The old one was kept as {old.name}.', kept=old)
     return old
+
+
+def roll_back(pend, work):
+    """The library a switch put in place did not open: the old one goes back, with what was carried across from it, and the
+    one that failed is kept beside it as <name>.failed. Returns a sentence saying so, or None when there is nothing to go
+    back to (no switch waiting to be confirmed, or no old library). It happens once: the pending switch is then over."""
+    pend = Path(pend)
+    try:
+        d = json.loads(pend.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    if not _pending_ok(d, work) or d.get('kind') == 'map' or not d.get('switched') or not d.get('old'):
+        return None
+    target, old = Path(d['target']), Path(d['old'])
+    if not is_old_of(str(old), target) or not is_library(old):
+        return None
+    broken, i = target.with_name(target.name + '.failed'), 2
+    while os.path.lexists(broken):
+        broken, i = target.with_name(f'{target.name}.failed-{i}'), i + 1
+    os.replace(target, broken)
+    os.replace(old, target)
+    try:
+        carry_over(broken, target)      # the model, the maps and the address indexes went into the new one: they go back too
+    except OSError as e:
+        print('setup: not everything came back from', broken.name, type(e).__name__, e, flush=True)
+    confirm(pend)
+    return 'The new library did not open, so Lastbook put the old one back.'
 
 
 # ----------------------------------------------------------------------------------------------------------- state maps --
@@ -468,27 +515,29 @@ def apply_pending(pend, work):
     note = {'target': str(target), 'old': None, 'model_file': d.get('model_file'), 'model_sha256': d.get('model_sha256')}
     if d.get('kind') == 'map':
         return _apply_map(work, pend, d, target, note)
-    if d.get('switched'):
-        lib_ok = is_library(target)
-    else:
+    if not d.get('switched'):
+        # What is about to happen is written down before any rename, so a stop at any point leaves a state the next start
+        # finishes: `switching` with the old library's new name first, `switched` once everything is across.
+        begun = bool(d.get('switching'))
+        if not begun:
+            d['switching'], d['old'] = True, str(old_name(target)) if target.exists() else None
+            _write_json(pend, d)
         try:
-            old = switch(d['new'], target)
+            old = switch(d['new'], target, d.get('old'), resume=begun)
         except Refused as e:
             print('setup: switch failed:', e.message, flush=True)
-            pend.unlink()
             note['error'] = e.message
-            return (target if is_library(target) else None), note
+            if e.code != 'carry':
+                pend.unlink()
+                return (target if is_library(target) else None), note
+            old = None      # the old library still holds something of the person's: it is kept, never listed for deletion
         d['switched'], d['old'] = True, old and str(old)
         _write_json(pend, d)
-        lib_ok = is_library(target)
     note['old'] = d.get('old')
-    if not lib_ok and d.get('old') and Path(d['old']).exists():
-        broken = target.with_name(target.name + '.failed')
-        os.replace(target, broken)
-        os.replace(d['old'], target)
-        carry_over(broken, target)      # the model file, moved into the new one, goes back too
-        note['error'] = 'The new library did not open, so Lastbook put the old one back.'
-        note['old'] = None
+    if not is_library(target):      # cannot happen after switch(); the engine's own failure to open it is roll_back's, from api.rolled_back
+        said = roll_back(pend, work)
+        if said:
+            note['error'], note['old'] = said, None
     return target if is_library(target) else None, note
 
 

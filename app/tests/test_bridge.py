@@ -580,6 +580,17 @@ class StreamTests(Both, unittest.TestCase):
             self.assertEqual(P._running, {})
             P.start(self.b, 'bad', 'PUT', '/', None)     # refused at once: nothing is left behind for it
             self.assertEqual(P._running, {})
+
+            def closed(obj):     # the window has gone: every write to its pipe fails
+                raise BrokenPipeError
+            P.send = closed
+            sink = P.PipeSink('gone')
+            self.assertIn('gone', P._running)
+            with self.assertRaises(BrokenPipeError):
+                sink.finish(True)
+            self.assertEqual(P._running, {})             # over all the same, so the engine does not wait 30 s to leave
+            P.start(self.b, 'gone too', 'GET', '/api/t/echo', None)
+            self.assertTrue(wait_until(lambda: not P._running))
         finally:
             P.send = real_send
 

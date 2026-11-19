@@ -42,6 +42,15 @@ pub struct SetupPage {
     ai_present: Cell<bool>,
 }
 
+/// About how many street-level (zoom 15) map tiles a region's box [west, south, east, north] holds.
+fn street_tiles(bbox: &Value) -> f64 {
+    let v = |i: usize| bbox[i].as_f64().unwrap_or(0.0);
+    let (w, s, e, n) = (v(0), v(1).max(-85.05), v(2), v(3).min(85.05));
+    let row = |lat: f64| (1.0 - lat.to_radians().tan().asinh() / std::f64::consts::PI) / 2.0;
+    let wide = if e >= w { e - w } else { e - w + 360.0 } / 360.0;
+    wide * (row(s) - row(n)) * 4f64.powi(15)
+}
+
 fn gb(bytes: f64) -> String {
     if bytes >= 1e9 { format!("{:.1} GB", bytes / 1e9) } else { format!("{:.0} MB", bytes / 1e6) }
 }
@@ -326,8 +335,19 @@ impl SetupPage {
         let all: Vec<Value> = st["map_regions"].as_array().cloned().unwrap_or_default();
         let name_of_all = all.clone();
         let name_of = move |id: &str| name_of_all.iter().find(|r| r["id"] == id).and_then(|r| r["name"].as_str()).unwrap_or(id).to_owned();
-        // Whole continents are tens of GB: offered are countries and their parts (Russia is its own top-level region).
-        let mut all: Vec<Value> = all.into_iter().filter(|r| r["parent"].as_str().is_some_and(|p| !p.is_empty()) || r["id"] == "russia").collect();
+        // Offered are countries and their parts. Continents, and countries so large that street level runs to tens of
+        // GB (Russia, the US, Canada, Australia), are left out: their parts are in the list.
+        let ids: Vec<String> = all.iter().filter_map(|r| r["id"].as_str().map(str::to_owned)).collect();
+        let parents: std::collections::HashSet<String> = all.iter().filter_map(|r| r["parent"].as_str().map(str::to_owned)).collect();
+        let mut all: Vec<Value> = all
+            .into_iter()
+            .filter(|r| {
+                let id = r["id"].as_str().unwrap_or_default();
+                let top = r["parent"].as_str().is_none_or(str::is_empty);
+                let has_parts = parents.contains(id) || ids.iter().any(|i| i.strip_prefix(id).is_some_and(|rest| rest.starts_with('/')));
+                !top && !(has_parts && street_tiles(&r["bbox"]) > 40e6)
+            })
+            .collect();
         all.sort_by_key(|r| r["name"].as_str().unwrap_or_default().to_lowercase());
         if has_world {
             let installed: Vec<String> = have["regions"].as_array().into_iter().flatten()
