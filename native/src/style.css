@@ -95,15 +95,7 @@ expander-widget.choice > box > title {
   transition: background-color 160ms ease-out;
 }
 expander-widget.choice > box > title:hover { background: alpha(@om_text, 0.04); }
-expander-widget.choice > box > title:focus-visible { outline: 2px solid @om_accent; outline-offset: -2px; }
-/* GTK names the arrow `expander` and marks it, not the widget, :checked while the choice is open. */
-expander-widget.choice > box > title > expander {
-  color: @om_accent;
-  min-width: 16px;
-  min-height: 16px;
-  -gtk-icon-source: -gtk-icontheme("om-chevron-right-symbolic");
-}
-expander-widget.choice > box > title > expander:checked { -gtk-icon-source: -gtk-icontheme("om-chevron-down-symbolic"); }
+expander-widget.choice > box > title > expander { color: @om_accent; }
 expander-widget.choice > box > box { padding-left: 12px; }
 
 .limits {
