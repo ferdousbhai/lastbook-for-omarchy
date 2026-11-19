@@ -56,13 +56,7 @@ def places():
     out = [paths.DATA / 'models', paths.DATA, hf_snapshot()]
     if os.environ.get('LASTBOOK_MODEL_DIR'):
         out.insert(0, Path(os.environ['LASTBOOK_MODEL_DIR']))
-    seen, res = set(), []
-    for p in out:
-        k = str(p)
-        if k not in seen:
-            seen.add(k)
-            res.append(p)
-    return res
+    return list(dict.fromkeys(out))
 
 
 # ------------------------------------------------------------------------------------------------------ state on disk --
@@ -514,7 +508,7 @@ def _arg(v):
     return [[str(v), False]]
 
 
-def _params(props, required):
+def _params(props):
     out = []
     for i, key in enumerate(sorted(props)):
         v = props[key]
@@ -545,7 +539,7 @@ def declaration(tool):
     if p:
         s += ',parameters:{'
         if p.get('properties'):
-            s += 'properties:{' + _params(p['properties'], p.get('required') or []) + '},'
+            s += 'properties:{' + _params(p['properties']) + '},'
         if p.get('required'):
             s += 'required:[' + ','.join(f'{Q}{r}{Q}' for r in p['required']) + '],'
         if p.get('type'):

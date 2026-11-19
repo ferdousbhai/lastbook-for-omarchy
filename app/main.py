@@ -86,10 +86,7 @@ def data_folder(arg):
         return Path(arg)
     if os.environ.get('LASTBOOK_DATA'):
         return Path(os.environ['LASTBOOK_DATA'])
-    for folder in places():
-        if folder is not None and (found := check(folder)[0]):
-            return found
-    return None
+    return (libraries_here() or [None])[0]
 
 
 # ---------------------------------------------------------------------------------------------------------------- setup --
@@ -155,5 +152,4 @@ def open_log(data):
     log = RotatingLog(logs / 'lastbook.log')
     if INSTALLED:
         sys.stdout = sys.stderr = log
-    return logs
 

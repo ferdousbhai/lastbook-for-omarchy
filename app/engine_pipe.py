@@ -54,8 +54,7 @@ class PipeSink:
             _open_ids.add(rid)
 
     def head(self, status, reason, headers):
-        hs = dict((k.lower(), v) for k, v in (headers.items() if hasattr(headers, 'items') else headers))
-        ctype = hs.get('content-type', '')
+        ctype = next((v for k, v in headers if k.lower() == 'content-type'), '')
         self.text = ctype.startswith('text/') or any(t in ctype for t in ('json', 'javascript', 'xml', 'svg', 'event-stream'))
         send({'id': self.rid, 'head': status, 'type': ctype})
 
@@ -107,7 +106,6 @@ def main():
         # No library yet: first-run setup. Nothing here reaches the network until the person starts a download.
         work = app_main.app_folders()[1] / 'Setup'
         app_main.open_log(work)
-        sys.stdout = sys.stderr
         setup_api.configure(mode='first-run', **options(app_main))
         bridge = B.Bridge(setup_api.SetupServer)
         send({'ready': {'setup': True, 'data': None, 'library': '', 'version': version()}})
@@ -115,8 +113,7 @@ def main():
         data = found
         os.environ['LASTBOOK_DATA'] = str(data)
         os.environ.setdefault('LASTBOOK_LOCAL_AI', '1')
-        app_main.open_log(data)
-        sys.stdout = sys.stderr      # open_log points the standard streams at the log; keep the protocol on OUT
+        app_main.open_log(data)     # the installed app's output goes to the log from here; the protocol stays on OUT
         import server
         server.init()
         if not given or note:   # the library opened: mark the model checked, delete the old library an upgrade moved aside

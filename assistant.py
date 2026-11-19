@@ -117,6 +117,11 @@ def record(doc_id):
     return r
 
 
+def _page_body(texts, p, limit):
+    """Page p of a document's texts with runs of spaces closed up, cut to limit; '' when there is no such page."""
+    return re.sub(r'[ \t]{2,}', ' ', texts[p - 1]).strip()[:limit] if 0 < p <= len(texts) else ''
+
+
 def _allowed(kind):
     cat = S.catalog()['by_id']
     ok = {'any': None, 'manual': ('pdf', 'html', 'pptx'), 'video': ('video', 'transcript'), 'encyclopedia': ()}.get(kind or 'any')
@@ -126,9 +131,8 @@ def _allowed(kind):
 def hybrid(q, k=8, kind='any', doc=None):
     """Best passages for q from keyword and meaning-based search, fused, with provenance."""
     cat = S.catalog()
-    allowed = _allowed(kind)
-    if doc:
-        allowed = (lambda base: (lambda d: d == doc and base(d)))(allowed)
+    base = _allowed(kind)
+    allowed = (lambda d: d == doc and base(d)) if doc else base
     kw = []
     for doc_id, page, snip in _fts(q, 120):
         r = cat['by_id'].get(doc_id)
@@ -310,7 +314,7 @@ def run_tool(name, args, sess, extra_msgs):
             if not 1 <= p <= max(1, len(texts)):
                 out.append(f'(page {p} does not exist; the document has {len(texts)} pages)')
                 continue
-            body = re.sub(r'[ \t]{2,}', ' ', texts[p - 1]).strip()[:3500] or '(no text on this page — it may be a picture; use view_page)'
+            body = _page_body(texts, p, 3500) or '(no text on this page — it may be a picture; use view_page)'
             src = _src(r, p, None, body)
             out.append(_src_block(sess.add(src), src, body))
         return '\n\n'.join(out), {'doc_id': d, 'title': S.public(r)['title'], 'pages': pages}
@@ -393,7 +397,7 @@ def context_for(about, sess):
             return None
         texts = S.page_texts(r)
         p = int(p)
-        body = re.sub(r'[ \t]{2,}', ' ', texts[p - 1]).strip()[:4000] if 0 < p <= len(texts) else ''
+        body = _page_body(texts, p, 4000)
         src = _src(r, p, None, body)
         k = sess.add(src)
         return "The person is looking at this page right now (questions like 'this' refer to it):\n" + _src_block(k, src, body or '(no extractable text on this page; use view_page)') + f"\nDocument id for tools: {d}"
@@ -554,9 +558,7 @@ def chat(messages, about, emit, cancelled):
                 body = h['excerpt']
                 if n < 4 and h['kind'] == 'pdf' and h.get('page'):  # whole page for the best few, so a second read is rarely needed
                     r = S.catalog()['by_id'][h['doc_id']]
-                    ps = S.page_texts(r)
-                    if 0 < h['page'] <= len(ps):
-                        body = re.sub(r'[ \t]{2,}', ' ', ps[h['page'] - 1]).strip()[:3200]
+                    body = _page_body(S.page_texts(r), h['page'], 3200) or body
                 blocks.append(_src_block(sess.add(h), h, body))
             msgs.append({'role': 'system', 'content': 'Initial library search results for the latest question (already retrieved — search again only if these are not enough; use read_pages to check exact wording):\n\n' + '\n\n'.join(blocks)})
         else:

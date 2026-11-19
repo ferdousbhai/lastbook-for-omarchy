@@ -46,6 +46,7 @@ _excl = {'mtime': None, 'ids': set()}
 
 
 def excluded_videos():
+    """Ids of the videos the library owner rejected (library-data/video-exclusions.json), and of their details and transcript records."""
     p = LIB / 'video-exclusions.json'
     try:
         m = p.stat().st_mtime
@@ -54,10 +55,10 @@ def excluded_videos():
     if m != _excl['mtime']:
         try:
             ids = set(json.loads(p.read_text(encoding='utf-8')).get('videos', {}))
-            _excl.update(mtime=m, ids=ids | {'metadata-' + i for i in ids})
+            _excl.update(mtime=m, ids=ids | {'metadata-' + i for i in ids} | {i.replace('video-', 'transcript-', 1) for i in ids})
             _cat['mtime'] = 0  # re-filter the catalog with the new list
         except (ValueError, OSError):
-            pass
+            pass  # half-written file: keep the previous list
     return _excl['ids']
 
 
@@ -519,7 +520,8 @@ def videos_home():
     for r in catalog()['by_id'].values():
         if r['kind'] == 'video':
             rows.setdefault(vrow_of(r), []).append(r)
-    res = [{'id': 'guides', 'title': 'Picked for the guides', 'note': 'Chosen to go with the survival guides', 'count': len(guide_videos()), 'items': guide_videos()[:16]}]
+    picked = guide_videos()
+    res = [{'id': 'guides', 'title': 'Picked for the guides', 'note': 'Chosen to go with the survival guides', 'count': len(picked), 'items': picked[:16]}]
     for vid, title, _ in VROWS:
         rs = sorted(rows.get(vid, []), key=vsort)
         if VROW_NOTE.get(vid, '').startswith('Hobbyist'):
@@ -558,20 +560,7 @@ def videos_list(row, q='', length='', sort='', offset=0, limit=48):
 
 
 # ------------------------------------------------------------- pages/text ----
-def page_texts(r):
-    """The document's text, one string per page. Cached per file version: a chat reads the same few documents many times."""
-    p = LIB / (r.get('text_path') or f"text/{r['id']}.txt")  # catalog may be mid-rewrite and miss text_path
-    try:
-        st = p.stat()
-    except OSError:
-        return []
-    return list(_page_texts(str(p), st.st_mtime_ns, st.st_size))
-
-
-@functools.lru_cache(maxsize=32)
-def _page_texts(path, _mtime_ns, _size):
-    t = Path(path).read_text(encoding='utf-8', errors='replace')
-    return tuple(t.split('\n\f\n') if '\n\f\n' in t else t.split('\f'))
+page_texts = retrieval.page_texts
 
 
 def png_bytes(rgb):
@@ -608,31 +597,19 @@ def render_page(r, n, width):
 
 
 def vtt_cues(path):
-    cues, cur = [], None
-    for line in (LIB / path).read_text(encoding='utf-8', errors='replace').splitlines():
-        m = re.match(r'(\d+):(\d\d):(\d\d)[.,](\d+)\s+-->', line) or re.match(r'(\d\d):(\d\d)[.,](\d+)\s+-->', line)
-        if m:
-            g = m.groups()
-            t = int(g[0]) * 3600 + int(g[1]) * 60 + int(g[2]) if len(g) == 4 else int(g[0]) * 60 + int(g[1])
-            cur = {'t': t, 'text': ''}
-            cues.append(cur)
-        elif cur is not None and line.strip() and not line.strip().isdigit():
-            txt = html.unescape(re.sub(r'<[^>]+>', '', line)).strip()
-            if txt and not cur['text'].endswith(txt):
-                cur['text'] = (cur['text'] + ' ' + txt).strip()
     # auto captions repeat lines across cues; drop repeats and merge into ~sentence chunks
     out, last = [], ''
-    for c in cues:
-        t = c['text']
+    for at, text in retrieval.cues(LIB / path):
+        t = text
         if t.startswith(last) and last:
             t = t[len(last):].strip()
         if not t:
             continue
-        last = c['text']
-        if out and c['t'] - out[-1]['t'] < 12 and len(out[-1]['text']) < 220:
+        last = text
+        if out and at - out[-1]['t'] < 12 and len(out[-1]['text']) < 220:
             out[-1]['text'] += ' ' + t
         else:
-            out.append({'t': c['t'], 'text': t})
+            out.append({'t': at, 'text': t})
     return out
 
 
@@ -1280,7 +1257,7 @@ def init(no_index=False):
     """Everything the engine needs before it can answer a request. Opens no socket."""
     global INDEX
     catalog()
-    INDEX = retrieval.Index(catalog, trust, library.DB)
+    INDEX = retrieval.Index(catalog, trust, library.DB, excluded_fn=excluded_videos)
     assistant.init(sys.modules[__name__], INDEX)
     if not no_index:
         threading.Thread(target=INDEX.run_forever, daemon=True).start()

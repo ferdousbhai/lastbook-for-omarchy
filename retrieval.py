@@ -11,7 +11,7 @@ The semantic index lives in derived/index/: semantic.sqlite (passages, per-docum
 vectors) and vectors.f16 (append-only float16 rows, row i = passage id i+1). It grows incrementally: documents whose
 catalog signature changed or that are new get (re)embedded; a different model empties it. Nothing in library-data is written.
 """
-import html, json, os, re, socket, sqlite3, sys, threading, time
+import functools, html, json, os, re, socket, sqlite3, sys, threading, time
 from pathlib import Path
 
 import numpy as np
@@ -146,21 +146,41 @@ def chunks_of(text):
     return [c for c in out if len(c) >= MINLEN and readable(c)]
 
 
-def vtt_windows(path, span=45):
-    """Timed transcript windows (~45 s) so answers can cite a moment in a video."""
-    cues, cur = [], None
+def cues(path):
+    """[[seconds, text]] for each cue of a VTT file, tags taken out, as written (auto captions repeat lines across cues)."""
+    out, cur = [], None
     for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
         m = re.match(r'(?:(\d+):)?(\d\d):(\d\d)[.,]\d+\s+-->', line)
         if m:
-            h = int(m.group(1) or 0)
-            cur = [h * 3600 + int(m.group(2)) * 60 + int(m.group(3)), '']
-            cues.append(cur)
+            cur = [int(m.group(1) or 0) * 3600 + int(m.group(2)) * 60 + int(m.group(3)), '']
+            out.append(cur)
         elif cur is not None and line.strip() and not line.strip().isdigit():
             t = html.unescape(re.sub(r'<[^>]+>', '', line)).strip()
             if t and not cur[1].endswith(t):
                 cur[1] = (cur[1] + ' ' + t).strip()
+    return out
+
+
+def page_texts(r):
+    """The document's text, one string per page. Cached per file version: a chat reads the same few documents many times."""
+    p = LIB / (r.get('text_path') or f"text/{r['id']}.txt")  # catalog may be mid-rewrite and miss text_path
+    try:
+        st = p.stat()
+    except OSError:
+        return []
+    return list(_page_texts(str(p), st.st_mtime_ns, st.st_size))
+
+
+@functools.lru_cache(maxsize=32)
+def _page_texts(path, _mtime_ns, _size):
+    t = Path(path).read_text(encoding='utf-8', errors='replace')
+    return tuple(t.split('\n\f\n') if '\n\f\n' in t else t.split('\f'))
+
+
+def vtt_windows(path, span=45):
+    """Timed transcript windows (~45 s) so answers can cite a moment in a video."""
     out, start, buf, last = [], None, [], ''
-    for t, txt in cues:
+    for t, txt in cues(path):
         if txt.startswith(last) and last:
             txt = txt[len(last):].strip()
         last = txt or last
@@ -178,13 +198,13 @@ def vtt_windows(path, span=45):
 
 
 class Index:
-    def __init__(self, catalog_fn, trust_fn, fts_db, recall=None):
-        self.catalog_fn, self.trust_fn, self.fts_db = catalog_fn, trust_fn, fts_db
+    def __init__(self, catalog_fn, trust_fn, fts_db, recall=None, excluded_fn=lambda: set()):
+        """excluded_fn: the ids of rejected videos and of their records (server.excluded_videos); never indexed or returned."""
+        self.catalog_fn, self.trust_fn, self.fts_db, self.excluded = catalog_fn, trust_fn, fts_db, excluded_fn
         IDX.mkdir(parents=True, exist_ok=True)
         self.db_path = IDX / 'semantic.sqlite'
         self.vec_path = IDX / 'vectors.f16'
         self._tls = threading.local()
-        self._excl = {'mtime': None, 'ids': set()}
         db = self._db()
         db.execute('PRAGMA journal_mode=WAL')
         db.executescript('''CREATE TABLE IF NOT EXISTS chunk(id INTEGER PRIMARY KEY, doc_id TEXT, page INTEGER, t REAL, text TEXT, active INTEGER DEFAULT 1);
@@ -302,21 +322,6 @@ class Index:
         return v
 
     # ------------------------------------------------------------ indexing --
-    def excluded(self):
-        """Video ids the library owner rejected (library-data/video-exclusions.json); never indexed or returned."""
-        p = LIB / 'video-exclusions.json'
-        try:
-            m = p.stat().st_mtime
-        except FileNotFoundError:
-            return set()
-        if m != self._excl['mtime']:
-            try:
-                ids = set(json.loads(p.read_text(encoding='utf-8')).get('videos', {}))
-                self._excl.update(mtime=m, ids=ids | {'metadata-' + i for i in ids} | {i.replace('video-', 'transcript-', 1) for i in ids})
-            except (ValueError, OSError):
-                pass  # half-written file: keep the previous list
-        return self._excl['ids']
-
     def sources(self):
         """(doc_id, signature, priority, loader) for every text the assistant may read."""
         cat = self.catalog_fn()
@@ -348,10 +353,7 @@ class Index:
             rows = con.execute('SELECT page, body FROM pages WHERE doc_id=? ORDER BY CAST(page AS INTEGER)', (doc_id,)).fetchall()
             con.close()
             if not rows:  # not in the keyword index (yet); fall back to the extracted text file
-                p = LIB / (r.get('text_path') or f'text/{doc_id}.txt')
-                if p.is_file():
-                    t = p.read_text(encoding='utf-8', errors='replace')
-                    rows = list(enumerate(t.split('\n\f\n') if '\n\f\n' in t else t.split('\f'), 1))
+                rows = list(enumerate(page_texts(r), 1))
             return [(int(p), None, c) for p, b in rows for c in chunks_of(b)]
         if kind == 'vtt':
             return [(None, t, txt) for t, txt in vtt_windows(LIB / how[2])]
@@ -551,10 +553,6 @@ class Index:
                     return out
         return out
 
-    def gaps_for(self, doc_ids):
-        db = self._ro()
-        return dict(db.execute(f"SELECT doc_id, reason FROM gaps WHERE doc_id IN ({','.join('?' * len(doc_ids))})", list(doc_ids)).fetchall()) if doc_ids else {}
-
 
 def one(db, sql, args=()):
     """First row of a query, always stepping the statement to completion (an unfinished statement keeps an old
@@ -577,7 +575,7 @@ def rrf(lists, k=60):
 if __name__ == '__main__':  # python retrieval.py  -> build/refresh the semantic index once
     sys.path.insert(0, str(lastbook_paths.APP))
     import server
-    ix = Index(server.catalog, server.trust, server.library.DB)
+    ix = Index(server.catalog, server.trust, server.library.DB, excluded_fn=server.excluded_videos)
     print('documents:', len(ix.sources()), flush=True)
     stop = threading.Event()
 
