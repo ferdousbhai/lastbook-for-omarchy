@@ -124,6 +124,16 @@ impl SearchPage {
         if self.entry.text() != q {
             self.entry.set_text(q);
         }
+        // An empty search takes the keyboard (unless the person is arrowing through the sidebar). Later, from idle: a click
+        // on the sidebar row moves the focus back to that row after this runs.
+        if q.is_empty() {
+            let (entry, app) = (self.entry.clone(), self.app.clone());
+            glib::idle_add_local_once(move || {
+                if !app.upgrade().is_some_and(|a| a.sidebar_has_focus()) {
+                    entry.grab_focus();
+                }
+            });
+        }
         if *self.shown.borrow() == (q.to_owned(), kind.to_owned()) {
             return;
         }
@@ -134,9 +144,6 @@ impl SearchPage {
         self.thumbs.borrow_mut().clear();
         if q.is_empty() {
             self.status.set_text("");
-            if !self.app.upgrade().is_some_and(|a| a.sidebar_has_focus()) {
-                self.entry.grab_focus();
-            }
             return;
         }
         self.status.set_text("Searching…");
