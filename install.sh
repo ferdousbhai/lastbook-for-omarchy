@@ -9,7 +9,8 @@
 # the [lastbook-for-omarchy] repository, installs an Omarchy hook that
 # restores it after `omarchy refresh pacman` rewrites /etc/pacman.conf, and
 # installs the package (with vulkan-asahi on Apple hardware, for the local
-# AI on the graphics card). There is no per-user step: the first launch
+# AI on the graphics card). Then, as the desktop user who ran sudo, it
+# installs the agent skill (`lastbook skill install`). The first launch
 # opens Lastbook's own setup, which downloads the library you choose.
 # At a terminal it then asks whether to add Recall for Omarchy (optional:
 # search by meaning); `| sudo bash -s -- --yes` asks nothing.
@@ -154,6 +155,25 @@ else
   fi
 fi
 
+# The agent skill (how an AI agent on this computer uses the `lastbook`
+# commands) is the desktop user's own file, ~/.agents/skills/lastbook, so it is
+# written as the user who ran sudo, never as root. The window keeps it current.
+install_skill() {
+  local user uid home as_user=()
+  user="${SUDO_USER:-${USER:-$(id -un)}}"
+  uid="$(id -u "$user" 2>/dev/null)" || uid=''
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  if [[ -z $uid || $uid == 0 || -z $home ]]; then
+    echo 'For AI agents, as your desktop user: lastbook skill install'
+    return 0
+  fi
+  (( EUID == 0 )) && as_user=(runuser -u "$user" --)
+  if ! "${as_user[@]}" env "HOME=$home" /usr/bin/lastbook skill install </dev/null >/dev/null; then
+    echo "Lastbook is installed, but its agent skill is not. As $user, run: lastbook skill install" >&2
+  fi
+}
+install_skill
+
 # Recall for Omarchy is optional: with it, Lastbook also searches by meaning.
 # Asked only when someone is at a terminal to answer (`curl … | sudo bash`
 # reads this script from the pipe, so the answer comes from the terminal
@@ -188,4 +208,5 @@ if (( recall_hint )); then
   echo "For meaning-based search, add Recall for Omarchy (optional):"
   echo "  curl -fsSL $RECALL_INSTALLER | sudo bash"
 fi
+echo "From a terminal or an AI agent: lastbook --help, lastbook skill"
 echo "Updates arrive with the rest of the system through: omarchy update"

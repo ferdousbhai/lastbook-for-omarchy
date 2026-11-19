@@ -109,6 +109,10 @@ check "the Omarchy hook is installed" [ -x "$hooks/lastbook-for-omarchy" ]
 check "it says how to add Recall, without installing it" grep -q 'ferdousbhai.com/recall/install.sh' "$work/out"
 check "it never installs Recall itself" not grep -q recall "$PACMAN_LOG"
 check "the installer says it is done" grep -q '^Done' "$work/out"
+# The skill belongs to the desktop user. Here the installer runs as root itself, so it writes none and says how.
+check "as root it says how to install the agent skill" grep -qx 'For AI agents, as your desktop user: lastbook skill install' "$work/out"
+check "as root it writes no skill" [ ! -e /root/.agents ]
+check "it names the command line" grep -q 'lastbook --help' "$work/out"
 check "updates come through omarchy update" grep -q 'omarchy update' "$work/out"
 LASTBOOK_RECALL_COMMAND=true bash install.sh >"$work/have-recall.out" 2>&1
 check "with Recall already installed it does not suggest it" not grep -q 'recall/install.sh' "$work/have-recall.out"
