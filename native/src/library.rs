@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! The browsing screens: Library (shelves, then a shelf's collections and documents, and a search inside the
-//! encyclopedias), Saved (what the person starred) and About (what this library holds, and credits).
+//! The browsing screens: Library (shelves, then a shelf's collections and documents), Saved (what the person starred)
+//! and About (what this library holds, and credits).
 
 use std::{
     path::PathBuf,
@@ -13,8 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    cards::{self, activate, card, column, encyclopedia_name, route_of, section},
-    engine::query,
+    cards::{self, activate, card, column, route_of, section},
     ui::{App, Route},
 };
 
@@ -78,9 +77,6 @@ pub struct Browse {
     app: Weak<App>,
     library: gtk::Box,
     shelf: gtk::Box,
-    /// The encyclopedias' part of the Library screen: a search box and what it found.
-    enc: gtk::Box,
-    enc_results: gtk::Box,
     saved: gtk::Box,
     about: gtk::Box,
 }
@@ -91,14 +87,6 @@ impl Browse {
         let (ss, shelf) = column(12);
         let (sv, saved) = column(12);
         let (ab, about) = column(12);
-        let enc = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        enc.append(&section("Encyclopedias"));
-        enc.append(&label("Community-written: check safety-critical steps against a manual.", "dim"));
-        let entry = gtk::SearchEntry::new();
-        entry.set_placeholder_text(Some("Search the encyclopedias"));
-        enc.append(&entry);
-        let enc_results = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        enc.append(&enc_results);
         let b = Rc::new(Self {
             library_root: ls.upcast(),
             shelf_root: ss.upcast(),
@@ -107,16 +95,8 @@ impl Browse {
             app: Rc::downgrade(app),
             library,
             shelf,
-            enc,
-            enc_results,
             saved,
             about,
-        });
-        let me = Rc::downgrade(&b);
-        entry.connect_activate(move |e| {
-            if let Some(me) = me.upgrade() {
-                me.search_encyclopedias(e.text().as_str());
-            }
         });
         b
     }
@@ -148,10 +128,6 @@ impl Browse {
                 grid.insert(&c, -1);
             }
             me.library.append(&grid);
-            let has = engine.get("/api/library").await.is_ok_and(|l| l["collections"].as_u64().unwrap_or(0) > 0);
-            if has {
-                me.library.append(&me.enc);
-            }
         });
     }
 
@@ -179,34 +155,6 @@ impl Browse {
                 for d in col["items"].as_array().into_iter().flatten() {
                     me.shelf.append(&doc_card(&me.app, d));
                 }
-            }
-        });
-    }
-
-    fn search_encyclopedias(self: &Rc<Self>, q: &str) {
-        clear(&self.enc_results);
-        let Some(app) = self.app.upgrade() else { return };
-        if q.trim().is_empty() {
-            return;
-        }
-        let (engine, me, q) = (app.engine.clone(), Rc::downgrade(self), q.to_owned());
-        glib::spawn_future_local(async move {
-            let r = engine.get(&query("/api/collection-search", &[("q", &q)])).await;
-            let Some(me) = me.upgrade() else { return };
-            let hits: Vec<Value> = r.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
-            if hits.is_empty() {
-                let l = gtk::Label::new(Some("No articles found. Try another word for the same thing."));
-                l.add_css_class("status-line");
-                me.enc_results.append(&l);
-                return;
-            }
-            for h in hits {
-                let name = encyclopedia_name(h["collection"].as_str().unwrap_or_default());
-                let name = if name == "Appropedia" { format!("{name} — appropriate technology") } else { name.to_owned() };
-                let c = card(h["title"].as_str().unwrap_or_default(), "", &name, None);
-                let path = h["path"].as_str().unwrap_or_default().trim_start_matches("zim/").to_owned();
-                activate(&c, me.app.clone(), Route::Wiki { path });
-                me.enc_results.append(&c);
             }
         });
     }
