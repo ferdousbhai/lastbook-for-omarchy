@@ -342,9 +342,8 @@ class Both:
         self.assertNotIn(fixture.CANARY, r.body)
 
     def test_symlink_out_of_the_library_is_refused(self):
-        """A link to a file outside the library, in its own test: on a machine with no right to make links the fixture cannot build one, and a skip says so where an address that is simply absent would have looked like a pass."""
-        if not fixture.LINKED:
-            self.skipTest('no right to make symbolic links here')
+        """A link from a served folder to a file outside the library."""
+        self.assertTrue(os.path.isfile(fixture.LIB / 'documents' / 'out.txt'))
         for method in ('GET', 'HEAD'):
             r = call(self.b, method, '/documents/out.txt')
             self.assertGreaterEqual(r.status, 400, method)
@@ -793,9 +792,7 @@ class WholeProcess(unittest.TestCase):
         how = 'lsof -i'
         self.assertIn('python', files, 'the process file/module listing came back empty, so this check proved nothing')
         self.assertEqual(out.strip(), '', out)
-        for word in ('onnx', 'bge-small', 'derived/models'):
-            self.assertNotIn(word, files)
-        self.assertNotIn('onnxruntime.', ' '.join(k for k, v in sys.modules.items() if v is not None))
+        self.assertNotIn('derived/models', files)
         OBSERVED[f'{how} for this process'] = 'no rows' if not out.strip() else out
 
     def test_nothing_written_to_the_real_library(self):

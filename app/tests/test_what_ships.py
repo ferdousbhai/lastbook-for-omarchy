@@ -16,7 +16,6 @@ import fixture  # noqa: E402
 DATA = fixture.ensure()
 os.environ['LASTBOOK_DATA'] = str(DATA)
 os.environ['SURVIVAL_MODEL_BASE'] = 'http://127.0.0.1:9'
-sys.modules['onnxruntime'] = None   # no model runtime here
 from engine import saved_pages  # noqa: E402
 import server  # noqa: E402
 

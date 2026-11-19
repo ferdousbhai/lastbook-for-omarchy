@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Builds the manifest the app carries: setup/manifest-v1.json (docs/SETUP-API.md, "The manifest").
+"""Rewrites the manifest the package ships: packaging/arch/manifest-v1.json (docs/SETUP-API.md, "The manifest").
 
-  python3 -I -B packaging/release_manifest.py [--packs derived/release/manifest-v1.json] [--out derived/release/setup/manifest-v1.json]
-                                              [--measure /path/to/the.gguf] [--small-from derived/release/1.0.0-20261104-1507]
+  python3 -I -B packaging/release_manifest.py [--packs manifest.json] [--out packaging/arch/manifest-v1.json]
+                                              [--measure /path/to/the.gguf] [--small-from <release folder>]
 
-Packs come from derived/release/manifest-v1.json, which session publish-packs writes for each verified pack. The model entry comes
+Packs, state maps and address indexes are upstream Lastbook's: they are copied from --packs, by default the shipped manifest
+itself (or pass a copy of https://downloads.lastbook.org/manifest-v1.json to take upstream's newer list). The model entry comes
 from llm_local.py's constants (file, size, SHA-256, revision), so the two cannot drift. memory_bytes is llama.cpp's measure of
 the model and its context (device + host bytes from lastbook-llm --measure): MEASURED_MEMORY below, or measured again with --measure.
---small-from builds the Small pack's entry from a release folder's SHA256SUMS.txt when the packs file has none (before
-publish-packs has written it). Every URL must be on an allowed host (engine/setup/download.py) or the build stops.
-The packaging spec bundles the output as setup/manifest-v1.json.
+--small-from builds the Small pack's entry from a release folder's SHA256SUMS.txt when the packs file has none.
+Every URL must be on an allowed host (engine/setup/download.py) or the build stops. The PKGBUILD installs the output as setup/manifest-v1.json.
 """
 import argparse
 import json
@@ -64,8 +64,9 @@ def small_from(folder):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--packs', default=str(ROOT / 'derived' / 'release' / 'manifest-v1.json'))
-    ap.add_argument('--out', default=str(ROOT / 'derived' / 'release' / 'setup' / 'manifest-v1.json'))
+    shipped = str(ROOT / 'packaging' / 'arch' / 'manifest-v1.json')
+    ap.add_argument('--packs', default=shipped)
+    ap.add_argument('--out', default=shipped)
     ap.add_argument('--measure', help='a copy of the model file to measure memory_bytes from')
     ap.add_argument('--small-from', help='a release folder holding Lastbook-Small.zip and SHA256SUMS.txt')
     a = ap.parse_args()
@@ -83,7 +84,7 @@ def main():
             except (OSError, ValueError):
                 pass
     if not packs:
-        sys.exit(f'no packs: {a.packs} is missing or empty (publish-packs writes it); --small-from builds Small alone')
+        sys.exit(f'no packs: {a.packs} is missing or empty; --small-from builds Small alone')
     out = {'version': 1, 'published': src.get('published') or time.strftime('%Y-%m-%d'), 'packs': packs, 'maps': list(src.get('maps') or []),
            'address_indexes': list(src.get('address_indexes') or []),
            'models': [model_entry(measure(a.measure) if a.measure else MEASURED_MEMORY)]}

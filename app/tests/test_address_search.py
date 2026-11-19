@@ -39,7 +39,7 @@ class AddressSearchTests(unittest.TestCase):
                             for num, street, city, st, z, lat, lon in rows])
             db.commit()
         finally:
-            db.close()      # the `with` form commits but does not close, and Windows will not remove an open file
+            db.close()      # the `with` form commits but does not close
 
     def test_numeric_words_directions_and_qualifiers(self):
         for query in ('18001 9 mile rd Novi MI', '18001 Nine Mile Road Novi Michigan',
@@ -82,7 +82,7 @@ class AddressSearchTests(unittest.TestCase):
             db.execute("INSERT INTO addr VALUES('23001','Maple Avenue','maple ave','Kansas City','MO','64105',39.0997,-94.5786)")
             db.commit()
         finally:
-            db.close()      # as in write_state: the `with` form does not close, and Windows will not remove an open file
+            db.close()      # as in write_state: the `with` form does not close
         self.assertEqual(find_addresses('23001 Maple Ave Kansas City MO', empty)[0]['lat'], 39.0997)
 
     def test_app_route_preserves_address_number(self):

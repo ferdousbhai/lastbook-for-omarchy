@@ -7,7 +7,6 @@ DATA = ROOT / 'derived' / 'app-build' / 'testdata'
 LIB = DATA / 'library-data'
 CANARY = b'CANARY-MUST-NEVER-BE-SERVED'
 MiB = 1024 * 1024
-LINKED = False   # True once a link from a served folder to a file outside the library is in place: Windows needs Developer Mode or an administrator for that
 
 
 def pattern(offset, n):
@@ -24,22 +23,14 @@ def write_pattern(path, size):
 
 
 def link_out():
-    """The link the escape checks need: a served folder pointing at a file outside the library. Checked on every run, not remembered, so a machine that gains the right to make links (Developer Mode) gets it without deleting the fixture first, and a link that was removed or points somewhere else is put back."""
-    global LINKED
+    """The link the escape checks need: a served folder pointing at a file outside the library. Made again on every run, so one that was removed or points somewhere else is put back."""
     link, target = LIB / 'documents' / 'out.txt', DATA / 'outside-canary.txt'
     target.parent.mkdir(parents=True, exist_ok=True)
     if not target.is_file():
         target.write_bytes(CANARY)      # the 'ready' branch below does not rebuild the fixture: a deleted canary would leave a link that resolves to nothing
-    good = link.is_symlink() and os.path.isfile(link) and os.path.realpath(link) == os.path.realpath(target)
-    if not good:
-        try:
-            if link.is_symlink() or link.exists():
-                link.unlink()
-            os.symlink(target, link)
-            good = True
-        except OSError:
-            good = False    # Windows without the right: the address simply does not exist, and its test says so out loud
-    LINKED = good
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    os.symlink(target, link)
 
 
 def ensure():

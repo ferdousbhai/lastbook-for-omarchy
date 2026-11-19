@@ -27,8 +27,8 @@ NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$')
 
 def bundled_paths():
     root = Path(__file__).resolve().parents[2]
-    return [root / 'setup' / 'manifest-v1.json', root / 'derived' / 'release' / 'setup' / 'manifest-v1.json',
-            root / 'packaging' / 'arch' / 'manifest-v1.json']   # the copy the package ships
+    return [root / 'setup' / 'manifest-v1.json',                 # the installed package
+            root / 'packaging' / 'arch' / 'manifest-v1.json']    # a checkout: the copy the package ships
 
 
 def _int(v):

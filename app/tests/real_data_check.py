@@ -155,7 +155,7 @@ note(f'flood of {N} video pieces', lane.active == 0 and not lane.waiting,
 LSOF = shutil.which('lsof') or 'lsof'
 files = subprocess.run([LSOF, '-nP', '-p', str(os.getpid())], capture_output=True, text=True).stdout.lower()
 net = subprocess.run([LSOF, '-nP', '-a', '-p', str(os.getpid()), '-i'], capture_output=True, text=True).stdout
-note('no socket and no model file open', not net.strip() and 'onnx' not in files and 'bge-small' not in files, f'lsof -i rows: {len(net.strip().splitlines())}')
+note('no socket and no model file open', not net.strip() and '.gguf' not in files, f'lsof -i rows: {len(net.strip().splitlines())}')
 print(f'{sum(results)} of {len(results)} passed; peak RSS of the whole run {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024 / MiB:.0f} MiB', flush=True)
 sys.stdout.flush()
 os._exit(0 if all(results) else 1)

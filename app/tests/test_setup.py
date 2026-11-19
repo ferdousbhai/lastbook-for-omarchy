@@ -7,7 +7,7 @@ The test server lives only in this file: it serves a small fake pack and model o
 for the run, and can cut the connection mid-file, send wrong bytes, change the file's ETag, ignore Range, or redirect anywhere.
 The product's allowlist is not touched: tests pass their own `allowed` and TLS context to the downloader. Never packaged.
 """
-import hashlib, http.server, io, json, os, shutil, signal, socketserver, ssl, subprocess, sys, tempfile, threading, time, unittest, zipfile
+import hashlib, http.server, io, json, os, re, shutil, signal, socketserver, ssl, subprocess, sys, tempfile, threading, time, unittest, zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -259,13 +259,15 @@ class Allowlist(unittest.TestCase):
             for word in ('http.client', 'urllib.request', 'socket.create_connection', 'HTTPSConnection', 'import socket'):
                 self.assertNotIn(word, t, f'{p.name}: {word}')
 
-    def test_bundled_manifest_urls(self):
-        p = ROOT / 'derived' / 'release' / 'setup' / 'manifest-v1.json'
-        if not p.is_file():
-            self.skipTest('no bundled manifest built yet (packaging/release_manifest.py)')
-        m = manifest.validate(json.loads(p.read_text()))
+    def test_shipped_manifest(self):
+        """The manifest the package ships validates, and its model entry is the file llm_local pins."""
+        import llm_local
+        m = manifest.validate(json.loads((ROOT / 'packaging' / 'arch' / 'manifest-v1.json').read_text()))
         self.assertIsNotNone(m)
-        self.assertTrue(m['models'] and m['packs'])
+        self.assertTrue(m['packs'])
+        model, = m['models']
+        self.assertEqual((model['file'], model['size'], model['sha256']), (llm_local.FILE, llm_local.SIZE, llm_local.SHA256))
+        self.assertIn(re.search(r'revision ([0-9a-f]{40})', llm_local.SOURCE).group(1), model['url'])
 
     def test_fetched_manifest_keeps_bundled_entries(self):
         bundled = manifest.validate({'version': 1, 'published': '2026-11-12', 'packs': [
