@@ -77,7 +77,7 @@ lastbook open med-443ae5cfaa6ecc68 38             # a new window at that page; a
 id), 2 invalid arguments; an error is one line on standard error. `--data FOLDER` names the library, as for the window.
 The commands run beside an open window: they only read the library (the window keeps indexing), and write nothing but
 the engine's own caches. Only `ask` loads the AI model, in a process of its own (so with the window's model loaded too
-there are two in memory, about 17 GB each: on a computer short of memory it can get other programs killed); without a local AI it exits 1, and `search` still finds the passages. Only `open` starts a window.
+there are two in memory, about 17 GB each); it exits 1 without a local AI, or when too little memory is free to load the model, and `search` still finds the passages. Only `open` starts a window.
 
 The agent skill (`skills/lastbook/SKILL.md`) tells an agent when and how to use these. `lastbook skill` prints it;
 `lastbook skill install` writes it to `~/.agents/skills/lastbook` and links it from `~/.claude/skills` and
