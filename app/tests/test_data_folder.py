@@ -168,5 +168,18 @@ class Lookup(unittest.TestCase):
             self.assertEqual(llm_local.places()[0], chosen)
 
 
+class FreeMemory(unittest.TestCase):
+    def test_the_model_is_not_started_without_room_for_it(self):
+        import llm_local
+        gib = 2 ** 30
+        fit = {'needs': 25 * gib, 'fits': True}
+        self.assertIsNone(llm_local.not_enough_free(fit, available=30 * gib))
+        said = llm_local.not_enough_free(fit, available=27 * gib)     # what ran this computer out of memory
+        self.assertIn('Not enough free memory', said)
+        self.assertIn('29.0 GB is free', said)
+        self.assertIsNone(llm_local.not_enough_free(None, available=1))            # nothing measured yet: judge() decides
+        self.assertIsNone(llm_local.not_enough_free({'needs': 0}, available=1))
+
+
 if __name__ == '__main__':
     unittest.main()

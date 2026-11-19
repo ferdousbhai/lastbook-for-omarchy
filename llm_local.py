@@ -251,6 +251,9 @@ class Local:
             if self.state not in ('stopped', 'loading', 'error') or not self.path or not (self.fit or {}).get('fits'):
                 return self.message or 'The local AI is not set up on this computer.'
             if self.state != 'loading':
+                short = not_enough_free(self.fit)
+                if short:
+                    return short
                 self._spawn()
         t0 = time.time()
         while time.time() - t0 < START_WAIT:
@@ -449,6 +452,32 @@ def unified_memory():
         return b'apple,' in Path('/proc/device-tree/compatible').read_bytes()
     except OSError:
         return False
+
+
+def memory_available():
+    """Bytes the kernel says can be used now without swapping (MemAvailable), or None."""
+    try:
+        for line in Path('/proc/meminfo').read_text().splitlines():
+            if line.startswith('MemAvailable:'):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+LOAD_HEADROOM = 4 * 2 ** 30   # while the model loads, part of its file is in memory beside the copy being made
+
+
+def not_enough_free(fit, available=None):
+    """A sentence saying the model cannot start now, or None. judge() asks whether the computer is big enough; this asks
+    whether enough of it is free at this moment. Without it, starting the model on a busy computer runs it out of memory
+    and the kernel ends other programs (seen: 27 GB free, the model's 25 GB, three browser processes killed)."""
+    needs = (fit or {}).get('needs')
+    available = memory_available() if available is None else available
+    if not needs or available is None or available >= needs + LOAD_HEADROOM:
+        return None
+    return (f'Not enough free memory to start the local AI now: it needs about {_gb(needs + LOAD_HEADROOM)} free, and '
+            f'{_gb(available)} is free. Close some programs, then ask again.')
 
 
 def judge(fit):
