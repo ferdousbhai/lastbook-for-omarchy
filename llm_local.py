@@ -35,7 +35,7 @@ STATE_FILE = paths.DATA / 'derived' / 'llm' / 'state.json'   # where the file wa
 
 def runner_path():
     here = [paths.APP / 'llm' / 'lastbook-llm']              # in the packaged app
-    if not paths.FROZEN:
+    if not paths.INSTALLED:
         here.append(paths.APP / 'derived' / 'llm' / 'bin-linux' / 'lastbook-llm')
     return next((p for p in here if p.is_file()), None)
 

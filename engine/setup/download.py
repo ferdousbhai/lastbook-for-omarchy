@@ -19,7 +19,6 @@ import json
 import os
 import socket
 import ssl
-import sys
 import threading
 import time
 import urllib.parse
@@ -90,11 +89,8 @@ def url_allowed(url, allowed=None):
 
 
 def roots_path():
-    """engine/setup/roots.pem, beside this file (in the packaged app, where the packaging puts it: engine/setup/ under _MEIPASS)."""
-    here = Path(__file__).with_name('roots.pem')
-    if not here.is_file() and getattr(sys, 'frozen', False):
-        here = Path(getattr(sys, '_MEIPASS', '')) / 'engine' / 'setup' / 'roots.pem'
-    return here
+    """engine/setup/roots.pem, beside this file (the package installs it there too)."""
+    return Path(__file__).with_name('roots.pem')
 
 
 def tls_context():

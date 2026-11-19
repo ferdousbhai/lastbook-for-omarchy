@@ -15,9 +15,9 @@ import tempfile
 import threading
 from pathlib import Path
 
-FROZEN = bool(getattr(sys, 'frozen', False))
-if not FROZEN:
-    sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parents[1])]
+# The installed package, which alone has a lib/ folder. Worked out here, not from engine.paths: that module fixes the data
+# folder when it is imported, and this one is imported before LASTBOOK_DATA is set.
+INSTALLED = (Path(__file__).resolve().parents[1] / 'lib').is_dir()
 LOG_LIMIT = 5 * 1024 * 1024
 LOG_BACKUPS = 3
 
@@ -155,9 +155,7 @@ def open_log(data):
     logs = data / 'derived' / 'logs'
     logs.mkdir(parents=True, exist_ok=True)
     log = RotatingLog(logs / 'lastbook.log')
-    if sys.stdout is None or FROZEN:
-        sys.stdout = log
-    if sys.stderr is None or FROZEN:
-        sys.stderr = log
+    if INSTALLED:
+        sys.stdout = sys.stderr = log
     return logs
 

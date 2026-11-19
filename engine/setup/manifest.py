@@ -3,7 +3,6 @@ from the download site when setup is opened. A fetched one is used only if it pa
 allowed (download.url_allowed)."""
 import json
 import re
-import sys
 import threading
 from pathlib import Path
 
@@ -27,9 +26,6 @@ NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$')
 
 
 def bundled_paths():
-    if getattr(sys, 'frozen', False):
-        base = Path(getattr(sys, '_MEIPASS', Path(sys.executable).parent))
-        return [base / 'setup' / 'manifest-v1.json']
     root = Path(__file__).resolve().parents[2]
     return [root / 'setup' / 'manifest-v1.json', root / 'derived' / 'release' / 'setup' / 'manifest-v1.json',
             root / 'packaging' / 'arch' / 'manifest-v1.json']   # the copy the package ships

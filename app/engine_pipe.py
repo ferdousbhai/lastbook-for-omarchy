@@ -27,9 +27,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE), str(HERE.parent)]
-if (HERE.parent / 'lib').is_dir():   # the installed package: program files from here only, its lib/ before the system (engine/paths.py)
-    sys.frozen = True
-    sys._MEIPASS = str(HERE.parent)
+if (HERE.parent / 'lib').is_dir():   # the installed package: its lib/ before the system (engine/paths.py INSTALLED)
     sys.path.insert(2, str(HERE.parent / 'lib'))
 
 OUT = sys.stdout

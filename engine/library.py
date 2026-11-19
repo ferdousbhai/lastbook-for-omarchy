@@ -12,10 +12,10 @@ import argparse, collections, concurrent.futures, hashlib, html, http.server, im
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-FROZEN=bool(getattr(sys,'frozen',False))
+INSTALLED=(Path(__file__).resolve().parents[1]/'lib').is_dir()  # the installed package; not from engine.paths, which sets LASTBOOK_LIBRARY when imported
 ROOT=Path(os.environ['LASTBOOK_LIBRARY']).resolve() if os.environ.get('LASTBOOK_LIBRARY') else (Path(__file__).resolve().parents[1]/'library-data').resolve()
 VENDOR=ROOT/'tools'/('vendor-py312' if sys.version_info[:2]==(3,12) else 'vendor')
-if not FROZEN and VENDOR.is_dir():sys.path.insert(0,str(VENDOR))  # the packaged app never imports code from the data folder
+if not INSTALLED and VENDOR.is_dir():sys.path.insert(0,str(VENDOR))  # the packaged app never imports code from the data folder
 try:
  from bs4 import BeautifulSoup
 except ImportError:BeautifulSoup=None
@@ -30,7 +30,7 @@ SERVED_FOLDERS=('documents','pages','videos','videos-external','transcripts','me
 def load_remote_storage():
  """Videos this computer has moved to other machines. That code stays in the library's own tools and is never packaged."""
  path=ROOT/'tools'/'remote_storage.py'
- if FROZEN or not path.is_file():return None
+ if INSTALLED or not path.is_file():return None
  writes=sys.dont_write_bytecode
  sys.dont_write_bytecode=True  # no compiled cache written into the library
  try:
