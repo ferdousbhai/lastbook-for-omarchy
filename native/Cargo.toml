@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 # The look and the shared widgets (theme from Omarchy, icons, header, small builders), pinned by commit (v0.5.2).
-omui = { git = "https://github.com/ferdousbhai/omui", rev = "c6e3199e112c9e2d24914a44b5822beab9cbf874" }
+omui = { git = "https://github.com/ferdousbhai/omui", rev = "d5796183fdcc1dab218c7af5343bc0f29389db0e" }
 # The gtk4 crate omui is built with, at the feature level this window needs.
 gtk = { package = "gtk4", version = "0.11.4", features = ["v4_14"] }
 cairo-rs = "0.22.9"
