@@ -19,7 +19,7 @@
 {"do":"wait","role":"window","name":"Get safe drinking water — Lastbook"}
 {"do":"wait","role":"button","name":"Forward (Alt+Right)","sensitive":false}
 
-# The library, a shelf, and a manual from it by the keyboard.
+# The library, a shelf, and a manual from it by the keyboard: no page before its first, none after its last.
 {"do":"select","role":"list-item","name":"Library"}
 {"do":"wait","role":"window","name":"Library — Lastbook"}
 {"do":"wait","role":"grid-cell","name":"Water & sanitation","visible":true}
@@ -31,9 +31,16 @@
 {"do":"key","keys":"Return"}
 {"do":"wait","role":"window","name":"Safe water at home — Lastbook"}
 {"do":"wait","role":"text-box","name":"Page number","text":"1"}
+{"do":"wait","role":"button","name":"Previous page (Left, Page Up)","sensitive":false}
+{"do":"wait","role":"button","name":"Next page (Right, Page Down)","sensitive":true}
 {"do":"click","role":"button","name":"Next page (Right, Page Down)"}
 {"do":"wait","role":"text-box","name":"Page number","text":"2"}
+{"do":"wait","role":"button","name":"Previous page (Left, Page Up)","sensitive":true}
+{"do":"wait","role":"button","name":"Next page (Right, Page Down)","sensitive":false}
 {"do":"shot","path":"reader.png"}
+# The button that turned to the last page is greyed under the keyboard, and the keys still turn pages.
+{"do":"key","keys":"Left"}
+{"do":"wait","role":"text-box","name":"Page number","text":"1"}
 {"do":"click","role":"button","name":"Back (Alt+Left)"}
 {"do":"wait","role":"window","name":"Water & sanitation — Lastbook"}
 

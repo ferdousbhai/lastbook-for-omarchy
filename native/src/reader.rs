@@ -21,6 +21,8 @@ pub struct Reader {
     meta: gtk::Label,
     entry: gtk::Entry,
     total: gtk::Label,
+    prev: gtk::Button,
+    next: gtk::Button,
     note: gtk::Label,
     doc: RefCell<Option<(String, poppler::Document)>>,
     page: Cell<i32>,
@@ -63,6 +65,8 @@ impl Reader {
         picture.set_can_shrink(true);   // drawn at screen pixels, shown at the size it asks for
         picture.set_content_fit(gtk::ContentFit::Contain);
         picture.set_halign(gtk::Align::Center);
+        // The page takes the keyboard (`open`, `set_page_buttons`): the keys below turn it from there.
+        picture.set_focusable(true);
         picture.set_valign(gtk::Align::Start);
         picture.set_margin_top(18);
         picture.set_margin_bottom(18);
@@ -74,7 +78,10 @@ impl Reader {
         canvas.add_css_class("reader-canvas");
         canvas.append(&note);
         canvas.append(&picture);
-        let scroll = gtk::ScrolledWindow::builder().child(&canvas).vexpand(true).hexpand(true).build();
+        // The page is taller than the window and takes the keyboard: a viewport that scrolled to show what has the
+        // keyboard would open each page at its foot.
+        let view = gtk::Viewport::builder().child(&canvas).scroll_to_focus(false).build();
+        let scroll = gtk::ScrolledWindow::builder().child(&view).vexpand(true).hexpand(true).build();
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.append(&bar);
         root.append(&scroll);
@@ -87,6 +94,8 @@ impl Reader {
             meta,
             entry,
             total,
+            prev,
+            next,
             note,
             doc: RefCell::new(None),
             page: Cell::new(1),
@@ -95,9 +104,9 @@ impl Reader {
             pending: RefCell::new(None),
         });
         let r = Rc::downgrade(&reader);
-        prev.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.turn(-1) });
+        reader.prev.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.turn(-1) });
         let r = Rc::downgrade(&reader);
-        next.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.turn(1) });
+        reader.next.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.turn(1) });
         let r = Rc::downgrade(&reader);
         out.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.set_zoom(r.zoom.get() / 1.2) });
         let r = Rc::downgrade(&reader);
@@ -110,8 +119,24 @@ impl Reader {
                 r.go_to(n);
             }
         });
-        let keys = gtk::EventControllerKey::new();
+        // On the page as well as the screen: the page sits in the scrolled window, whose own Page Up, Page Down, Home
+        // and End would answer first and scroll.
+        reader.root.add_controller(reader.keys());
+        reader.picture.add_controller(reader.keys());
+        // Redraw at the new width once the window stops being resized.
         let r = Rc::downgrade(&reader);
+        reader.scroll.hadjustment().connect_page_size_notify(move |_| {
+            if let Some(r) = r.upgrade() {
+                r.schedule_render();
+            }
+        });
+        reader
+    }
+
+    /// The keys that turn pages and zoom, wherever the keyboard is in the reader but the page field.
+    fn keys(self: &Rc<Self>) -> gtk::EventControllerKey {
+        let keys = gtk::EventControllerKey::new();
+        let r = Rc::downgrade(self);
         keys.connect_key_pressed(move |_, key, _, _| {
             let Some(r) = r.upgrade() else { return glib::Propagation::Proceed };
             if r.entry.has_focus() {
@@ -129,15 +154,7 @@ impl Reader {
             }
             glib::Propagation::Stop
         });
-        reader.root.add_controller(keys);
-        // Redraw at the new width once the window stops being resized.
-        let r = Rc::downgrade(&reader);
-        reader.scroll.hadjustment().connect_page_size_notify(move |_| {
-            if let Some(r) = r.upgrade() {
-                r.schedule_render();
-            }
-        });
-        reader
+        keys
     }
 
     pub fn open(self: &Rc<Self>, doc_id: &str, page: i32) {
@@ -149,6 +166,7 @@ impl Reader {
         self.picture.set_paintable(gdk::Paintable::NONE);
         self.entry.set_text("");
         self.total.set_text("");
+        self.set_page_buttons(false, false);
         self.meta.set_text("");
         self.note.set_visible(false);
         let Some(app) = self.app.upgrade() else { return };
@@ -201,6 +219,8 @@ impl Reader {
             me.total.set_text(&format!("of {}", doc.n_pages()));
             me.doc.replace(Some((id, doc)));
             me.go_to(page);
+            // Not left where the screen before handed it: in the page field the keys that turn pages are text keys.
+            me.picture.grab_focus();
         });
     }
 
@@ -227,6 +247,8 @@ impl Reader {
         let n = n.clamp(1, total);
         self.page.set(n);
         self.entry.set_text(&n.to_string());
+        self.set_page_buttons(n > 1, n < total);
+        self.picture.update_property(&[gtk::accessible::Property::Label(&format!("Page {n} of {total}"))]);
         // The page on show is the page that is saved, and the one Back returns to.
         if let (Some(app), Some((doc, _))) = (self.app.upgrade(), self.doc.borrow().as_ref())
             && app.reading(doc)
@@ -236,6 +258,16 @@ impl Reader {
         }
         self.render();
         self.scroll.vadjustment().set_value(0.0);
+    }
+
+    /// Whether there is a page before and a page after the one on show.
+    fn set_page_buttons(&self, before: bool, after: bool) {
+        // A button that greys under the keyboard would take the keyboard out of the reader with it.
+        if !before && self.prev.has_focus() || !after && self.next.has_focus() {
+            self.picture.grab_focus();
+        }
+        self.prev.set_sensitive(before);
+        self.next.set_sensitive(after);
     }
 
     fn set_zoom(&self, z: f64) {
