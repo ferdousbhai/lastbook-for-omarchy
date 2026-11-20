@@ -8,8 +8,8 @@ repository = "https://github.com/ferdousbhai/lastbook-for-omarchy"
 publish = false
 
 [dependencies]
-# The look and the shared widgets (theme from Omarchy, icons, header, small builders), pinned by commit (v0.5.1).
-omui = { git = "https://github.com/ferdousbhai/omui", rev = "84fda37d4df6c0f0f47e8296c4a1357930fceab1" }
+# The look and the shared widgets (theme from Omarchy, icons, header, small builders), pinned by commit (v0.5.2).
+omui = { git = "https://github.com/ferdousbhai/omui", rev = "422c8602886614021104e250c3aef2577b98c2de" }
 # The gtk4 crate omui is built with, at the feature level this window needs.
 gtk = { package = "gtk4", version = "0.11.4", features = ["v4_14"] }
 cairo-rs = "0.22.9"
