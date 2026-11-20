@@ -5,11 +5,9 @@
 
 The stand-in speaks Recall's api 1 (capabilities, embed) on a Unix socket in a temporary folder and embeds by hashing words,
 so similar wording gives similar vectors. No model, no network. Never packaged."""
-import hashlib, json, os, re, socket, sqlite3, sys, tempfile, threading, time, unittest
+import hashlib, json, re, socket, sqlite3, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from unittest import mock
-
-os.environ['LASTBOOK_SHARED_AI'] = '0'   # a model-server on this computer is never asked here; SharedModel uses a made-up one
 
 ROOT = Path(__file__).resolve().parents[2]
 TMP = Path(tempfile.mkdtemp(prefix='lastbook-semantic-'))
@@ -279,7 +277,6 @@ class LocalStates(unittest.TestCase):
         L = llm_local.Local.__new__(llm_local.Local)
         L.lock, L.gen_lock, L.looked, L.proc, L.spawned, L.warming, L.spawns = threading.RLock(), threading.Lock(), threading.Event(), None, [], False, 0
         L.state, L.pct, L.message, L.path, L.fit = state, None, 'It failed.', path, {'fits': fits, 'needs': 1}
-        L.shared, L.failed_loads, L.last_used, L.next_id = None, 0, 0, 0
 
         def spawn():
             L.spawned.append(1)
@@ -371,153 +368,6 @@ class LocalStates(unittest.TestCase):
         self.assertIn('--ubatch', ran[0])
         self.assertEqual(ran[0][-1], '--measure')
         self.assertEqual((got['fits'], got['estimate'], L.state), (True, False, 'stopped'))
-
-
-class SharedModel(unittest.TestCase):
-    """The shared model server (engine/shared_model.py), against a made-up server on this computer: the model is loaded
-    there, an answer streams back, a stopped answer closes the connection, and what does not fit falls back or says so."""
-
-    @classmethod
-    def setUpClass(cls):
-        import http.server
-        cls.seen, cls.model_state, cls.closed = [], ['unloaded'], threading.Event()
-        outer = cls
-
-        class H(http.server.BaseHTTPRequestHandler):
-            protocol_version = 'HTTP/1.1'
-
-            def log_message(self, *a):
-                pass
-
-            def reply(self, obj, status=200):
-                raw = json.dumps(obj).encode()
-                self.send_response(status)
-                self.send_header('Content-Length', str(len(raw)))
-                self.end_headers()
-                self.wfile.write(raw)
-
-            def do_GET(self):
-                if self.headers.get('Authorization') != 'Bearer k':
-                    return self.reply({}, 401)
-                self.reply({'data': [{'id': 'repo/model:Q', 'status': {'value': outer.model_state[0]}}]})
-
-            def do_POST(self):
-                body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-                outer.seen.append((self.path, body))
-                if self.headers.get('Authorization') != 'Bearer k':
-                    return self.reply({}, 401)
-                if self.path == '/models/load':
-                    outer.model_state[0] = 'loaded'
-                    return self.reply({'success': True})
-                if self.path == '/tokenize':     # markup is one token (negative), text one a character: the two never look alike
-                    text = body['content']
-                    toks = ([1] if body.get('add_special') else []) + ([-len(text)] if body['parse_special'] and text else [ord(c) for c in text])
-                    return self.reply({'tokens': toks})
-                if len(body['prompt']) > 1000:
-                    return self.reply({'error': {'message': 'the request exceeds the available context size'}}, 400)
-                self.send_response(200)
-                self.send_header('Transfer-Encoding', 'chunked')
-                self.end_headers()
-                try:
-                    for i in range(body['n_predict']):
-                        last = i == body['n_predict'] - 1
-                        ev = {'content': f'w{i} ', 'stop': last, **({'stop_type': 'limit', 'tokens_predicted': i + 1} if last else {})}
-                        raw = b'data: ' + json.dumps(ev).encode() + b'\n\n'
-                        self.wfile.write(b'%x\r\n%s\r\n' % (len(raw), raw))
-                        self.wfile.flush()
-                        time.sleep(0.01)
-                    self.wfile.write(b'0\r\n\r\n')
-                except OSError:
-                    outer.closed.set()
-        cls.httpd = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H)
-        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.httpd.shutdown()
-        cls.httpd.server_close()
-
-    def shared(self):
-        from engine.shared_model import Shared
-        return Shared('model-server', f'http://127.0.0.1:{self.httpd.server_address[1]}', 'k', 'repo/model:Q')
-
-    def test_load_answer_and_stop(self):
-        from engine import shared_model
-        self.model_state[0] = 'unloaded'
-        s = self.shared()
-        self.assertFalse(s.loaded())
-        self.assertIsNone(s.load())
-        self.assertTrue(s.loaded())
-        out = []
-        done = s.generate([['<|turn>user\n', True], ['<|turn>', False], ['', False]], 3, lambda: False, out.append, seed=7)
-        self.assertEqual((''.join(out), done['reason'], done['n_gen']), ('w0 w1 w2 ', 'length', 3))
-        path, body = self.seen[-1]
-        self.assertEqual(path, '/completion')
-        # the start token, the markup as one special token, the text character by character: text never becomes markup
-        self.assertEqual(body['prompt'], [1, -12] + [ord(c) for c in '<|turn>'])
-        self.assertEqual((body['seed'], body['stop'], body['model']), (7, ['<|tool_response>'], 'repo/model:Q'))
-        got = []
-        done = s.generate([['hi', False]], 5000, lambda: len(got) >= 3, got.append, seed=1)
-        self.assertEqual(done['reason'], 'cancel')
-        self.assertTrue(self.closed.wait(5))        # the server saw the connection go, so it stops writing the answer
-        with self.assertRaises(shared_model.TooLong):
-            s.generate([['x' * 1001, False]], 1, lambda: False, got.append, seed=1)
-        bad = shared_model.Shared('model-server', s.url, 'wrong', 'repo/model:Q')
-        self.assertIsNone(bad.state())
-        with self.assertRaises(shared_model.SharedGone):
-            bad.generate([['hi', False]], 1, lambda: False, got.append, seed=1)
-
-    def test_the_local_ai_uses_it_and_falls_back(self):
-        import llm_local
-        L = LocalStates.local(self, 'stopped')
-        L.fit = {'fits': True, 'needs': 1}
-        s = self.shared()
-        self.model_state[0] = 'unloaded'
-        with mock.patch.object(llm_local.Shared, 'program', staticmethod(lambda: 'model-server')), \
-             mock.patch.object(llm_local.Shared, 'find', classmethod(lambda cls, model, in_cache: s)), \
-             mock.patch.object(llm_local, 'memory_available', return_value=2**40):
-            self.assertIsNone(L.ensure_running())
-            self.assertEqual((L.state, L.shared, L.spawned), ('ready', s, []))
-            out = []
-            self.assertEqual(L.generate([['hi', False]], 2, lambda: False, out.append)['reason'], 'length')
-            self.assertEqual(''.join(out), 'w0 w1 ')
-            self.model_state[0] = 'unloaded'                 # the server unloaded it as idle: the next question loads it again
-            self.assertIsNone(L.ensure_running())
-            self.assertEqual(self.model_state[0], 'loaded')
-            self.model_state[0] = 'unloaded'
-            with mock.patch.object(llm_local, 'memory_available', return_value=1):   # not enough free memory: nothing is loaded
-                self.assertIn('Not enough free memory', L.ensure_running())
-            self.assertEqual((self.model_state[0], L.state), ('unloaded', 'stopped'))
-            self.model_state[0] = 'loaded'                   # another app holds it in memory: no memory is asked for
-            with mock.patch.object(llm_local, 'memory_available', return_value=1):
-                self.assertIsNone(L.ensure_running())
-            L.stop()
-            self.assertEqual((L.state, L.shared, self.model_state[0]), ('stopped', None, 'loaded'))   # it stays for other apps
-        with mock.patch.object(llm_local.Shared, 'program', staticmethod(lambda: 'model-server')), \
-             mock.patch.object(llm_local.Shared, 'find', classmethod(lambda cls, model, in_cache: None)), \
-             mock.patch.object(llm_local, 'memory_available', return_value=2**40):
-            self.assertEqual(L.ensure_running(), 'It failed again.')     # no usable server: Lastbook's own program is started
-            self.assertEqual(len(L.spawned), 1)
-
-    def test_the_checked_file_is_what_the_cache_offers(self):
-        import llm_local
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            snap = tmp / 'hub' / 'models--r' / 'snapshots' / 'abc'
-            model = tmp / 'library' / llm_local.FILE
-            model.parent.mkdir()
-            model.write_bytes(b'm')
-            with mock.patch.object(llm_local, 'hf_snapshot', return_value=snap):
-                self.assertTrue(llm_local._in_hf_cache(model))                 # linked in, and refs/main written
-                self.assertTrue((snap / llm_local.FILE).samefile(model))
-                self.assertEqual((snap.parent.parent / 'refs' / 'main').read_text(), 'abc')
-                self.assertTrue(llm_local._in_hf_cache(model))
-                other = tmp / 'other.gguf'
-                other.write_bytes(b'o')
-                self.assertFalse(llm_local._in_hf_cache(other))                # the cache offers a different file
-                (snap.parent.parent / 'refs' / 'main').write_text('def')
-                self.assertFalse(llm_local._in_hf_cache(model))                # another tool pinned another revision
-                self.assertEqual((snap.parent.parent / 'refs' / 'main').read_text(), 'def')
 
 
 if __name__ == '__main__':

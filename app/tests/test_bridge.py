@@ -4,7 +4,7 @@
   python3 -B app/tests/test_bridge.py [-v]
 
 Uses the made-up library in derived/app-build/testdata (no model) and a stub for chat. Never packaged."""
-import faulthandler, hashlib, json, os, re, shutil, socket, statistics, subprocess, sys, threading, time, types, unittest
+import faulthandler, hashlib, json, os, shutil, socket, statistics, subprocess, sys, threading, time, types, unittest
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -474,18 +474,6 @@ class AssistantStaysHere(unittest.TestCase):
             src = (ROOT / name).read_text(encoding='utf-8')
             for word in ('urllib', 'http.client', 'import socket', 'socket.socket', 'create_connection', 'http://', 'https://'):
                 self.assertNotIn(word, src, name)
-
-    def test_the_shared_model_server_is_on_this_computer_only(self):
-        """engine/shared_model.py is the one file that connects, and the only host it can name is 127.0.0.1."""
-        src = (ROOT / 'engine' / 'shared_model.py').read_text(encoding='utf-8')
-        self.assertEqual(re.findall(r'HTTPS?Connection\(([^,)]*)', src), ["'127.0.0.1'"])
-        for word in ('urllib', 'socket.socket', 'create_connection', 'https://', 'getaddrinfo', '0.0.0.0'):
-            self.assertNotIn(word, src)
-        from engine import shared_model
-        ok = lambda url: bool(re.fullmatch(shared_model.LOOPBACK + r':\d+', url))
-        self.assertTrue(ok('http://127.0.0.1:9931'))
-        for url in ('http://127.0.0.1.example.com:80', 'http://example.com:9931', 'http://127.0.0.1:9931@example.com', 'https://127.0.0.1:1'):
-            self.assertFalse(ok(url), url)
 
     def test_no_model_means_not_online(self):
         st = REAL_STATUS()
