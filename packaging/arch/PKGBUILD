@@ -17,6 +17,7 @@ license=('MIT')
 depends=('python>=3.14' 'python<3.15' 'python-numpy' 'python-beautifulsoup4' 'glib2' 'gtk4' 'webkitgtk-6.0' 'poppler-glib'
   'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'gst-plugin-dav1d' 'sqlite' 'gcc-libs' 'vulkan-icd-loader')
 optdepends=('recall-for-omarchy: meaning-based search, with the embedding model Recall already runs'
+  'model-server: the local AI from one shared server, so apps that use the same model load it once'
   'vulkan-asahi: the local AI on the graphics card of an Apple Silicon Mac')
 makedepends=('git' 'rust' 'cmake' 'ninja' 'gcc' 'shaderc' 'vulkan-headers' 'spirv-headers' 'pkgconf' 'python-pillow' 'binutils')
 options=('!debug' '!lto' '!strip')

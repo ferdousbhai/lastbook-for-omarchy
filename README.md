@@ -53,6 +53,8 @@ the Python engine as its own child process. Your library and settings stay in yo
   the window does not draw them, but US place and street-address search still use them ([docs/MAPS.md](docs/MAPS.md)).
 - **Optional local AI.** Ask questions in plain words and get answers that cite library pages, from a model that runs on
   the computer itself (see "The local AI" below). Without it, Chat still finds the right pages.
+  Where [model-server](https://github.com/ferdousbhai/model-server) is installed, the model is loaded there once for
+  every app that uses it (Ghost, pi), not a second time for Lastbook.
 - **One-download setup.** On first run, setup defaults to Small and selects local AI when the computer can run it.
   The person can choose Small, Medium or All, picks the world map and any street-level regions, and starts the checked
   downloads. A library already on the computer (a folder or a pack zip) can be used instead of downloading.

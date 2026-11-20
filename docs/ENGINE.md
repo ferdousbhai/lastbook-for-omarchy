@@ -55,6 +55,12 @@ JavaScript off and every address but `lastbook:` blocked (`native/src/web.rs`).
   file in `LastbookData/models/` (setup puts it there), checks it once (size, then SHA-256), and asks
   `lastbook-llm --measure` whether it fits this computer's memory. It starts when someone asks, and stops after 15
   minutes unused and when the app quits. It is text only: it is not given page images.
+  Where the computer has `model-server` (one llama.cpp server shared by every app), the engine asks it instead
+  (`engine/shared_model.py`: 127.0.0.1 only, with the key only this user can read), so a copy another app loaded is
+  reused and `lastbook-llm` is not started. The prompt goes as token numbers, so text still cannot become template
+  markup; the free-memory check still comes before a load; the server unloads the model when idle. If the server is
+  missing, does not offer the checked file, or cannot be started, `lastbook-llm` runs as before (`LASTBOOK_SHARED_AI=0`
+  forces that).
 - What the assistant cannot read is reported, not hidden (`/api/assistant/status`, shown in About): videos
   without captions, scanned PDFs without text.
 

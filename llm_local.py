@@ -1,6 +1,7 @@
 """The optional local AI: Gemma 4 26B A4B run on this computer by lastbook-llm, a program of ours that speaks only through pipes.
 
-Nothing here opens a socket or reaches past this computer. The model is a file setup downloads from Hugging Face when the
+Nothing here opens a socket or reaches past this computer. Where the computer has a shared model server (model-server),
+the model is asked there instead, on this computer only (engine/shared_model.py), so another app's copy is reused. The model is a file setup downloads from Hugging Face when the
 person asks for it (engine/setup/). Lastbook finds it inside the selected library or an explicitly configured model folder, checks the published file, asks llama.cpp
 whether it fits this computer's memory, and starts it when someone asks a question. It stops after IDLE_STOP seconds unused
 and when the app quits (the program leaves when its standard input closes).
@@ -13,12 +14,15 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
 from pathlib import Path
 
 from engine import paths
+from engine import shared_model
+from engine.shared_model import Shared, SharedGone
 
 FILE = 'gemma-4-26B-A4B-it-UD-Q4_K_M.gguf'
 SIZE = 16_947_541_728
@@ -112,6 +116,7 @@ class Local:
         self.state, self.pct, self.message = 'absent', None, ''
         self.path, self.fit = None, None
         self.proc, self.events, self.last_used = None, None, 0
+        self.shared = None        # the shared model server answering for us (Shared), instead of a program of our own
         self.warming = False
         self.next_id = 0
         self.failed_loads = 0     # loads in a row that ended before the model was ready
@@ -261,15 +266,23 @@ class Local:
             if self.state == 'ready' and self.proc and self.proc.poll() is None:
                 self.last_used = time.time()
                 return None
+            if self.state == 'ready' and self.shared:
+                if self.shared.loaded():
+                    self.last_used = time.time()
+                    return None
+                self.state, self.shared = 'stopped', None    # the server unloaded it while nobody asked: load it again below
             if self.state not in ('stopped', 'loading', 'error') or not self.path or not (self.fit or {}).get('fits'):
                 return self.message or 'The local AI is not set up on this computer.'
             if self.state != 'loading':
                 if since is not None and self.spawns != since:
                     return self.message or 'The local AI did not start.'
-                short = not_enough_free(self.fit)
-                if short:
-                    return short
-                self._spawn()
+                if Shared.program():
+                    self._load_shared()
+                else:
+                    short = not_enough_free(self.fit)
+                    if short:
+                        return short
+                    self._spawn()
         t0 = time.time()
         while time.time() - t0 < START_WAIT:
             with self.lock:
@@ -300,6 +313,44 @@ class Local:
         self.events = queue.Queue()
         self.t_spawn = time.time()
         threading.Thread(target=self._read, args=(self.proc, self.events), daemon=True, name='local-ai-read').start()
+
+    def _load_shared(self):
+        """Ask the shared model server for the model, where it stays for every app until the server unloads it as idle.
+        If the server cannot be used, Lastbook's own program is started instead."""
+        self.spawns += 1
+        self.state, self.pct, self.message = 'loading', None, ''
+        t0 = time.time()
+
+        def run():
+            path = self.path
+            shared = Shared.find(SHARED_MODEL, lambda: bool(path) and _in_hf_cache(path))
+            waiting = lambda: self.state == 'loading' and not self.proc and not self.shared
+            short = None
+            if not (shared and shared.loaded()):     # already in memory for another app: nothing more is needed
+                short = not_enough_free(self.fit, extra=SHARED_EXTRA if shared else 0)
+            with self.lock:
+                if not waiting():
+                    return
+                if short:
+                    self.state, self.message = 'stopped', short
+                    return
+                if not shared:
+                    self.spawns -= 1                 # the same start, by our own program
+                    self._spawn()
+                    return
+            why = shared.load(lambda pct: setattr(self, 'pct', pct))
+            with self.lock:
+                if not waiting():
+                    return
+                if why:
+                    self.state, self.message = 'error', why
+                    print('local AI: the shared model server did not load the model:', why, flush=True)
+                else:
+                    self.shared, self.state, self.pct = shared, 'ready', None
+                    self.failed_loads = 0
+                    self.last_used = time.time()
+                    print(f'local AI: ready on the shared model server ({shared.model}), {time.time() - t0:.1f} s', flush=True)
+        threading.Thread(target=run, daemon=True, name='local-ai-shared').start()
 
     def _read(self, proc, events):
         for raw in proc.stdout:
@@ -347,6 +398,7 @@ class Local:
     def stop(self, why=''):
         with self.lock:
             proc, self.proc = self.proc, None
+            self.shared = None                 # the server keeps the model for other apps and unloads it itself when idle
             if self.state in ('ready', 'loading', 'error') and self.path and (self.fit or {}).get('fits'):
                 self.state, self.pct = 'stopped', None
                 self.message = ''
@@ -386,7 +438,7 @@ class Local:
         while True:
             time.sleep(min(30, IDLE_STOP / 4))
             with self.lock:
-                idle = self.state == 'ready' and not self.gen_lock.locked() and time.time() - self.last_used > IDLE_STOP
+                idle = self.state == 'ready' and self.proc and not self.gen_lock.locked() and time.time() - self.last_used > IDLE_STOP
             if idle:
                 self.stop(f'not used for {IDLE_STOP} s')
 
@@ -394,6 +446,24 @@ class Local:
     def generate(self, segments, max_tokens, cancelled, on_text):
         """Streams one answer. on_text(piece). Returns the 'done' event, or raises RuntimeError with a plain sentence."""
         with self.gen_lock:
+            with self.lock:
+                shared = self.shared if self.state == 'ready' else None
+                if shared:
+                    self.next_id += 1
+                    rid = self.next_id
+                    self.last_used = time.time()
+            if shared:
+                try:
+                    done = shared.generate(segments, max_tokens, cancelled, on_text, seed=1234 + rid)
+                except shared_model.TooLong:
+                    raise RuntimeError(_plain_error({'code': 'too_long'}))
+                except SharedGone as e:
+                    with self.lock:
+                        if self.shared is shared:
+                            self.shared, self.state, self.message = None, 'stopped', ''
+                    raise RuntimeError('The local AI stopped unexpectedly. Ask again to restart it.') from e
+                self.last_used = time.time()
+                return done
             with self.lock:
                 proc, events = self.proc, self.events
                 if not proc or self.state != 'ready':
@@ -434,6 +504,41 @@ class Local:
                     return ev
                 elif kind == 'error':
                     raise RuntimeError(_plain_error(ev))
+
+
+# ------------------------------------------------------------------------------------------ the shared model server --
+# When model-server is installed (engine/shared_model.py), the model is loaded there once for every app, and Lastbook's own
+# program is not started. The file it serves must be the one checked here: it finds models in the Hugging Face cache.
+SHARED_MODEL = SOURCE.split(',')[0].strip() + ':Q4_K_M'    # how the server names the pinned file
+SHARED_EXTRA = 2 * 2**30      # the server holds a longer context (32,768 tokens) than lastbook-llm is measured with
+
+
+def _in_hf_cache(path):
+    """Is the checked model file what the Hugging Face cache offers for the pinned repository? The shared server finds
+    models there, through refs/main. A file kept elsewhere (the library folder) is linked in when the cache has none;
+    refs/main is written only when no tool has written it. A cache that points at another revision is left alone."""
+    path = Path(path)
+    snap = hf_snapshot()
+    repo, rev = snap.parent.parent, snap.name
+    ref = repo / 'refs' / 'main'
+    try:
+        if ref.is_file() and ref.read_text().strip() != rev:
+            return False
+        here = snap / FILE
+        if not here.exists():
+            snap.mkdir(parents=True, exist_ok=True)
+            here.symlink_to(path.resolve())
+        if not here.samefile(path):
+            return False
+        if not ref.is_file():
+            ref.parent.mkdir(parents=True, exist_ok=True)
+            tmp = ref.with_name('main.lastbook-tmp')
+            tmp.write_text(rev)
+            os.replace(tmp, ref)
+        return True
+    except OSError as e:
+        print('local AI: could not offer the model to the shared server:', type(e).__name__, e, flush=True)
+        return False
 
 
 LOCAL = Local()
@@ -485,13 +590,16 @@ def memory_available():
 LOAD_HEADROOM = 4 * 2 ** 30   # while the model loads, part of its file is in memory beside the copy being made
 
 
-def not_enough_free(fit, available=None):
+def not_enough_free(fit, available=None, extra=0):
     """A sentence saying the model cannot start now, or None. judge() asks whether the computer is big enough; this asks
     whether enough of it is free at this moment. Without it, starting the model on a busy computer runs it out of memory
     and the kernel ends other programs (seen: 27 GB free, the model's 25 GB, three browser processes killed)."""
     needs = (fit or {}).get('needs')
     available = memory_available() if available is None else available
-    if not needs or available is None or available >= needs + LOAD_HEADROOM:
+    if not needs:
+        return None
+    needs += extra
+    if available is None or available >= needs + LOAD_HEADROOM:
         return None
     return (f'Not enough free memory to start the local AI now: it needs about {_gb(needs + LOAD_HEADROOM)} free, and '
             f'{_gb(available)} is free. Close some programs, then ask again.')
