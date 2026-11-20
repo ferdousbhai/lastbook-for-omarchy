@@ -102,13 +102,22 @@ pub const SECTIONS: &[(&str, &str, &str)] = &[
     ("about", "About", name::SETTINGS),
 ];
 
+const SIDEBAR_WIDTH: i32 = 200;
+/// The window width from which the sidebar is beside the screens: under it the widest of them (search, 522 pixels)
+/// would not fit, and the sidebar would come and go from one screen to the next.
+const SIDEBAR_BESIDE_FROM: i32 = 760;
+
 pub struct App {
     pub engine: Arc<Engine>,
     pub theme: Rc<Theme>,
     pub window: gtk::ApplicationWindow,
     stack: gtk::Stack,
     sidebar: gtk::ListBox,
-    sidebar_shell: gtk::Box,
+    split: omui::Split,
+    /// Whether the person keeps the sidebar beside the screens, where the window has room for both.
+    sidebar_beside: Cell<bool>,
+    /// Whether the split was collapsed when it last told of a change: see its `connect_changed`.
+    collapsed: Cell<bool>,
     title: gtk::Label,
     back: gtk::Button,
     forward: gtk::Button,
@@ -177,23 +186,21 @@ impl App {
         footer.append(&about);
         let sidebar_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
         sidebar_shell.add_css_class("sidebar");
-        sidebar_shell.set_size_request(200, -1);
-        sidebar_shell.set_hexpand(false);
         let scroll = gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).child(&sidebar).build();
         sidebar_shell.append(&scroll);
         sidebar_shell.append(&footer);
 
         let stack = gtk::Stack::new();
-        stack.set_hexpand(true);
         stack.set_transition_type(gtk::StackTransitionType::Crossfade);
         stack.set_transition_duration(120);
         // Each screen sizes the window by itself: a homogeneous stack would hold every screen to the widest one's width.
         stack.set_hhomogeneous(false);
         stack.set_vhomogeneous(false);
-        let body = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        body.append(&sidebar_shell);
-        body.append(&stack);
-        window.set_child(Some(&body));
+        // A window too narrow for the sidebar beside the screen on show has one pane, the screen: a third of a
+        // display is narrower than the sidebar and the reader's bar together, and a window that asks for more than
+        // its tile is wider than its tile.
+        let split = omui::Split::new(&sidebar_shell, &stack, (SIDEBAR_WIDTH, SIDEBAR_WIDTH), Some(SIDEBAR_BESIDE_FROM));
+        window.set_child(Some(&split.widget));
 
         let app = Rc::new(Self {
             engine,
@@ -201,7 +208,9 @@ impl App {
             window,
             stack,
             sidebar,
-            sidebar_shell,
+            split,
+            sidebar_beside: Cell::new(true),
+            collapsed: Cell::new(false),
             title,
             back,
             forward,
@@ -256,6 +265,15 @@ impl App {
 
         let a = app.clone();
         toggle.connect_clicked(move |_| a.toggle_sidebar());
+        // One pane is the screen, until Ctrl+B asks for the sidebar in its place; with room for both again, the
+        // sidebar is back beside it unless the person had put it away.
+        let a = app.clone();
+        app.split.connect_changed(move |split| {
+            let collapsed = split.is_collapsed();
+            if a.collapsed.replace(collapsed) != collapsed {
+                split.set_show_sidebar(!collapsed && a.sidebar_beside.get());
+            }
+        });
         let a = app.clone();
         about.connect_clicked(move |_| a.navigate(Route::Section("about")));
         let a = app.clone();
@@ -339,8 +357,20 @@ impl App {
         self.window.add_controller(keys);
     }
 
+    /// Beside the screen in a window with room for both, in its place in a narrower one.
     fn toggle_sidebar(&self) {
-        self.sidebar_shell.set_visible(!self.sidebar_shell.is_visible());
+        let show = !self.split.shows_sidebar();
+        if !self.split.is_collapsed() {
+            self.sidebar_beside.set(show);
+        }
+        self.split.set_show_sidebar(show);
+    }
+
+    /// In a window of one pane, the screen asked for takes the sidebar's place.
+    fn screen_in_view(&self) {
+        if self.split.is_collapsed() {
+            self.split.set_show_sidebar(false);
+        }
     }
 
     fn focus_search(self: &Rc<Self>) {
@@ -348,6 +378,7 @@ impl App {
             let (q, kind) = self.search.borrow().as_ref().map(|s| s.current()).unwrap_or_default();
             self.navigate(Route::Search { q, kind });
         }
+        self.screen_in_view();
         if let Some(s) = self.search.borrow().as_ref() {
             s.focus();
         }
@@ -515,6 +546,7 @@ impl App {
             }
         };
         self.stack.set_visible_child_name(page);
+        self.screen_in_view();
         let title = if title.is_empty() { route.title_key().and_then(|k| self.titles.borrow().get(&k).cloned()).unwrap_or_default() } else { title };
         // A page with no <title> of its own is named by its file until (if ever) it says otherwise.
         let title = match route {

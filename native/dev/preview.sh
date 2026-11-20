@@ -17,7 +17,9 @@ set -Eeuo pipefail
 #   LASTBOOK_PREVIEW_HEADLESS 0 puts the window on the nested compositor's own output, which is a window on the
 #                             desktop this runs from and as large as that desktop makes it. WebKit paints nothing on
 #                             a headless output, so `wiki:` and `web:` routes need this. The default is a headless
-#                             output of 1280x820, the same picture wherever it is run.
+#                             output of LASTBOOK_PREVIEW_SIZE, the same picture wherever it is run.
+#   LASTBOOK_PREVIEW_SIZE     the output's size, which the window fills (default 1280x820); 560x700 is a third of a
+#                             display
 if (( $# < 1 || $# > 3 )); then
   echo "usage: $0 <screenshot.png> [route [theme-dir]]" >&2
   exit 2
@@ -39,6 +41,8 @@ parent_display=${WAYLAND_DISPLAY:?preview: run this from a Wayland desktop}
 parent_socket=$parent_runtime/$parent_display
 settle=${LASTBOOK_PREVIEW_SETTLE:-6}
 headless=${LASTBOOK_PREVIEW_HEADLESS:-1}
+size=${LASTBOOK_PREVIEW_SIZE:-1280x820}
+[[ $size =~ ^[0-9]+x[0-9]+$ ]] || { echo "preview: LASTBOOK_PREVIEW_SIZE is <width>x<height>" >&2; exit 2; }
 # The two wheels Arch does not carry, from the cache bin/test uses: found before HOME is replaced.
 deps=$("$repo/bin/test-deps")
 
@@ -116,7 +120,7 @@ export DBUS_SESSION_BUS_ADDRESS=${dbus_details[0]}
 dbus_pid=${dbus_details[1]}
 
 printf '%s\n' \
-  'hl.monitor({ output = "", mode = "1280x820@60", position = "auto", scale = 1 })' \
+  "hl.monitor({ output = \"\", mode = \"$size@60\", position = \"auto\", scale = 1 })" \
   'hl.config({' \
   '  general = { gaps_in = 0, gaps_out = 0, border_size = 0 },' \
   '  decoration = { rounding = 0, shadow = { enabled = false }, blur = { enabled = false } },' \

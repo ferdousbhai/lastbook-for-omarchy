@@ -1,5 +1,6 @@
-# A half-screen tile (840 pixels, the width the window is made to fit), then a third of one with the sidebar put away
-# (Ctrl+B): each screen fits without widening the window, and Ctrl+B brings the sidebar back.
+# A half-screen tile (840 pixels) has the sidebar beside each screen. A third of one (560) is too narrow for both, so
+# the sidebar gives way: each screen fits without widening the window, Ctrl+B shows the sidebar in the screen's place,
+# and a wider window has both again.
 # native/dev/qa.sh native/dev/qa/narrow.jsonl [shots-dir]
 
 {"do":"wait","role":"window","name":"Guides — Lastbook"}
@@ -22,23 +23,64 @@
 {"do":"wait","size":[840,700]}
 {"do":"shot","path":"half-videos.png"}
 
-# A third of a screen, with the sidebar away.
-{"do":"key","keys":"<Control>b"}
-{"do":"wait","role":"list-item","name":"Videos","visible":false}
+# A third of a screen: the sidebar gives way to the screen, and the window keeps its width on each.
 {"do":"resize","width":560,"height":700}
 {"do":"wait","size":[560,700]}
+{"do":"wait","role":"list-item","name":"Videos","visible":false}
+{"do":"wait","role":"search-box","name":"Search video titles","visible":true}
 {"do":"shot","path":"narrow-videos.png"}
 {"do":"key","keys":"<Alt>Left"}
 {"do":"wait","role":"window","name":"Safe water at home — Lastbook"}
+{"do":"wait","role":"text-box","name":"Page number","text":"1"}
 {"do":"wait","size":[560,700]}
 {"do":"shot","path":"narrow-reader.png"}
 {"do":"key","keys":"<Alt>Left"}
 {"do":"wait","role":"window","name":"Search — Lastbook"}
+{"do":"wait","size":[560,700]}
+{"do":"shot","path":"narrow-search.png"}
 {"do":"key","keys":"<Alt>Left"}
 {"do":"wait","role":"window","name":"Guides — Lastbook"}
+{"do":"wait","role":"grid-cell","name":"Get safe drinking water","visible":true}
+{"do":"wait","role":"list-item","name":"Guides","visible":false}
+
+# Ctrl+B shows the sidebar in the screen's place, and again the screen; a screen chosen in the sidebar takes its place.
 {"do":"key","keys":"<Control>b"}
 {"do":"wait","role":"list-item","name":"Guides","visible":true,"selected":true}
-{"do":"wait","role":"grid-cell","name":"Get safe drinking water","visible":true}
+{"do":"wait","role":"grid-cell","name":"Get safe drinking water","visible":false}
 {"do":"wait","size":[560,700]}
-{"do":"shot","path":"narrow-guides.png"}
+{"do":"shot","path":"narrow-sidebar.png"}
+{"do":"key","keys":"<Control>b"}
+{"do":"wait","role":"grid-cell","name":"Get safe drinking water","visible":true}
+{"do":"wait","role":"list-item","name":"Guides","visible":false}
+{"do":"key","keys":"<Control>b"}
+{"do":"wait","role":"list-item","name":"Guides","visible":true}
+{"do":"select","role":"list-item","name":"Library"}
+{"do":"wait","role":"window","name":"Library — Lastbook"}
+{"do":"wait","role":"grid-cell","name":"Water & sanitation","visible":true}
+{"do":"wait","role":"list-item","name":"Library","visible":false}
+{"do":"wait","size":[560,700]}
+# Ctrl+F on the search screen itself, from the sidebar: the field it goes to is in view.
+{"do":"key","keys":"<Control>f"}
+{"do":"wait","role":"window","name":"Search — Lastbook"}
+{"do":"key","keys":"<Control>b"}
+{"do":"wait","role":"list-item","name":"Search","visible":true,"selected":true}
+{"do":"key","keys":"<Control>f"}
+{"do":"wait","role":"search-box","name":"What do you need? A word, a question, a model number…","visible":true,"focused":true}
+{"do":"key","keys":"<Alt>Left"}
+{"do":"wait","role":"window","name":"Library — Lastbook"}
+
+# Wide enough again, the sidebar is back beside the screen; put away there, it stays away through a narrow window.
+{"do":"resize","width":840,"height":700}
+{"do":"wait","role":"list-item","name":"Library","visible":true,"selected":true}
+{"do":"wait","role":"grid-cell","name":"Water & sanitation","visible":true}
+{"do":"key","keys":"<Control>b"}
+{"do":"wait","role":"list-item","name":"Library","visible":false}
+{"do":"resize","width":560,"height":700}
+{"do":"wait","size":[560,700]}
+{"do":"resize","width":840,"height":700}
+{"do":"wait","size":[840,700]}
+{"do":"wait","role":"list-item","name":"Library","visible":false}
+{"do":"key","keys":"<Control>b"}
+{"do":"wait","role":"list-item","name":"Library","visible":true}
+{"do":"wait","size":[840,700]}
 {"do":"quit"}
