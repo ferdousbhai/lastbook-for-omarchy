@@ -4,10 +4,10 @@ Lastbook builds on the work below. Each part keeps its own licence. Each section
 repository, bundled into the package by the build, used from the system, or downloaded by setup.
 
 **Checked** means the licence was read from the licence file or package metadata of the exact version the builds use.
-**Upstream** means it was read from what the project itself publishes (its source repository at that version, its model
-card or its website) on 19 Nov 2026, because the package or download carries no licence file of its own for that part.
+**Upstream** means it was read from what the project itself publishes (its source repository at that version or its
+website) on 19 Nov 2026, because the package or download carries no licence file of its own for that part.
 
-Versions are the pins in `packaging/arch/PKGBUILD` (the two wheels), `native/Cargo.lock`, `packaging/llm/build_llm_linux.sh` and `llm_local.py`.
+Versions are the pins in `packaging/arch/PKGBUILD` (the two wheels) and `native/Cargo.lock`.
 
 ## Bundled into the package by the build
 
@@ -20,9 +20,7 @@ Versions are the pins in `packaging/arch/PKGBUILD` (the two wheels), `native/Car
 | pypdfium2 | 5.14.0 | Apache-2.0 or BSD-3-Clause; data files CC-BY-4.0 | https://github.com/pypdfium2-team/pypdfium2 | Checked: `pypdfium2-5.14.0.dist-info/licenses/` |
 | PDFium, inside pypdfium2's `libpdfium.so` | as built by pdfium-binaries | BSD-3-Clause (The PDFium Authors) | https://pdfium.googlesource.com/pdfium, https://github.com/bblanchon/pdfium-binaries | Checked: `BUILD_LICENSES/pdfium.txt`, `pdfium-binaries.txt` |
 | Libraries built into PDFium: abseil, agg 2.3, fast_float, FreeType, ICU, Little CMS, libjpeg-turbo, OpenJPEG, libpng, LLVM libc, simdutf, zlib | as built | Each under its own licence (Apache-2.0, BSD-style, FreeType/FTL, Unicode, MIT, IJG, zlib and others) | see each file | Checked: the full texts are in the wheel's `pypdfium2-5.14.0.dist-info/licenses/data/<platform>/BUILD_LICENSES/` |
-| llama.cpp and ggml, in `lastbook-llm` (optional local AI runner) | tag b12032 (dde879bc) | MIT (Copyright the ggml authors) | https://github.com/ggml-org/llama.cpp | Checked: `LICENSE`; it ships beside the runner as `LICENSE-llama.cpp.txt` |
-| nlohmann/json, used by llama.cpp's `common/` | as vendored in b12032 | MIT | https://github.com/nlohmann/json | Checked: `licenses/LICENSE-jsonhpp` |
-| Rust crates linked into the window (`/usr/bin/lastbook`): gtk4-rs and gtk-rs-core (gtk4, glib, gio, cairo-rs, pango, pangocairo), webkit6, poppler-rs, rusqlite, serde, serde_json, pulldown-cmark, flate2, base64, async-channel, urlencoding, and what they depend on | as locked in `native/Cargo.lock` (113 packages, omui among them: see below) | MIT, or a choice that includes MIT (mostly MIT OR Apache-2.0), for all but five: two under Zlib, one under Apache-2.0 WITH LLVM-exception, one under (MIT OR Apache-2.0) AND Unicode-3.0, and omui under MIT AND ISC | https://crates.io | Checked: each crate's package metadata (`cargo metadata`), not its licence file |
+| Rust crates linked into the window (`/usr/bin/lastbook`): gtk4-rs and gtk-rs-core (gtk4, glib, gio, cairo-rs, pango, pangocairo), webkit6, poppler-rs, rusqlite, serde, serde_json, flate2, base64, async-channel, urlencoding, and what they depend on | as locked in `native/Cargo.lock` (111 packages, omui among them: see below) | MIT, or a choice that includes MIT (mostly MIT OR Apache-2.0), for all but five: two under Zlib, one under Apache-2.0 WITH LLVM-exception, one under (MIT OR Apache-2.0) AND Unicode-3.0, and omui under MIT AND ISC | https://crates.io | Checked: each crate's package metadata (`cargo metadata`), not its licence file |
 
 The window's look and shared widgets come from omui (https://github.com/ferdousbhai/omui, MIT), which is linked into
 `/usr/bin/lastbook` and brings two more notices with it:
@@ -71,20 +69,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-Build-only tools (CMake, Ninja, glslc/shaderc, Vulkan and SPIR-V headers, the compiler) are used to make the package, and
-none of their code is bundled except as their licences allow.
+Build-only tools (Rust and the C compiler) are used to make the package, and none of their code is bundled except as
+their licences allow.
 
 ## Used from the system, not bundled
 
-Python 3, NumPy, Beautiful Soup 4 and soupsieve, GTK 4, WebKitGTK 6, Poppler, GStreamer and its plugins, SQLite, glib2, the
-GCC runtime, the Vulkan loader and the graphics drivers come from Arch's own packages under their own licences (the
-PKGBUILD's `depends`).
+Python 3, NumPy, Beautiful Soup 4 and soupsieve, GTK 4, WebKitGTK 6, Poppler, GStreamer and its plugins, SQLite, glib2 and
+the GCC runtime come from Arch's own packages under their own licences (the PKGBUILD's `depends`).
 
 ## Downloaded by setup, never bundled
 
 | Component | Version | Licence | Source | Checked |
 |---|---|---|---|---|
-| Gemma 4 26B A4B instruct, GGUF quantization by Unsloth (`gemma-4-26B-A4B-it-UD-Q4_K_M.gguf`) | revision pinned in `llm_local.py` | Apache-2.0 | https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF (Google's Gemma 4 release, https://huggingface.co/google/gemma-4-26B-A4B-it); licence text: https://ai.google.dev/gemma/docs/gemma_4_license | Upstream: the model card at the pinned revision and Google's card for the base model both say `license: apache-2.0`. The repository holds no separate licence file; read the model card for the terms in force |
 | The map: OpenStreetMap data as vector tiles in Protomaps' basemap schema, cut from Protomaps' daily build | the newest build on the day of setup | The tiles: an ODbL Produced Work, © OpenStreetMap contributors (attribution required). The basemap's code: BSD-3-Clause, Protomaps LLC; its layer schema is adapted from Tilezen (MIT) | https://www.openstreetmap.org/copyright, https://docs.protomaps.com/basemaps/downloads, https://github.com/protomaps/basemaps | Upstream: Protomaps' downloads page and the basemaps repository's `LICENSE.md` |
 | Place names for map search (GeoNames) | the files on the day of setup | CC BY 4.0 | https://www.geonames.org | Upstream: `readme.txt` beside the files on `download.geonames.org` |
 | The area list setup offers (names and bounding boxes from Geofabrik's region index; bundled as `map-regions.json`) | as generated by `tools/make_region_list.py` | Derived from OpenStreetMap, ODbL | https://download.geofabrik.de | Upstream: Geofabrik's download pages say "Data: ODbL 1.0"; they state no separate terms for the index file |

@@ -2,13 +2,12 @@
 set -Eeuo pipefail
 
 # Lastbook's window in a nested Hyprland with a private HOME, XDG directories and D-Bus, over a small made-up library
-# (dev/seed.py): nothing of the desktop it is run from is read or shown on, and no real library, Recall or model is
-# used. Chat has no model here, so a question gets the engine's own "no AI" answer.
+# (dev/seed.py): nothing of the desktop it is run from is read or shown on, and no real library or Recall is used.
 #
 #   native/dev/preview.sh <screenshot.png> [route [theme-dir]]
 #
 # `route` is LASTBOOK_OPEN (ui.rs): `section:guides` (the default), `search:boil water`,
-# `wiki:mdwiki_preview.zim/Water_purification`, `read:safe-water:1`, `chat:how do I store water`, ...
+# `wiki:mdwiki_preview.zim/Water_purification`, `read:safe-water:1`, ...
 # `theme-dir` holds a `colors.toml` (an Omarchy theme, such as /usr/share/omarchy/themes/catppuccin-latte) and is
 # copied in as the scratch desktop's current theme; without one there is no Omarchy state and the window shows the
 # fallback palette.
@@ -84,7 +83,7 @@ mkdir -p "$root"/{home,config,state,data,cache}
 export HOME=$root/home
 export XDG_CONFIG_HOME=$root/config XDG_STATE_HOME=$root/state XDG_DATA_HOME=$root/data XDG_CACHE_HOME=$root/cache
 export XDG_RUNTIME_DIR=$runtime
-unset GTK_THEME LASTBOOK_DATA LASTBOOK_ENGINE LASTBOOK_MODEL_DIR XDG_DOCUMENTS_DIR
+unset GTK_THEME LASTBOOK_DATA LASTBOOK_ENGINE XDG_DOCUMENTS_DIR
 
 if [[ -n $theme ]]; then
   current=$HOME/.local/state/omarchy/current
@@ -154,8 +153,8 @@ else
   hyprctl output create headless "$output" >/dev/null
 fi
 
-# No Recall (a socket that is not there) and no local model.
-LASTBOOK_OPEN=$route LASTBOOK_DEV=1 PYTHONPATH=$deps LASTBOOK_LOCAL_AI=0 \
+# No Recall (a socket that is not there).
+LASTBOOK_OPEN=$route LASTBOOK_DEV=1 PYTHONPATH=$deps \
   LASTBOOK_RECALL_SOCKET=$root/no-recall.sock GDK_BACKEND=wayland \
   "$binary" --data "$root/library" > "$root/window.log" 2>&1 &
 window_pid=$!

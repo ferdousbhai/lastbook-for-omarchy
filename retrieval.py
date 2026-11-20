@@ -1,4 +1,4 @@
-"""Local retrieval service shared by the window's search and the assistant.
+"""Local retrieval service behind the window's search and `lastbook search`.
 
 Keyword search (the library's own FTS5/BM25 index, read only) + meaning-based search fused with reciprocal-rank fusion.
 Meaning-based search uses the embedding model that Recall for Omarchy already runs on this computer (EmbeddingGemma, on the
@@ -169,7 +169,7 @@ def cues(path):
 
 
 def page_texts(r):
-    """The document's text, one string per page. Cached per file version: a chat reads the same few documents many times."""
+    """The document's text, one string per page. Cached per file version: the same few documents are read many times."""
     p = LIB / (r.get('text_path') or f"text/{r['id']}.txt")  # catalog may be mid-rewrite and miss text_path
     try:
         st = p.stat()
@@ -331,7 +331,7 @@ class Index:
 
     # ------------------------------------------------------------ indexing --
     def sources(self):
-        """(doc_id, signature, priority, loader) for every text the assistant may read."""
+        """(doc_id, signature, priority, loader) for every text that can be searched by meaning."""
         cat = self.catalog_fn()
         excl = self.excluded()
         out = []

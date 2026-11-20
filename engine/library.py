@@ -65,7 +65,7 @@ def zim_main_path(arc):return follow(arc.main_entry).path
 DB=ROOT/'search.sqlite'
 ZIMS={};ZIM_LOCK=threading.Lock()
 def open_zim(name):
- """The open archive for collections/<name>, opened once and shared by the reader and the assistant. The caller has checked the name (zim_file, or the catalog)."""
+ """The open archive for collections/<name>, opened once and shared by the reader and search. The caller has checked the name (zim_file, or the catalog)."""
  from libzim.reader import Archive
  with ZIM_LOCK:
   if name not in ZIMS:ZIMS[name]=Archive(ROOT/'collections'/name)

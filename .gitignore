@@ -1,4 +1,4 @@
-# Source only. The library, models, packs and everything built from them stay out.
+# Source only. The library, packs and everything built from them stay out.
 /library-data
 /derived
 __pycache__/
@@ -7,7 +7,6 @@ __pycache__/
 *.env
 dist/
 build/
-*.gguf
 *.zim
 *.zip
 /native/target

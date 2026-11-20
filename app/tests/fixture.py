@@ -1,4 +1,4 @@
-"""A small made-up library for the bridge tests. Built once under derived/app-build/testdata; holds no model."""
+"""A small made-up library for the bridge tests. Built once under derived/app-build/testdata."""
 import hashlib, json, os, sqlite3, sys
 from pathlib import Path
 

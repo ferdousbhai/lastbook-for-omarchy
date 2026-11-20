@@ -56,14 +56,14 @@ repository. Setup still installs, checks and repairs them where a pack or state 
 |---|---|
 | `derived/geo/places.sqlite` | Place search in the US: towns, ZIP codes, counties, named places (USGS GNIS, Census gazetteers) |
 | `derived/geo/addresses/<ST>.sqlite` | Street-address search for one state (`engine/address_search.py`; Overture Maps addresses) |
-| `derived/geo/national.sqlite`, `map.sqlite` | Ranking same-named US towns, and the assistant's "nearest hospital, pharmacy, water…" answers (`near()`, table `poi`) |
-| `derived/geo/water.sqlite`, `crops.sqlite`, `library-data/geography/resources/atlas.sqlite` | Named lakes, reservoirs and dams in place search, and nearby resource records for the assistant |
+| `derived/geo/national.sqlite`, `map.sqlite` | Ranking same-named US towns, and the nearest hospital, pharmacy, water… of `lastbook place --nearby` (`near()`, table `poi`) |
+| `derived/geo/water.sqlite`, `crops.sqlite`, `library-data/geography/resources/atlas.sqlite` | Named lakes, reservoirs and dams in place search, and nearby resource records for `lastbook place --nearby` |
 
 `terrain.sqlite` and `buildings.sqlite` in such a map set are no longer read by anything.
 
 What is tied to the United States here: every source of these files is a US dataset; `server.py` treats a box around
 Southern California as the area `map.sqlite` details (`socal_classes`, `in_socal`); and address search knows US state
-names and street words. Outside the US, place search uses GeoNames and the assistant has no nearby-help lookup.
+names and street words. Outside the US, place search uses GeoNames and there is no nearby-help lookup.
 
 ## Checking a map change
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! Setup: choosing and downloading a library, the local AI and a detailed map (engine/setup/api.py, docs/SETUP-API.md).
+//! Setup: choosing and downloading a library and the map (engine/setup/api.py, docs/SETUP-API.md).
 //!
 //! First run fills the window; with a library open, the same page manages it (About → Library and downloads). Nothing
 //! reaches the network until the person presses Download. Progress is read once a second while a job runs. When the
@@ -38,12 +38,9 @@ pub struct SetupPage {
     world: Cell<bool>,
     /// Street-level areas to add (Geofabrik region ids).
     regions: RefCell<Vec<String>>,
-    ai: Cell<bool>,
     folder: RefCell<Option<String>>,
     polling: Cell<bool>,
     poll_turn: Cell<u32>,
-    /// The local AI's model was found (in the library or the Hugging Face cache), so there is nothing to download.
-    ai_present: Cell<bool>,
 }
 
 /// About how many street-level (zoom 15) map tiles a region's box [west, south, east, north] holds.
@@ -78,11 +75,9 @@ impl SetupPage {
             chosen: Cell::new(false),
             world: Cell::new(true),
             regions: RefCell::new(Vec::new()),
-            ai: Cell::new(false),
             folder: RefCell::new(None),
             polling: Cell::new(false),
             poll_turn: Cell::new(0),
-            ai_present: Cell::new(false),
         })
     }
 
@@ -95,10 +90,7 @@ impl SetupPage {
         let (engine, me) = (self.engine.clone(), Rc::downgrade(self));
         glib::spawn_future_local(async move {
             let Ok(st) = engine.get("/api/setup/state").await else { return };
-            // With a library open, the assistant knows whether its model is on this computer (setup only looks in the library).
-            let local = engine.get("/api/assistant/status").await.ok().map(|s| s["local"]["state"].as_str().unwrap_or_default().to_owned());
             if let Some(me) = me.upgrade() {
-                me.ai_present.set(local.as_deref().is_some_and(|s| matches!(s, "ready" | "stopped" | "loading" | "checking" | "measuring" | "error" | "too_big")));
                 me.draw(st);
             }
         });
@@ -116,9 +108,8 @@ impl SetupPage {
         let rec = &st["recommend"];
         if !self.chosen.replace(true) {
             // Only first-run setup suggests downloads; managing a library starts from "keep it as it is", so adding a
-            // map never swaps the library for another size or ticks a 17 GB model by itself.
+            // map never swaps the library for another size.
             self.pack.replace(if first { rec["pack"].as_str().map(str::to_owned) } else { None });
-            self.ai.set(first && rec["ai"].as_bool().unwrap_or(false));
             self.world.set(first);
         }
         if self.folder.borrow().is_none() {
@@ -128,9 +119,8 @@ impl SetupPage {
         if let Some(c) = st["current"].as_object() {
             self.body.append(&label(
                 &format!(
-                    "This library: {} · local AI {} · {}",
+                    "This library: {} · {}",
                     c.get("pack").and_then(Value::as_str).unwrap_or("—"),
-                    if c.get("model").is_some_and(|m| !m.is_null()) || self.ai_present.get() { "on this computer" } else { "not installed" },
                     c.get("folder").and_then(Value::as_str).unwrap_or_default()
                 ),
                 "meta",
@@ -199,34 +189,6 @@ impl SetupPage {
             self.body.append(&none);
         }
 
-        // Local AI
-        self.body.append(&crate::cards::section("Local AI"));
-        let ai = &st["hardware"]["ai"];
-        let model = st["manifest"]["models"].as_array().and_then(|m| m.first()).cloned().unwrap_or_default();
-        let sw = gtk::CheckButton::with_label(&format!(
-            "Download {} ({}) to answer questions with citations",
-            model["title"].as_str().unwrap_or("the local AI"),
-            gb(model["size"].as_f64().unwrap_or(0.0))
-        ));
-        sw.add_css_class("choice-row");
-        crate::cards::wrap_check(&sw);
-        sw.set_active(self.ai.get());
-        let present = self.ai_present.get() || !st["current"]["model"].is_null();
-        if present {
-            sw.set_label(Some("The local AI is already on this computer"));
-            sw.set_active(false);
-            self.ai.set(false);
-        }
-        sw.set_sensitive(ai["fits"].as_bool().unwrap_or(false) && !present);
-        let me = Rc::downgrade(self);
-        sw.connect_toggled(move |b| {
-            if let Some(me) = me.upgrade() {
-                me.ai.set(b.is_active());
-            }
-        });
-        self.body.append(&sw);
-        self.body.append(&label(ai["why"].as_str().unwrap_or_default(), "meta"));
-
         self.draw_maps(&st);
 
         // Where
@@ -289,7 +251,7 @@ impl SetupPage {
             let me = Rc::downgrade(self);
             repair.connect_clicked(move |_| {
                 if let Some(me) = me.upgrade() {
-                    me.post("/api/setup/start", json!({"repair": true, "ai": false}));
+                    me.post("/api/setup/start", json!({"repair": true}));
                 }
             });
             actions.append(&repair);
@@ -443,13 +405,13 @@ impl SetupPage {
 
     fn start(self: &Rc<Self>) {
         let regions = self.regions.borrow().clone();
-        let mut body = json!({"pack": *self.pack.borrow(), "ai": self.ai.get(), "world": self.world.get(), "regions": regions});
+        let mut body = json!({"pack": *self.pack.borrow(), "world": self.world.get(), "regions": regions});
         if let Some(f) = self.folder.borrow().as_ref()
             && self.state.borrow()["mode"] == "first-run"
         {
             body["folder"] = json!(f);
         }
-        if body["pack"].is_null() && !self.ai.get() && !self.world.get() && self.regions.borrow().is_empty() {
+        if body["pack"].is_null() && !self.world.get() && self.regions.borrow().is_empty() {
             self.status.set_text("Choose something to download first.");
             return;
         }

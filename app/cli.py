@@ -5,10 +5,10 @@ JSON, with no window.
 
 The native program (native/src/main.rs) runs this file for every command but `skill`; `lastbook --help` lists them.
 One JSON value on standard output; an error is one line on standard error. Exit codes: 0 success (including no
-matches), 1 runtime error (no library, unknown document, no local AI), 2 invalid arguments.
+matches), 1 runtime error (no library, unknown document), 2 invalid arguments.
 
 It reads the same library as the window and may run beside it: it never starts the indexer and writes only the caches
-the engine already keeps (rendered pages, encyclopedia openings). Only `ask` loads the local AI; only `open` starts a window.
+the engine already keeps (rendered pages, encyclopedia openings). Only `open` starts a window.
 """
 import argparse
 import json
@@ -24,7 +24,7 @@ if (HERE.parent / 'lib').is_dir():   # the installed package: its lib/ before th
     sys.path.insert(2, str(HERE.parent / 'lib'))
 
 KINDS = ('any', 'manual', 'video', 'encyclopedia')
-ROUTES = ('read', 'wiki', 'watch', 'guide', 'web', 'search', 'shelf', 'map', 'section', 'manage', 'chat')   # native/src/ui.rs Route::from_key
+ROUTES = ('read', 'wiki', 'watch', 'guide', 'web', 'search', 'shelf', 'map', 'section', 'manage')   # native/src/ui.rs Route::from_key
 MAX_PAGES = 10
 ARTICLE_CHARS = 20000
 
@@ -80,7 +80,6 @@ def parser():
     cmd('place', (['query'], {}), (['--nearby'], {}))
     cmd('guides')
     cmd('guide', (['id'], {}))
-    cmd('ask', (['question'], {}))
     cmd('status')
     cmd('open', (['target'], {}), (['at'], {'nargs': '?'}), (['--dry-run'], {'action': 'store_true'}))
     return ap
@@ -97,17 +96,12 @@ def library(given):
     return found
 
 
-def engine(data, local_ai=False):
-    """(server, assistant) over the library, as the window's engine has them, without its indexer."""
+def engine(data):
+    """The engine (server.py) over the library, as the window has it, without its indexer."""
     os.environ['LASTBOOK_DATA'] = str(data)   # engine/paths.py reads it when first imported
-    if local_ai:
-        os.environ.setdefault('LASTBOOK_LOCAL_AI', '1')
-    else:
-        os.environ['LASTBOOK_LOCAL_AI'] = '0'
     import server
-    import assistant
     server.init(no_index=True)
-    return server, assistant
+    return server
 
 
 def head(S, r):
@@ -121,22 +115,22 @@ def head(S, r):
     return out
 
 
-def document(A, doc_id):
-    r = A.record(doc_id)
+def document(S, doc_id):
+    r = S.record(doc_id)
     if not r or r['kind'] == 'metadata':
         raise Failed(f'No document with id {doc_id!r} in the library. Find ids with: lastbook search')
     return r
 
 
 # -------------------------------------------------------------------------------------------------------------- commands --
-def search(S, A, a):
-    return {'query': a.query, 'results': A.hybrid(a.query[:200], a.limit, a.kind)}
+def search(S, a):
+    return {'query': a.query, 'results': S.hybrid(a.query[:200], a.limit, a.kind)}
 
 
-def read(S, A, a):
-    r = document(A, a.doc_id)
+def read(S, a):
+    r = document(S, a.doc_id)
     if r['kind'] == 'article':
-        _, text = A.ENC.read(a.doc_id, (a.section or '')[:80], ARTICLE_CHARS)
+        _, text = S.ENC.read(a.doc_id, (a.section or '')[:80], ARTICLE_CHARS)
         return {**head(S, r), 'section': a.section or None, 'texts': [{'text': text}]}
     if r['kind'] == 'video':
         raise Failed(f'{a.doc_id} is a video: lastbook transcript {a.doc_id}')
@@ -152,8 +146,8 @@ def read(S, A, a):
     return {**head(S, r), 'pages': len(texts), 'texts': [{'page': p, 'text': re.sub(r'[ \t]{2,}', ' ', texts[p - 1]).strip()} for p in pages]}
 
 
-def page(S, A, a):
-    r = document(A, a.doc_id)
+def page(S, a):
+    r = document(S, a.doc_id)
     if r['kind'] != 'pdf':
         raise Failed(f'{a.doc_id} is not a PDF: only PDF pages can be drawn')
     if a.page > (r.get('pages') or 1):
@@ -175,7 +169,7 @@ def page(S, A, a):
     return {'path': str(out.resolve()), 'doc_id': r['id'], 'title': S.public(r)['title'], 'page': a.page, 'width': a.width}
 
 
-def transcript(S, A, a):
+def transcript(S, a):
     r = S.catalog()['by_id'].get(a.video_id)
     if not r or r['kind'] != 'video':
         raise Failed(f'No video with id {a.video_id!r} in the library. Find ids with: lastbook search --kind video')
@@ -194,7 +188,7 @@ def transcript(S, A, a):
     return {**out, 'lines': cues}
 
 
-def place(S, A, a):
+def place(S, a):
     kinds = [k.strip() for k in (a.nearby or '').split(',') if k.strip()]
     bad = [k for k in kinds if k not in S.HELP]
     if bad:
@@ -211,12 +205,12 @@ def place(S, A, a):
     return out
 
 
-def guides(S, A, a):
+def guides(S, a):
     return {'guides': [{'id': t['id'], 'title': t.get('title'), 'short': t.get('short'), 'mode': t.get('mode'), 'keywords': t.get('keywords', [])}
                        for t in S.topics() if not t.get('error')]}
 
 
-def guide(S, A, a):
+def guide(S, a):
     t = next((t for t in S.topics_resolved() if t['id'] == a.id), None)
     if t is None:
         raise Failed(f'No guide with id {a.id!r}. List them with: lastbook guides')
@@ -244,24 +238,7 @@ def guide(S, A, a):
     return out
 
 
-def ask(S, A, a):
-    if A.LOCAL:
-        A.LOCAL.settle()   # as the window's engine does: the local AI may still be finding and checking its model file
-    if not A.model_status()['online']:
-        why = (A.LOCAL.status().get('message') if A.LOCAL else '') or 'set it up in the window (About), or use: lastbook search'
-        raise Failed(f'No local AI to answer with: {why}')
-    events = []
-    A.chat([{'role': 'user', 'content': a.question}], None, events.append, lambda: False)
-    done = next((e for e in events if e['type'] == 'done'), None)
-    if done is None:
-        err = next((e for e in events if e['type'] == 'error'), {})
-        raise Failed(err.get('text') or 'The local AI gave no answer.')
-    return {'question': a.question, 'answer': done['answer'], 'sources': done['sources'], 'consulted': done['consulted'],
-            'steps': done['tools'], 'seconds': done['latency']['total_s']}
-
-
-def status(S, A, a):
-    import llm_local
+def status(S, a):
     import retrieval
     from engine.setup import maps
     try:
@@ -269,10 +246,6 @@ def status(S, A, a):
     except (OSError, ValueError):
         summary = {}
     zims = S.zim_names()
-    # The local AI by whether its file is here, without checking the file or starting anything: `ask` does that.
-    local = llm_local.LOCAL
-    model = next((str(f / llm_local.FILE) for f in llm_local.places() if (f / llm_local.FILE).is_file()), None)
-    ai = 'no runtime' if not local.runner else 'installed' if model else 'absent'
     index = S.INDEX
     try:
         recall = {'running': True, 'model': retrieval.Recall().capabilities(timeout=2).get('source')}
@@ -284,19 +257,18 @@ def status(S, A, a):
             'counts': {'documents': summary.get('resources', len(S.catalog()['by_id'])), 'pdfs': summary.get('pdfs'), 'pages': summary.get('pdf_pages'),
                        'web_pages': summary.get('web_pages'), 'videos': summary.get('videos'), 'encyclopedias': len(zims)},
             'encyclopedias': zims,
-            'ai': {'state': ai, 'model': llm_local.NAME, 'file': model},
             'meaning_search': {'ready': bool(recall['running'] and index.source and len(index.mat) and recall.get('model') == index.source),
                                'recall': recall, 'passages': index.status.get('chunks'), 'documents': index.status.get('docs')},
             'maps': maps.installed(S.HERE / 'derived' / 'geo')}
 
 
-def open_route(S, A, a):
+def open_route(S, a):
     """The window's route for a target: a route key as it is, or a document id (and page, or seconds into a video)."""
     target = a.target
     kind = target.split(':', 1)[0]
     if kind in ROUTES and ':' in target:
         return target if a.at is None else f'{target}:{a.at}'
-    r = document(A, target)
+    r = document(S, target)
     at = a.at or ''
     if at and not at.isdigit():
         print('lastbook: open DOC_ID takes a page number (a video: seconds)', file=sys.stderr)
@@ -308,8 +280,8 @@ def open_route(S, A, a):
     return f"read:{r['id']}:{at or 1}"
 
 
-def open_window(S, A, a):
-    route = open_route(S, A, a)
+def open_window(S, a):
+    route = open_route(S, a)
     program = os.environ.get('LASTBOOK_BIN') or '/usr/bin/lastbook'
     argv = [program, '--data', str(S.HERE)]
     if not a.dry_run:
@@ -322,7 +294,7 @@ def open_window(S, A, a):
 
 
 COMMANDS = {'search': search, 'read': read, 'page': page, 'transcript': transcript, 'place': place, 'guides': guides, 'guide': guide,
-            'ask': ask, 'status': status, 'open': open_window}
+            'status': status, 'open': open_window}
 
 
 def main(argv=None):
@@ -330,8 +302,7 @@ def main(argv=None):
     out = sys.stdout
     sys.stdout = sys.stderr   # whatever the engine prints stays out of the JSON
     try:
-        S, A = engine(library(a.data), local_ai=a.command == 'ask')
-        result = COMMANDS[a.command](S, A, a)
+        result = COMMANDS[a.command](engine(library(a.data)), a)
     except Failed as e:
         print(f'lastbook: {e}', file=sys.stderr)
         return 1

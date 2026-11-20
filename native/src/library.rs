@@ -187,7 +187,6 @@ impl Browse {
         let (engine, me) = (app.engine.clone(), Rc::downgrade(self));
         glib::spawn_future_local(async move {
             let lib = engine.get("/api/library").await.unwrap_or_default();
-            let st = engine.get("/api/assistant/status").await.unwrap_or_default();
             let Some(me) = me.upgrade() else { return };
             clear(&me.about);   // opened twice before the answers came: one set of cards
             title("About this library", "", &me.about);
@@ -200,33 +199,13 @@ impl Browse {
                 )),
                 "",
             ));
-            let ix = &st["index"];
+            let ix = &lib["index"];
             let search = if ix["state"] == "waiting for Recall" {
                 "Meaning-based search is off: Recall for Omarchy isn't running.".to_owned()
             } else {
                 format!("Meaning-based search (through Recall for Omarchy): {} passages from {} documents.", ix["chunks"], ix["docs"])
             };
-            let state = match st["local"]["state"].as_str().unwrap_or_default() {
-                "ready" => "ready",
-                "loading" => "starting",
-                "stopped" => "starts when you ask",
-                "too_big" => "does not fit this computer's memory",
-                "error" => "could not start",
-                "absent" => "not downloaded",
-                "wrong" => "the model file cannot be read",
-                _ => "checking",
-            };
-            let ai = st["local"]["name"].as_str().map(|n| format!("Local AI: {n} — {state}.")).unwrap_or_else(|| "No local AI.".into());
-            // What search and the assistant cannot read is said, not hidden.
-            let cov = &st["coverage"];
-            let (silent, scanned) = (cov["videos"].as_i64().unwrap_or(0) - cov["videos_with_text"].as_i64().unwrap_or(0), cov["pdfs_image_only"].as_i64().unwrap_or(0));
-            let unread = match (silent > 0, scanned > 0) {
-                (true, true) => format!(" Not readable: videos without captions ({silent}), scanned PDFs without text ({scanned})."),
-                (true, false) => format!(" Not readable: videos without captions ({silent})."),
-                (false, true) => format!(" Not readable: scanned PDFs without text ({scanned})."),
-                (false, false) => String::new(),
-            };
-            me.about.append(&text_card("Search and the assistant", &glib::markup_escape_text(&format!("{search} {ai}{unread}")), ""));
+            me.about.append(&text_card("Search", &glib::markup_escape_text(&search), ""));
             me.about.append(&text_card(
                 "Privacy",
                 &glib::markup_escape_text("Lastbook sends nothing anywhere. Only setup downloads, and only when you start it."),

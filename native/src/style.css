@@ -41,47 +41,6 @@ box.sidebar-footer {
 }
 entry.page-entry { min-width: 48px; min-height: 24px; padding: 0 6px; }
 
-/* --------------------------------------------------------------------------------------------------------- chat -- */
-.question {
-  background: alpha(@om_accent, 0.14);
-  border: 1px solid alpha(@om_accent, 0.35);
-  border-radius: 8px;
-  padding: 8px 12px;
-}
-.answer { padding: 2px 0; }
-.step { color: @om_dim_text; font-size: 0.9em; }
-.step:first-child { margin-top: 2px; }
-
-.md-p, .md-li { line-height: 1.35; }
-.md-h { font-weight: 700; font-size: 1.08em; margin-top: 6px; }
-.md-marker { color: @om_accent; font-weight: 650; }
-.md-code {
-  background: alpha(@om_text, 0.05);
-  border: 1px solid alpha(@om_border, 0.5);
-  border-radius: 5px;
-  padding: 8px 10px;
-}
-
-.source-card { padding: 8px 10px; }
-
-.composer-bar {
-  background: @om_surface;
-  border-top: 1px solid alpha(@om_border, 0.6);
-  padding: 10px 32px 8px 32px;
-}
-.composer-frame {
-  background: alpha(@om_text, 0.04);
-  border: 1px solid alpha(@om_border, 0.6);
-  border-radius: 6px;
-}
-.composer-frame:focus-within { border-color: @om_accent; }
-.about-bar {
-  background: alpha(@om_accent, 0.10);
-  border-radius: 5px;
-  padding: 2px 4px 2px 10px;
-}
-.about-bar image { color: @om_accent; }
-
 /* ------------------------------------------------------------------------------------------------------- guides -- */
 .guide-card { min-height: 64px; }
 /* The card inside is what takes the focus and shows it. */

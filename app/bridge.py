@@ -5,7 +5,7 @@ engine_pipe.py (the native window's engine process) calls start(...), which feed
 window's pipe blocks while the window is behind, and that is all that holds an answer back.
 
 What holds:
-  - Lanes. The app's own small requests, page renders, chat and large files each have their own workers,
+  - Lanes. The app's own small requests, page renders and large files each have their own workers,
     so a flood of one never takes a worker from another. The small lane also adds workers
     when a request has waited, because a slow answer mostly sleeps: it must not hold up a quick one behind it.
   - The flood gate. An answer over BIG_BODY is refused before any of it moves: the window holds a whole answer in memory.
@@ -27,13 +27,12 @@ CHUNK = MiB                         # largest piece handed to a stream Sink
 VIDEO_PIECE = 8 * MiB               # all of a video an answer holds: its start. A memory guard for a page that names one; the window plays the library's videos from disk.
 BIG_BODY = 64 * MiB                 # the largest answer handed over whole. The largest real saved page is 44 MB.
 WHOLE_MAX = 256 * MiB               # above this the refusal says 413, not 403
-MAX_POST = 256 * 1024               # the engine's own limit on a chat request is 200,000 bytes
+MAX_POST = 256 * 1024               # only setup is posted to, and its own limit is smaller (engine/setup/api.py MAX_BODY)
 
 # name: (workers, most waiting)
 LANES = {
     'small': (8, 5000),     # /api/
     'render': (2, 500),     # PDF page images: PDFium runs one at a time anyway, so more workers would only sit waiting
-    'chat': (8, 32),        # long-lived: must not hold a small worker for the length of an answer
     'large': (6, 1000),     # video, PDF, saved pages, encyclopedia entries
 }
 GROW_TO = {'small': 48}                 # most workers once requests are kept waiting
@@ -140,8 +139,8 @@ def _make_handler(base):
 class Exchange:
     """One request. `stopped` is safe to read from any thread; cancel() may be called from any thread."""
 
-    def __init__(self, bridge, method, target, raw, lane, sink):
-        self.b, self.method, self.target, self.raw, self.lane, self.sink = bridge, method, target, raw, lane, sink
+    def __init__(self, bridge, method, target, raw, sink):
+        self.b, self.method, self.target, self.raw, self.sink = bridge, method, target, raw, sink
         self.path = urllib.parse.unquote(target.split('?', 1)[0])
         self.stopped = False
         self.hbuf = bytearray()
@@ -273,8 +272,7 @@ class Exchange:
         if self.swallow or not b:
             return
         self.sent += len(b)
-        unknown_limit = None if self.lane is self.b.lanes['chat'] else BIG_BODY
-        if self.announced is None and unknown_limit and self.sent > unknown_limit:   # a body that never said how long it was
+        if self.announced is None and self.sent > BIG_BODY:   # a body that never said how long it was
             self.cut = True
             raise BrokenPipeError
         self._send(b)
@@ -313,7 +311,7 @@ class Bridge:
             sink.finish(True)
             return None
         target, raw, lane = prepared
-        ex = Exchange(self, method, target, raw, lane, sink)
+        ex = Exchange(self, method, target, raw, sink)
         if not lane.submit(ex):
             status, reason, hs, text = _plain(503, 'Busy', b'too many requests')
             sink.head(status, reason, hs)
@@ -379,7 +377,7 @@ class Bridge:
         if method == 'POST':
             lines.append(f'Content-Length: {len(body or b"")}')
         raw = ('\r\n'.join(lines) + '\r\n\r\n').encode('latin-1', 'replace') + (body or b'' if method == 'POST' else b'')
-        return None, (target, raw, self.lanes[_lane_for(method, path, target)])
+        return None, (target, raw, self.lanes[_lane_for(path, target)])
 
     def _grow_lanes(self):
         while True:
@@ -394,9 +392,7 @@ def _plain(status, reason, text):
     return status, reason, [('Content-Type', 'text/plain'), ('Content-Length', str(len(text)))], text
 
 
-def _lane_for(method, path, target=''):
-    if method == 'POST' and path == '/api/chat':
-        return 'chat'
+def _lane_for(path, target=''):
     if PDF_PAGE.search(target):
         return 'render'
     if path.startswith('/api/') or path == '/reader.css':

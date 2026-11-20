@@ -3,25 +3,20 @@
 pkgname=lastbook-for-omarchy
 _root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 _version=$(cat "$_root/VERSION")
-_llama=b12032                 # packaging/llm/build_llm_linux.sh checks the commit
 _python=3.14                  # the wheels below are built for this Python; a new Arch Python needs new wheels
 pkgver=$_version
 pkgrel=1
-pkgdesc='Offline survival library for Omarchy: manuals, videos, encyclopedias, offline maps and a local AI that cites its sources, with a CLI and agent skill'
+pkgdesc='Offline survival library for Omarchy: manuals, videos, encyclopedias and offline maps, with a CLI and agent skill'
 arch=('x86_64' 'aarch64')
 url='https://github.com/ferdousbhai/lastbook-for-omarchy'
 license=('MIT')
 # The engine is Python (numpy, Beautiful Soup, and the two wheels below); the window is GTK 4 (native/), with WebKitGTK 6 for
 # articles, Poppler for PDFs and GStreamer for videos: H.264/AAC through gst-libav, VP9 through gst-plugins-good, AV1 through gst-plugin-dav1d.
-# The local AI's runner needs the GCC runtime (OpenMP) and the Vulkan loader (CPU fallback without a driver).
 depends=('python>=3.14' 'python<3.15' 'python-numpy' 'python-beautifulsoup4' 'glib2' 'gtk4' 'webkitgtk-6.0' 'poppler-glib'
-  'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'gst-plugin-dav1d' 'sqlite' 'gcc-libs' 'vulkan-icd-loader')
-optdepends=('recall-for-omarchy: meaning-based search, with the embedding model Recall already runs'
-  'vulkan-asahi: the local AI on the graphics card of an Apple Silicon Mac')
-makedepends=('git' 'rust' 'cmake' 'ninja' 'gcc' 'shaderc' 'vulkan-headers' 'spirv-headers' 'pkgconf' 'python-pillow' 'binutils')
+  'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'gst-plugin-dav1d' 'sqlite' 'gcc-libs')
+optdepends=('recall-for-omarchy: meaning-based search, with the embedding model Recall already runs')
+makedepends=('git' 'rust' 'gcc' 'pkgconf' 'python-pillow' 'binutils')
 options=('!debug' '!lto' '!strip')
-source=("llama.cpp::git+https://github.com/ggml-org/llama.cpp.git#tag=${_llama}")
-sha256sums=('SKIP')
 # Not in the Arch repositories: the ZIM reader and PDFium's bindings, as published on PyPI (pinned files, checked here).
 # libzim stays below 4: 4.0.0 renamed getResults and getEstimatedMatches, which engine/library.py calls. pypdfium2's
 # bitmap.to_numpy() is why the engine needs numpy (server.py draws PDF pages through it).
@@ -45,10 +40,6 @@ prepare() {
 
 build() {
   cd "$srcdir/lastbook"
-  # The local AI's runner: llama.cpp at the pinned tag, Vulkan plus every CPU variant, our pipe-only program.
-  mkdir -p "$srcdir/llm"
-  ln -sfn "$srcdir/llama.cpp" "$srcdir/llm/llama.cpp"
-  W="$srcdir/llm" bash packaging/llm/build_llm_linux.sh
   # The window: native/, Rust and GTK 4. It runs the engine (app/engine_pipe.py) as its child, over pipes.
   # No build folder or home folder in the program: source paths in panic messages are remapped.
   RUSTFLAGS="$RUSTFLAGS --remap-path-prefix=$srcdir=/build --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo" \
@@ -58,11 +49,11 @@ build() {
 package() {
   cd "$srcdir/lastbook"
   local lib="$pkgdir/usr/lib/$pkgname"
-  install -d "$lib/app" "$lib/engine/setup" "$lib/setup" "$lib/lib" "$lib/llm"
+  install -d "$lib/app" "$lib/engine/setup" "$lib/setup" "$lib/lib"
   # app/cli.py answers `lastbook COMMAND`; the skill (also inside the program, for `lastbook skill`) tells agents how to use it.
   install -m644 app/engine_pipe.py app/main.py app/bridge.py app/cli.py "$lib/app/"
   install -Dm644 skills/lastbook/SKILL.md "$lib/skills/lastbook/SKILL.md"
-  install -m644 server.py retrieval.py encyclopedia.py assistant.py llm_local.py VERSION "$lib/"
+  install -m644 server.py retrieval.py encyclopedia.py VERSION "$lib/"
   install -m644 engine/__init__.py engine/paths.py engine/library.py engine/saved_pages.py engine/address_search.py "$lib/engine/"
   install -m644 engine/setup/*.py engine/setup/roots.pem "$lib/engine/setup/"
   install -m644 packaging/arch/manifest-v1.json packaging/arch/map-regions.json "$lib/setup/"
@@ -70,8 +61,6 @@ package() {
   install -d "$lib/content/topics"
   install -m644 content/gaps.json "$lib/content/"
   install -m644 content/topics/*.json "$lib/content/topics/"
-  install -m755 "$srcdir/llm/bin-linux/lastbook-llm" "$lib/llm/"
-  install -m644 "$srcdir"/llm/bin-linux/*.so* "$srcdir"/llm/bin-linux/LICENSE* "$srcdir"/llm/bin-linux/NOTICE* "$lib/llm/"
   local whl
   for whl in "$srcdir"/*.whl; do
     python -I -m zipfile -e "$(realpath "$whl")" "$lib/lib"

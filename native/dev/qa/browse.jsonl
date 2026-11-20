@@ -8,7 +8,6 @@
 {"do":"shot","path":"guides.png"}
 {"do":"click","role":"grid-cell","name":"Get safe drinking water"}
 {"do":"wait","role":"window","name":"Get safe drinking water — Lastbook"}
-{"do":"wait","role":"button","name":"Ask about this guide","visible":true}
 {"do":"wait","role":"button","name":"Save this (Ctrl+D)","visible":true}
 {"do":"shot","path":"guide.png"}
 

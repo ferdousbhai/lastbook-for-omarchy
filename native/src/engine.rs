@@ -2,8 +2,7 @@
 //! The Python engine (app/engine_pipe.py) as a child process: JSON lines on its standard input and output, no port.
 //!
 //! One request a line ({"id", "method", "path", "body"}); answers come back as a head, text chunks and an end, all
-//! carrying the id, so a streamed answer (Chat) arrives as it is written. The engine leaves when its input closes,
-//! which happens however this program ends.
+//! carrying the id. The engine leaves when its input closes, which happens however this program ends.
 
 use std::{
     collections::HashMap,
@@ -99,7 +98,7 @@ pub fn python(program: &str) -> Command {
     cmd
 }
 
-/// Reads a JSON file of the person's own (saved items, chats); nothing there or unreadable is the default.
+/// Reads a JSON file of the person's own (saved items); nothing there or unreadable is the default.
 pub fn load_json<T: serde::de::DeserializeOwned + Default>(path: &std::path::Path) -> T {
     std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
@@ -181,7 +180,7 @@ impl Engine {
     }
 
     /// Sends a request; its answer arrives on the returned channel, piece by piece.
-    pub fn request(&self, method: &str, path: &str, body: Option<&Value>) -> (u64, async_channel::Receiver<Piece>) {
+    fn request(&self, method: &str, path: &str, body: Option<&Value>) -> async_channel::Receiver<Piece> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = async_channel::unbounded();
         self.waiters.lock().unwrap().insert(id, tx);
@@ -195,15 +194,7 @@ impl Engine {
         {
             let _ = tx.send_blocking(Piece::End);
         }
-        (id, rx)
-    }
-
-    /// Stops request `id`. The engine sends nothing more for it, so its answer ends here.
-    pub fn cancel(&self, id: u64) {
-        let _ = self.stdin.lock().unwrap().write_all(format!("{{\"cancel\":{id}}}\n").as_bytes());
-        if let Some(tx) = self.waiters.lock().unwrap().remove(&id) {
-            let _ = tx.send_blocking(Piece::End);
-        }
+        rx
     }
 
     /// The whole answer to a GET, read as JSON.
@@ -234,7 +225,7 @@ impl Engine {
 
     /// The whole answer to a request: its status, content type and body.
     async fn collect(&self, method: &str, path: &str, body: Option<&Value>) -> (u16, String, Vec<u8>) {
-        let (_, rx) = self.request(method, path, body);
+        let rx = self.request(method, path, body);
         let (mut status, mut ctype, mut bytes) = (0, String::new(), Vec::new());
         while let Ok(piece) = rx.recv().await {
             match piece {

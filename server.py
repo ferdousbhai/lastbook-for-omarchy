@@ -6,18 +6,18 @@ over in-memory streams. The routes the window uses:
 
   /api/topics                 curated needs and learning routes, with source details resolved from catalog.json
   /api/find?q=&kind=          plain-language search (synonyms, grouping by document, trusted-source ranking)
-  /api/retrieve?q=&k=&kind=   the passages Chat would cite (keyword, meaning-based and encyclopedia lists, fused)
+  /api/retrieve?q=&k=&kind=   the best passages (keyword, meaning-based and encyclopedia lists, fused), with where each came from
   /api/doc/<id>               one catalog record
   /api/transcript/<video id>  timed transcript cues
   /api/videos, /api/videos/all?q=  the Videos screen's rows, and a search of every video
   /api/shelves, /api/shelf/<id>    browse the whole collection by plain-language shelf
   /api/places?q=              place finder (addresses, ZIP codes, towns, named places; the world's towns from GeoNames)
-  /api/library, /api/assistant/status, POST /api/assistant/local, POST /api/chat, /api/setup/*
+  /api/library, /api/setup/*
 
-The assistant's tools call the helpers here directly (places, near, page_texts, transcript).
+The command line (app/cli.py) calls the helpers here directly (hybrid, places, near, page_texts, transcript).
 Nothing in library-data is written. Caches go to derived/cache.
 """
-import functools, html, io, json, math, os, re, sqlite3, struct, sys, threading, time, traceback, urllib.parse, zlib
+import functools, html, io, json, math, os, re, sqlite3, struct, sys, threading, traceback, urllib.parse, zlib
 from pathlib import Path
 
 import engine.paths as lastbook_paths  # noqa: E402  (data folder and program folder can differ in the packaged app)
@@ -32,8 +32,9 @@ MAPDB = HERE / 'derived' / 'geo' / 'map.sqlite'
 PLACEDB = HERE / 'derived' / 'geo' / 'places.sqlite'
 WORLD_PLACEDB = HERE / 'derived' / 'geo' / 'world-places.sqlite'   # GeoNames: countries, regions, towns of 15,000+ (engine/setup/maps.py builds it in setup)
 import engine.library as library  # noqa: E402  (the Handler base, the search index's path, the ZIM reader)
-import retrieval, assistant  # noqa: E402
+import retrieval, encyclopedia  # noqa: E402
 INDEX = None  # retrieval.Index, created in init()
+ENC = None    # encyclopedia.Encyclopedias (ZIM articles as passages), created in init()
 
 _pdf_lock = threading.Lock()  # PDFium is not thread-safe
 
@@ -386,6 +387,132 @@ def _find(q, kind, limit, _cat_version, _excl_version):
 def clean_snip(s):
     s = html.escape(re.sub(r'\s+', ' ', s or '')).replace('\u0001', '<mark>').replace('\u0002', '</mark>')
     return s
+
+
+# --------------------------------------------------------------- passages ----
+def _fts(q, limit=80):
+    """(doc_id, page, snippet) from the keyword index, best first."""
+    _, groups = query_groups(q)
+    return [row[:3] for row in fts_rows(groups, limit)] if groups else []
+
+
+def _src(r, page=None, t=None, excerpt='', excerpt_len=600, **extra):
+    """A passage of catalog record r with where it came from: what search results and `lastbook search` carry."""
+    pub = public(r)
+    d = {'doc_id': r['id'], 'title': pub['title'], 'publisher': pub['publisher'], 'year': pub['year'], 'kind': r['kind'],
+         'trust': pub['trust'], 'pages': pub['pages'], 'page': page if r['kind'] == 'pdf' else None, 't': t,
+         'excerpt': re.sub(r'\s+', ' ', excerpt or '')[:excerpt_len], 'notes': (r.get('notes') or '')[:300]}
+    if r['kind'] == 'video':
+        d.update(duration=pub.get('duration'), thumb=pub.get('thumb'))
+    elif r['kind'] == 'article':
+        d.update(wiki=r['path'].removeprefix('zim/'), encyclopedia=r.get('encyclopedia'))
+    d.update(extra)
+    return d
+
+
+def record(doc_id):
+    """The catalog record for a library document, or the record of an encyclopedia article (zim:<file>/<path>)."""
+    r = catalog()['by_id'].get(doc_id)
+    if r is None and ENC and doc_id.startswith(encyclopedia.ARTICLE_PREFIX):
+        r = ENC.record(doc_id)
+    return r
+
+
+def _allowed(kind):
+    cat = catalog()['by_id']
+    # 'library': everything but the encyclopedias, which take a second longer (the window asks for them separately)
+    ok = {'any': None, 'library': None, 'manual': ('pdf', 'html', 'pptx'), 'video': ('video', 'transcript'), 'encyclopedia': ()}.get(kind or 'any')
+    return lambda d: d in cat and cat[d]['kind'] not in ('metadata', 'zim') and (ok is None or cat[d]['kind'] in ok)
+
+
+def hybrid(q, k=8, kind='any', doc=None):
+    """Best passages for q from keyword and meaning-based search, fused, with provenance."""
+    cat = catalog()
+    base = _allowed(kind)
+    allowed = (lambda d: d == doc and base(d)) if doc else base
+    kw = []
+    for doc_id, page, snip in _fts(q, 120):
+        r = cat['by_id'].get(doc_id)
+        if not r:
+            continue
+        if r['kind'] == 'transcript':  # credit the video itself
+            v = cat['by_path'].get(r.get('video_path'))
+            if not v:
+                continue
+            doc_id, page = v['id'], None
+        if not allowed(doc_id):
+            continue
+        kw.append((doc_id, page if cat['by_id'][doc_id]['kind'] == 'pdf' else None, None, snip))
+    qv = INDEX.query_vector(q)  # once: each embedding is a round trip to Recall
+    sem = INDEX.semantic(qv, 80, allowed) if qv is not None else []
+    sem_l = [(s['doc_id'], s['page'] if cat['by_id'][s['doc_id']]['kind'] == 'pdf' else None, s['t'], s['text'], s['sem']) for s in sem]
+    content, groups = query_groups(q)
+    enc = ENC.search(content, groups, qv) if ENC and not doc and kind in ('any', 'encyclopedia') else []
+    recs = {e['doc_id']: e['record'] for e in enc}
+    rec = lambda d: cat['by_id'].get(d) or recs[d]
+    key = lambda d, p, t: (d, p, None if t is None else int(t // 45))
+    qwords = [w for w in re.findall(r'[a-z0-9-]{3,}', q.lower()) if w not in STOP]
+    models = [w for w in re.findall(r'[a-z0-9-]+', q.lower()) if re.search(r'\d', w) and re.search(r'[a-z]', w) and len(w) >= 3]
+    lists = [('keyword', [key(*x[:3]) for x in kw]), ('meaning', [key(*x[:3]) for x in sem_l]),
+             ('encyclopedia', [key(e['doc_id'], None, None) for e in enc])]
+    fused = retrieval.rrf(lists)
+    text = {}
+    for d, p, t, snip in kw:
+        text.setdefault(key(d, p, t), {'excerpt': snip, 't': t})
+    for d, p, t, chunk, sc in sem_l:
+        e = text.setdefault(key(d, p, t), {})
+        e.update(excerpt=chunk, t=t, sem=round(sc, 3))  # the semantic chunk is the fuller passage
+    for e in enc:
+        text[key(e['doc_id'], None, None)] = {'excerpt': e['text'], 't': None, 'section': e['heading'], 'sem': e['sem']}
+    # videos found only by keyword have no moment yet: borrow the best timed window from the same video
+    out = []
+    for kkey, e in fused.items():
+        d, p, _ = kkey
+        r = rec(d)
+        _, weight = trust(r)
+        score = e['score'] * (0.75 + 0.25 * weight)
+        if CLINICAL.search(r['title'] + ' ' + r.get('collection', '')) and not CLINICAL.search(q):
+            score *= 0.55  # surgery/clinician texts after general guidance unless asked for
+        title = (r['title'] + ' ' + str(r.get('model') or '')).lower()
+        if models and any(m in title for m in models):
+            score *= 3  # exact equipment model named in the question
+        elif sum(1 for w in qwords if w in title) >= max(2, len(qwords) // 2):
+            score *= 1.3
+        out.append((score, kkey, e))
+    out.sort(key=lambda x: -x[0])
+    res, per_doc = [], {}
+    # Library pages are usually found by words and by meaning alike, so they outrank an article found by the encyclopedia
+    # search alone. The best article that cleared its own bar keeps the last place of a full list.
+    best_article = next((x for x in out if x[1][0].startswith(encyclopedia.ARTICLE_PREFIX)), None) if k >= 6 else None
+    if best_article:
+        out = [x for x in out if x is not best_article]
+    for score, kkey, e in out:
+        d, p, _ = kkey
+        if best_article and len(res) == k - 1:
+            score, kkey, e = best_article
+            d, p, _ = kkey
+            best_article = None
+        if per_doc.get(d, 0) >= 2:  # variety: at most two passages per document
+            continue
+        per_doc[d] = per_doc.get(d, 0) + 1
+        info = text.get(kkey, {})
+        t = info.get('t')
+        r = rec(d)
+        if r['kind'] == 'video' and t is None and qv is not None:
+            best = INDEX.semantic(qv, 1, doc=d)
+            if best:
+                t = best[0]['t']
+                info = dict(info, excerpt=best[0]['text'])
+        extra = {'section': info['section']} if info.get('section') else {}
+        res.append(_src(r, p, t, info.get('excerpt'), 900, found_by=e['ranks'], score=round(score * 1000, 2), **extra))
+        if len(res) >= k:
+            break
+    if best_article and len(res) < k:  # fewer library results than places: the article still comes
+        score, kkey, e = best_article
+        info = text.get(kkey, {})
+        res.append(_src(rec(kkey[0]), None, None, info.get('excerpt'), 900, found_by=e['ranks'], score=round(score * 1000, 2),
+                        **({'section': info['section']} if info.get('section') else {})))
+    return res
 
 
 # ------------------------------------------------------------------ shelves ----
@@ -879,21 +1006,6 @@ def places(q, limit=20):
     return out[:limit + len(water)]
 
 
-_cov = {'at': 0}
-
-
-def coverage():
-    """What the assistant can and cannot read — reported, not hidden."""
-    if time.time() - _cov['at'] > 300:
-        cat = catalog()
-        vids = [r for r in cat['by_id'].values() if r['kind'] == 'video']
-        with_text = sum(1 for r in vids if cat['video_tx'].get(r['path']) or any(c.endswith('.vtt') for c in r.get('captions', [])))
-        pdfs = [r for r in cat['by_id'].values() if r['kind'] == 'pdf']
-        img = sum(1 for r in pdfs if (r.get('searchability') or '').startswith('image-only'))
-        _cov.update(at=time.time(), data={'videos': len(vids), 'videos_with_text': with_text, 'pdfs': len(pdfs), 'pdfs_image_only': img})
-    return _cov['data']
-
-
 def pack_info():
     """The open download's own description, or None when this is not a pack. Read once: a pack does not change while it is open."""
     if 'pack' not in _pack:
@@ -1003,47 +1115,7 @@ class Handler(library.Handler):
         rpath = urllib.parse.urlsplit(self.path).path
         if rpath.startswith('/api/setup/'):  # About → Library and downloads: engine/setup/api.py
             return setup_api.handle(self, 'POST', rpath)
-        if rpath == '/api/assistant/local':   # Chat is open: the local AI starts loading before the question comes
-            if not assistant.LOCAL:
-                return self.send_json({'error': 'no local AI in this version'}, 404)
-            assistant.warm_local()
-            return self.send_json(assistant.LOCAL.status())
-        if rpath != '/api/chat':
-            return self.send_json({'error': 'not found'}, 404)
-        try:
-            n = int(self.headers.get('Content-Length') or 0)
-            if n < 0:
-                raise ValueError
-            if n > 200_000:
-                return self.send_json({'error': 'request too large'}, 413)
-            req = json.loads(self.rfile.read(n) or b'{}')
-        except ValueError:
-            return self.send_json({'error': 'bad request'}, 400)
-        msgs = [m for m in (req.get('messages') or []) if isinstance(m, dict)][-12:]
-        about = str(req.get('about') or '')[:200] or None
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/event-stream')
-        self.end_headers()
-        gone = [False]
-
-        def emit(ev):
-            if gone[0]:
-                return
-            try:
-                self.wfile.write(b'data: ' + json.dumps(ev).encode() + b'\n\n')
-                self.wfile.flush()
-            except library.CLIENT_GONE:
-                gone[0] = True  # the person pressed Stop or left; stop calling the model
-        if assistant.LOCAL:
-            assistant.LOCAL.settle(lambda: emit({'type': 'state', 'state': 'starting'}))
-        if not assistant.model_status()['online']:
-            emit({'type': 'error', 'error': 'model_unavailable', 'text': 'The local assistant model is not running right now.'})
-            return
-        try:
-            assistant.chat(msgs, about, emit, lambda: gone[0])
-        except Exception as e:
-            traceback.print_exc()
-            emit({'type': 'error', 'error': 'internal', 'text': f'The assistant stopped on an internal error ({type(e).__name__}).'})
+        return self.send_json({'error': 'not found'}, 404)
 
     def do_GET(self):
         try:
@@ -1065,9 +1137,7 @@ class Handler(library.Handler):
                 t = transcript(path[16:])
                 return self.send_json(t if t is not None else {'error': 'unknown video'}, 200 if t is not None else 404)
             if path == '/api/retrieve':
-                return self.send_json({'q': qs.get('q', ''), 'results': assistant.hybrid(qs.get('q', '')[:200], min(20, int(qs.get('k', 8))), qs.get('kind', 'any'))})
-            if path == '/api/assistant/status':
-                return self.send_json(dict(assistant.model_status(), coverage=coverage()))
+                return self.send_json({'q': qs.get('q', ''), 'results': hybrid(qs.get('q', '')[:200], min(20, int(qs.get('k', 8))), qs.get('kind', 'any'))})
             if path == '/api/videos':
                 return self.send_json(videos_home())
             if path == '/api/videos/all':
@@ -1081,7 +1151,7 @@ class Handler(library.Handler):
             if path == '/api/library':
                 s = json.loads((LIB / 'summary.json').read_text(encoding='utf-8'))
                 sources = (catalog()['by_path'].get(SOURCES_PAGE) or {}).get('id')
-                return self.send_json({**{k: s.get(k) for k in ('pdfs', 'pdf_pages', 'web_pages', 'videos', 'collections', 'document_bytes')}, 'sources': sources})
+                return self.send_json({**{k: s.get(k) for k in ('pdfs', 'pdf_pages', 'web_pages', 'videos', 'collections', 'document_bytes')}, 'sources': sources, 'index': dict(INDEX.status)})
             if path.startswith('/api/'):
                 return self.send_json({'error': 'not found'}, 404)
             return super().do_GET()
@@ -1093,10 +1163,10 @@ class Handler(library.Handler):
 
 def init(no_index=False):
     """Everything the engine needs before it can answer a request. Opens no socket."""
-    global INDEX
+    global INDEX, ENC
     catalog()
     # Without the indexer this process only reads the index (the command line, beside a window that may be indexing).
     INDEX = retrieval.Index(catalog, trust, library.DB, excluded_fn=excluded_videos, truncate=not no_index)
-    assistant.init(sys.modules[__name__], INDEX)
+    ENC = encyclopedia.Encyclopedias(LIB, catalog, library.open_zim, INDEX)
     if not no_index:
         threading.Thread(target=INDEX.run_forever, daemon=True).start()

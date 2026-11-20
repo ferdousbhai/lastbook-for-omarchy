@@ -14,7 +14,6 @@ use omui::{Theme, icon_button, icons::name};
 
 use crate::{
     cards::encyclopedia_name,
-    chat::ChatPage,
     engine::Engine,
     guides::Guides,
     library::{Browse, Saved, load_saved, store_saved},
@@ -29,7 +28,6 @@ use crate::{
 pub enum Route {
     Search { q: String, kind: String },
     Read { doc: String, page: i32 },
-    Chat { id: Option<String>, about: Option<String> },
     Guide(String),
     Watch { video: String, t: f64 },
     Wiki { path: String },
@@ -96,7 +94,6 @@ impl Route {
 /// The sidebar's screens, in order: (id, label, icon). About is a screen too, but its way in is the sidebar's footer.
 pub const SECTIONS: &[(&str, &str, &str)] = &[
     ("search", "Search", name::SEARCH),
-    ("chat", "Chat", name::CHAT),
     ("guides", "Guides", name::INFO),
     ("library", "Library", name::DOCUMENT),
     ("videos", "Videos", name::VIDEO),
@@ -129,7 +126,6 @@ pub struct App {
     section: RefCell<String>,
     pub search: RefCell<Option<Rc<SearchPage>>>,
     pub reader: RefCell<Option<Rc<Reader>>>,
-    pub chat: RefCell<Option<Rc<ChatPage>>>,
     pub guides: RefCell<Option<Rc<Guides>>>,
     pub videos: RefCell<Option<Rc<Videos>>>,
     pub web: RefCell<Option<Rc<WebPage>>>,
@@ -163,7 +159,7 @@ impl App {
             let row = omui::sidebar_row(id, Some(icon), label, None);
             // About's row is there to hold the selection, unseen: the footer is its way in.
             row.set_visible(*id != "about");
-            // A gap opens each group: ask, browse, yours.
+            // A gap opens each group: search, browse, yours.
             if matches!(*id, "guides" | "saved") {
                 row.set_margin_top(10);
             }
@@ -219,7 +215,6 @@ impl App {
             section: RefCell::new(String::new()),
             search: RefCell::new(None),
             reader: RefCell::new(None),
-            chat: RefCell::new(None),
             guides: RefCell::new(None),
             videos: RefCell::new(None),
             web: RefCell::new(None),
@@ -234,9 +229,6 @@ impl App {
         let reader = Reader::build(&app);
         app.stack.add_named(&reader.root, Some("reader"));
         app.reader.replace(Some(reader));
-        let chat = ChatPage::build(&app);
-        app.stack.add_named(&chat.root, Some("chat"));
-        app.chat.replace(Some(chat));
         let guides = Guides::build(&app);
         app.stack.add_named(&guides.list_root, Some("guides"));
         app.stack.add_named(&guides.page_root, Some("guide"));
@@ -285,8 +277,6 @@ impl App {
                 let route = if id == "search" {
                     let s = a.search.borrow().as_ref().map(|s| s.current()).unwrap_or_default();
                     Route::Search { q: s.0, kind: s.1 }
-                } else if id == "chat" {
-                    Route::Chat { id: None, about: None }
                 } else {
                     let id: &'static str = SECTIONS.iter().find(|s| s.0 == id.as_str()).map(|s| s.0).unwrap_or("guides");
                     Route::Section(id)
@@ -311,7 +301,7 @@ impl App {
         // A click on the row already selected goes back to that section's first screen (from a guide to the guides).
         let a = app.clone();
         app.sidebar.connect_row_activated(move |_, row| {
-            if let Some(s) = SECTIONS.iter().find(|s| s.0 == row.widget_name().as_str() && !matches!(s.0, "search" | "chat"))
+            if let Some(s) = SECTIONS.iter().find(|s| s.0 == row.widget_name().as_str() && s.0 != "search")
                 && a.current() != Some(Route::Section(s.0))   // a click on another row has just gone there (row-selected)
             {
                 a.navigate(Route::Section(s.0));
@@ -319,17 +309,11 @@ impl App {
         });
         app.keys();
         app.navigate(Route::Section("guides"));
-        // LASTBOOK_OPEN opens a screen at start: it is how `lastbook open` works (app/cli.py). Any Route::from_key form,
-        // or chat:<question>.
-        if let Ok(open) = std::env::var("LASTBOOK_OPEN") {
-            if let Some(q) = open.strip_prefix("chat:") {
-                app.navigate(Route::Chat { id: None, about: None });
-                if let Some(c) = app.chat.borrow().as_ref() {
-                    c.ask_text(q);
-                }
-            } else if let Some(r) = Route::from_key(&open) {
-                app.navigate(r);
-            }
+        // LASTBOOK_OPEN opens a screen at start: it is how `lastbook open` works (app/cli.py). Any Route::from_key form.
+        if let Ok(open) = std::env::var("LASTBOOK_OPEN")
+            && let Some(r) = Route::from_key(&open)
+        {
+            app.navigate(r);
         }
         app
     }
@@ -461,12 +445,6 @@ impl App {
                 }
                 ("reader", "library", String::new())
             }
-            Route::Chat { id, about } => {
-                if let Some(c) = self.chat.borrow().as_ref() {
-                    c.show(id.as_deref(), about.as_deref());
-                }
-                ("chat", "chat", "Chat".to_owned())
-            }
             Route::Guide(id) => {
                 let title = self.guides.borrow().as_ref().and_then(|g| g.show(id)).unwrap_or_else(|| "Guides".into());
                 ("guide", "guides", title)
@@ -565,8 +543,8 @@ impl App {
         self.update_star();
     }
 
-    /// Replaces the current history entry, and shows it if asked (a document that turned out to be a web page; a new
-    /// chat's id and a turned page change the entry only).
+    /// Replaces the current history entry, and shows it if asked (a document that turned out to be a web page; a
+    /// turned page changes the entry only).
     pub fn replace_route(self: &Rc<Self>, route: Route, show: bool) {
         let pos = self.pos.get();
         if let Some(r) = self.history.borrow_mut().get_mut(pos) {
@@ -584,7 +562,7 @@ impl App {
     }
 
     /// Whether the keyboard is in the sidebar: a screen shown by arrowing through it leaves the focus there.
-    /// A click on a row means "go there", and the screen takes the keyboard (Chat's composer, the search field).
+    /// A click on a row means "go there", and the screen takes the keyboard (the search field).
     pub fn sidebar_has_focus(&self) -> bool {
         self.sidebar_keyed.get()
             && gtk::prelude::GtkWindowExt::focus(&self.window).is_some_and(|f| f.is_ancestor(&self.sidebar) || f == *self.sidebar.upcast_ref::<gtk::Widget>())

@@ -92,19 +92,8 @@ impl Guides {
         }
         let t = self.topics.borrow().iter().find(|t| t["id"] == id).cloned()?;
         let title = t["title"].as_str().unwrap_or_default().to_owned();
-        let ask = gtk::Button::with_label("Ask about this guide");
-        ask.add_css_class("chip");
-        ask.set_halign(gtk::Align::Start);
-        let app = self.app.clone();
-        let about = format!("topic:{id}");
-        ask.connect_clicked(move |_| {
-            if let Some(app) = app.upgrade() {
-                app.navigate(Route::Chat { id: None, about: Some(about.clone()) });
-            }
-        });
         self.page.append(&label(&title, "page-title"));
         self.page.append(&label(t["intro"].as_str().unwrap_or_default(), "dim-label"));
-        self.page.append(&ask);
 
         if let Some(choices) = t["choices"].as_array().filter(|c| !c.is_empty()) {
             self.page.append(&section("What's happening?"));

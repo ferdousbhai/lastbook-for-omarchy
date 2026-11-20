@@ -4,7 +4,7 @@ and the guides as the only part of content/ the package scan lets through.
 
   python3 -B app/tests/test_what_ships.py [-v]
 
-Uses the made-up library in derived/app-build/testdata (no model). Never packaged."""
+Uses the made-up library in derived/app-build/testdata. Never packaged."""
 import json, os, sys, unittest
 from pathlib import Path
 

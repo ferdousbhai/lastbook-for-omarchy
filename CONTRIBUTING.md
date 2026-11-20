@@ -43,7 +43,6 @@ from pacman, never from the app.
 - No telemetry, analytics, crash reporting, fonts or scripts from the web, update checks, or "phone home" of any kind.
 - A new dependency must work fully offline, and must not open a socket or start a server. Say in the pull request what
   it is, its licence, and why it is needed, and add it to `THIRD_PARTY_NOTICES.md`.
-- The local AI runner stays socket-free: no RPC backend, no HTTP server, no download code.
 
 **General wording, no household.** Lastbook began as one household's library. The shipped guides use general wording, and
 nothing shared may name a real person's home, street, coordinates, machines or accounts.

@@ -131,55 +131,6 @@ class Lookup(unittest.TestCase):
             self.assertTrue((self.tmp / 'config' / 'Lastbook' / 'settings.json').is_file())
             self.assertEqual(main.data_folder(None), chosen)
 
-    def test_model_discovery_stays_inside_selected_library(self):
-        import llm_local
-        data = self.home / 'Downloads' / 'LastbookData'
-        (data / 'models').mkdir(parents=True)
-        outside = self.home / 'Downloads' / llm_local.FILE
-        outside.write_bytes(b'not selected')
-        original_stat = Path.stat
-
-        def stat(path, *args, **kwargs):
-            if path == data or data in path.parents:
-                return original_stat(path, *args, **kwargs)
-            self.assertFalse(any(path == self.home / name or self.home / name in path.parents
-                                 for name in ('Downloads', 'Documents', 'Desktop')), str(path))
-            return original_stat(path, *args, **kwargs)
-
-        with mock.patch.object(llm_local.paths, 'DATA', data), \
-                mock.patch.dict(os.environ, {'LASTBOOK_MODEL_DIR': ''}), \
-                mock.patch.object(llm_local, '_load', return_value={}), \
-                mock.patch.object(Path, 'stat', stat):
-            # The library, then the Hugging Face cache at the one pinned revision (where other local apps keep models);
-            # never the person's other folders.
-            snap = llm_local.hf_snapshot()
-            self.assertEqual(llm_local.places(), [data / 'models', data, snap])
-            self.assertTrue(str(snap).endswith('/huggingface/hub/models--unsloth--gemma-4-26B-A4B-it-GGUF/snapshots/'
-                                               'c099eb48e663fd284577b04978a94ffccb261841'), snap)
-            local = llm_local.Local()
-            local.runner = self.tmp / 'runner'
-            local.discover()
-            self.assertEqual(local.state, 'absent')
-
-    def test_explicit_model_directory_is_kept(self):
-        import llm_local
-        chosen = self.home / 'Documents' / 'Models'
-        with mock.patch.dict(os.environ, {'LASTBOOK_MODEL_DIR': str(chosen)}):
-            self.assertEqual(llm_local.places()[0], chosen)
-
-
-class FreeMemory(unittest.TestCase):
-    def test_the_model_is_not_started_without_room_for_it(self):
-        import llm_local
-        gib = 2 ** 30
-        fit = {'needs': 25 * gib, 'fits': True}
-        self.assertIsNone(llm_local.not_enough_free(fit, available=30 * gib))
-        said = llm_local.not_enough_free(fit, available=27 * gib)     # what ran this computer out of memory
-        self.assertIn('Not enough free memory', said)
-        self.assertIn('29.0 GB is free', said)
-        self.assertIsNone(llm_local.not_enough_free(None, available=1))            # nothing measured yet: judge() decides
-        self.assertIsNone(llm_local.not_enough_free({'needs': 0}, available=1))
-
 
 if __name__ == '__main__':
     unittest.main()

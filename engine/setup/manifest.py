@@ -11,7 +11,6 @@ from . import download
 REMOTE = 'https://downloads.lastbook.org/manifest-v1.json'
 SHA = re.compile(r'^[0-9a-f]{64}$')
 LIBRARY_HOSTS = frozenset({'downloads.lastbook.org'})   # packs and state maps come from Lastbook's own download site only
-MODEL_HOSTS = frozenset({'huggingface.co'})             # the model from Hugging Face only (it redirects to its own CDN hosts)
 
 
 def _from(url, hosts, allowed):
@@ -39,7 +38,7 @@ def validate(m, allowed=None):
     """The manifest, cleaned to the fields setup uses, or None if anything in it is wrong."""
     if not isinstance(m, dict) or m.get('version') != 1:
         return None
-    packs, models = [], []
+    packs = []
     for p in m.get('packs') or []:
         if not isinstance(p, dict) or not isinstance(p.get('id'), str) or not NAME.match(p['id']):
             return None
@@ -82,14 +81,7 @@ def validate(m, allowed=None):
                          'installed_bytes': x.get('installed_bytes') if _int(x.get('installed_bytes')) else None,
                          'download_bytes': sum(f['size'] for f in files), 'available': available, 'files': files})
         collections[key] = entries
-    for x in m.get('models') or []:
-        if not (isinstance(x, dict) and isinstance(x.get('id'), str) and NAME.match(x['id']) and isinstance(x.get('file'), str)
-                and NAME.match(x['file']) and _int(x.get('size')) and isinstance(x.get('sha256'), str) and SHA.match(x['sha256'])
-                and _from(x.get('url'), MODEL_HOSTS, allowed) and _int(x.get('memory_bytes'))):
-            return None
-        models.append({'id': x['id'], 'title': str(x.get('title') or x['id']), 'file': x['file'], 'url': x['url'], 'size': x['size'],
-                       'sha256': x['sha256'], 'memory_bytes': x['memory_bytes'], 'available': bool(x.get('available', True))})
-    return {'version': 1, 'published': str(m.get('published') or ''), 'packs': packs, 'models': models, **collections}
+    return {'version': 1, 'published': str(m.get('published') or ''), 'packs': packs, **collections}
 
 
 def load_bundled(paths=None):
@@ -100,21 +92,21 @@ def load_bundled(paths=None):
             continue
         if m:
             return m
-    return {'version': 1, 'published': '', 'packs': [], 'models': [], 'maps': []}
+    return {'version': 1, 'published': '', 'packs': [], 'maps': []}
 
 
 def merge(bundled, fetched):
-    """What the app was built with stays: for an id the bundled manifest pins (it has files, or the model's file),
+    """What the app was built with stays: for an id the bundled manifest pins (it has files),
     its addresses, sizes and SHA-256 are kept and the fetched copy may only change whether it is available. A fetched copy may
     add ids, and give the files of an id the app was built without (a pack published later). One bad publish never takes an
     option away."""
     out = dict(fetched)
-    for key in ('packs', 'models', 'maps', 'address_indexes'):
+    for key in ('packs', 'maps', 'address_indexes'):
         built = {x['id']: x for x in bundled.get(key, [])}
         merged = []
         for x in fetched.get(key, []):
             b = built.pop(x['id'], None)
-            pinned = b is not None and (b.get('files') or b.get('sha256'))
+            pinned = b is not None and b.get('files')
             merged.append({**b, 'available': bool(x.get('available'))} if pinned else x)
         out[key] = merged + list(built.values())
     return out
@@ -155,14 +147,9 @@ class Manifest:
     def address_index(self, state):
         return next((x for x in self.current.get('address_indexes', []) if x['id'] == state), None)
 
-    def model(self, mid=None):
-        ms = [m for m in self.current['models'] if m['available']]
-        return next((m for m in ms if mid in (None, m['id'])), None)
-
     def public(self):
         strip = lambda f: {k: v for k, v in f.items() if k != 'url'}
         return {'source': self.source, 'published': self.current['published'],
                 'packs': [{**p, 'files': [strip(f) for f in p['files']]} for p in self.current['packs']],
-                'models': [strip(m) for m in self.current['models']],
                 'maps': [{**x, 'files': [strip(f) for f in x['files']]} for x in self.current.get('maps', [])],
                 'address_indexes': [{**x, 'files': [strip(f) for f in x['files']]} for x in self.current.get('address_indexes', [])]}

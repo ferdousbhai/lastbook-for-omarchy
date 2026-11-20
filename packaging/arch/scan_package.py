@@ -4,7 +4,7 @@
 
 Refused: test code, the old web window (GTK 3, lastbooksrc, the Python launcher), model libraries, the Mac and Windows shells, the remote_storage module,
 /Users/... and /home/<name> paths, anything in content/ but the guides (gaps.json, topics/*.json), native code not built for the package's architecture or that links a library from outside the package and the system
-(the window, /usr/bin/lastbook, may also link the GTK 4, WebKitGTK, Poppler and GStreamer it depends on), a socket in the local AI's runner, and in our own Python any network module outside the one way out (setup's downloader) and
+(the window, /usr/bin/lastbook, may also link the GTK 4, WebKitGTK, Poppler and GStreamer it depends on), and in our own Python any network module outside the one way out (setup's downloader) and
 the engine's request handler, which the app runs with no port, and retrieval.py's local (AF_UNIX) socket to Recall. roots.pem must be there: without it setup downloads nothing.
 """
 import argparse
@@ -20,11 +20,11 @@ BAD_SEGMENTS = {'test', 'tests', 'testing', 'pytest', 'unittest', 'doctest', 're
                 'objc', 'AppKit', 'Foundation', 'PyObjCTools', 'vendor-macos', 'fixture', 'real_data_check', 'cdp', 'f2py', 'pypdfium2_cli',
                 'shell_linux', 'lastbooksrc', 'libgstlastbooksrc', 'gst'}
 BAD_FILE = re.compile(r'(^|/)(test_[^/]*|[^/]*_test\.(py|pyc|so)|[^/]*_tests[^/]*\.so|[^/]*\.onnx|[^/]*\.gguf|mac_[^/]*|win_[^/]*)$', re.I)
-TEST_MARKERS = [b'TEST-STUB', b'mac_offscreen', b'stub_chat', b'stub-chat']
+TEST_MARKERS = [b'TEST-STUB', b'mac_offscreen']
 P = 'usr/lib/lastbook-for-omarchy/'
 GUIDES = re.compile(r'^usr/lib/lastbook-for-omarchy/content/(gaps|topics/[^/]+)\.json$')   # all of content/ that ships
 USER_PATH = re.compile(rb'/Users/[A-Za-z0-9._-]+|/home/(?!runner\b|user\b)[a-z_][a-z0-9_.-]*')   # one-letter names too
-OUR_PY = re.compile(r'^usr/lib/lastbook-for-omarchy/(server|retrieval|encyclopedia|assistant|llm_local)\.py$|^usr/lib/lastbook-for-omarchy/(app|engine)/.*\.py$')
+OUR_PY = re.compile(r'^usr/lib/lastbook-for-omarchy/(server|retrieval|encyclopedia)\.py$|^usr/lib/lastbook-for-omarchy/(app|engine)/.*\.py$')
 FIRST_PARTY = re.compile(r'^usr/lib/lastbook-for-omarchy/(content|app|engine|setup|skills)/|^usr/lib/lastbook-for-omarchy/[^/]+\.py$')
 NET_MODULES = {'socket', 'ssl', 'http.client', 'urllib.request', 'http.server', 'socketserver', 'asyncio', 'ftplib', 'smtplib', 'xmlrpc', 'requests', 'urllib3'}
 NET_ALLOWED = {
@@ -34,8 +34,7 @@ NET_ALLOWED = {
     P + 'retrieval.py',               # Recall's owner-only Unix socket (checked below: AF_UNIX only)
 }
 ARCH = {'x86_64': 'X86-64', 'aarch64': 'AArch64'}
-SOCKET_CALLS = re.compile(r'^(socket|connect|bind|listen|accept4?|getaddrinfo|gethostbyname\w*|sendto|recvfrom|curl_\w+|SSL_\w+)$')
-SYSTEM_LIBS = re.compile(r'^(libc|libm|libdl|libpthread|librt|libstdc\+\+|libgcc_s|libgomp|libvulkan|ld-linux-x86-64|ld-linux-aarch64|libz|libglib-2\.0|libgobject-2\.0)\.so')
+SYSTEM_LIBS = re.compile(r'^(libc|libm|libdl|libpthread|librt|libstdc\+\+|libgcc_s|ld-linux-x86-64|ld-linux-aarch64|libz|libglib-2\.0|libgobject-2\.0)\.so')
 APP_ID = 'io.github.ferdousbhai.Lastbook'
 WINDOW = 'usr/bin/lastbook'
 # What the window links besides SYSTEM_LIBS: the GTK 4 stack, WebKitGTK 6, Poppler and GStreamer, all in depends=().
@@ -112,11 +111,6 @@ def main():
                 for lib in re.findall(r'\(NEEDED\)\s+Shared library: \[([^\]]+)\]', dyn):
                     if lib not in beside and not SYSTEM_LIBS.match(lib) and not rel.startswith(P + 'lib/') and not (rel == WINDOW and WINDOW_LIBS.match(lib)):
                         problems.append(f'links outside the package and the system: {rel} -> {lib}')
-                if rel.startswith(P + 'llm/'):     # the local AI's runner may not reach a network at all
-                    syms = subprocess.run(['nm', '-D', '--undefined-only', str(p)], capture_output=True, text=True).stdout.split()
-                    calls = sorted({s.split('@')[0] for s in syms if SOCKET_CALLS.match(s.split('@')[0])})
-                    if calls:
-                        problems.append(f'network calls in {rel}: {calls[:8]}')
         for rel in remote_hits:
             problems.append(f'remote_storage named in {rel}')
         for u, where in user_paths.items():
@@ -128,8 +122,7 @@ def main():
                 problems.append(f'missing from the package: {need}')
         if WINDOW in packaged and (root / WINDOW).read_bytes()[:4] != b'\x7fELF':
             problems.append(f'{WINDOW} is not the native window (not an ELF program)')
-        llm = P + 'llm/lastbook-llm' in packaged
-    print(f'files {n_files}, native binaries {n_elf}, local AI runner: {"included" if llm else "not included"}')
+    print(f'files {n_files}, native binaries {n_elf}')
     print(f'network modules in our Python (allowed there): {net_report or "none"}')
     print(f'remote_storage string: {remote_hits or "nowhere"} (the module itself is refused above)')
     print(f'home-folder strings: { {u: w[:3] for u, w in user_paths.items()} or "none"}')

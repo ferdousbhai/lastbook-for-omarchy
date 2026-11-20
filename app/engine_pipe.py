@@ -3,7 +3,7 @@
 The native window (native/, Rust and GTK 4) starts this as a child process and sends one request a line:
 
   {"id": 7, "method": "GET", "path": "/api/find?q=water"}
-  {"id": 8, "method": "POST", "path": "/api/chat", "body": {...}}
+  {"id": 8, "method": "POST", "path": "/api/setup/start", "body": {...}}
 
 Each answer comes back as lines carrying the same id: one head, any number of text chunks, one end:
 
@@ -11,7 +11,7 @@ Each answer comes back as lines carrying the same id: one head, any number of te
   {"id": 7, "chunk": "{\\"results\\": ..."}
   {"id": 7, "end": true}
 
-Text answers come as "chunk"; anything else (images, fonts, video) as "b64", base64. Chunks arrive as the engine writes them, so a streamed answer (Chat's server-sent events) reaches the window as it is written.
+Text answers come as "chunk"; anything else (images, fonts, video) as "b64", base64. Chunks arrive as the engine writes them.
 {"cancel": 8} stops request 8. The first line out is {"ready": {...}} with the data and library folders, which the window reads
 files from directly (thumbnails, PDFs, videos): only answers that need the engine come through here.
 
@@ -152,14 +152,13 @@ def main():
     else:
         data = found
         os.environ['LASTBOOK_DATA'] = str(data)
-        os.environ.setdefault('LASTBOOK_LOCAL_AI', '1')
         app_main.open_log(data)     # the installed app's output goes to the log from here; the protocol stays on OUT
         try:
             server = open_library(setup_api, app_main.app_folders()[0], note)
         except Exception as e:
             send({'error': failed_start(note, e)})      # the window shows it in place of the library
             raise
-        if not given or note:   # the library opened: mark the model checked, delete the old library an upgrade moved aside
+        if not given or note:   # the library opened: delete the old library an upgrade moved aside
             setup_api.opened(app_main.app_folders()[0], data, note)
         setup_api.configure(mode='manage', current=data, **options(app_main))
         bridge = B.Bridge(server)

@@ -1,4 +1,4 @@
-"""Encyclopedia articles (ZIM files in library-data/collections) as citable passages for Chat.
+"""Encyclopedia articles (ZIM files in library-data/collections) as citable passages for search.
 
 Each ZIM file carries its own full-text index (Xapian, every word must match) and a title index, which find candidate
 articles in milliseconds. They match words, not meaning ("bleeding from the leg" finds a museum), so with Recall running the

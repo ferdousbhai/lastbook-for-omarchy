@@ -1,6 +1,6 @@
 """The one way out: downloads for setup. This is the only module in Lastbook that opens a network connection.
 
-  - HTTPS only, to the hosts in ALLOWED_HOSTS (or a subdomain of ALLOWED_SUFFIXES), port 443.
+  - HTTPS only, to the hosts in ALLOWED_HOSTS, port 443.
   - No proxy: http.client never reads the system's or the environment's proxy settings (urllib would), so a request goes
     straight to the host named, or nowhere.
   - A redirect is followed only to another allowed address, at most MAX_REDIRECTS times.
@@ -25,13 +25,10 @@ from pathlib import Path
 
 ALLOWED_HOSTS = frozenset({
     'downloads.lastbook.org',
-    'huggingface.co',
-    'cas-bridge.xethub.hf.co',
     'build-metadata.protomaps.dev',     # the list of Protomaps' daily OpenStreetMap builds
     'build.protomaps.com',              # the builds: the map is cut from one with range requests (engine/setup/maps.py)
     'download.geonames.org',            # the place names for searching the map (GeoNames, CC BY 4.0)
 })
-ALLOWED_SUFFIXES = ('.hf.co',)      # Hugging Face's download hosts (cas-bridge.xethub.hf.co and its siblings)
 MAX_REDIRECTS = 5
 TIMEOUT = 30                        # seconds without a byte before the connection counts as broken
 CHUNK = 1024 * 1024
@@ -70,7 +67,7 @@ def host_allowed(host, allowed=None):
     host = (host or '').lower().rstrip('.')
     if allowed is not None:
         return host in allowed
-    return host in ALLOWED_HOSTS or any(host.endswith(s) and len(host) > len(s) for s in ALLOWED_SUFFIXES)
+    return host in ALLOWED_HOSTS
 
 
 def url_allowed(url, allowed=None):

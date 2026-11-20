@@ -3,7 +3,7 @@
 
   python3 -B app/tests/test_bridge.py [-v]
 
-Uses the made-up library in derived/app-build/testdata (no model) and a stub for chat. Never packaged."""
+Uses the made-up library in derived/app-build/testdata. Never packaged."""
 import faulthandler, hashlib, json, os, shutil, socket, statistics, subprocess, sys, threading, time, types, unittest
 from pathlib import Path
 
@@ -15,10 +15,9 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'app'), str(HERE)]
 import fixture  # noqa: E402
 DATA = fixture.ensure()
 os.environ['LASTBOOK_DATA'] = str(DATA)
-os.environ['LASTBOOK_LOCAL_AI'] = '0'   # no model: the local AI is never looked for, checked or started here
 os.environ['LASTBOOK_RECALL_SOCKET'] ='/nonexistent/recall.sock'   # no embedding model: meaning-based search stays off
 
-import server, assistant  # noqa: E402
+import server  # noqa: E402
 import bridge as B  # noqa: E402
 
 LISTENS = []
@@ -222,8 +221,8 @@ class Both:
         self.assertEqual(self.get(self.real_pdf() + '?pdf-page=0').status, 404)
 
     def test_pdf_pictures_have_their_own_lane(self):
-        self.assertEqual(B._lane_for('GET', '/documents/real.pdf', '/documents/real.pdf?pdf-page=2'), 'render')
-        self.assertEqual(B._lane_for('GET', '/documents/real.pdf', '/documents/real.pdf'), 'large')
+        self.assertEqual(B._lane_for('/documents/real.pdf', '/documents/real.pdf?pdf-page=2'), 'render')
+        self.assertEqual(B._lane_for('/documents/real.pdf', '/documents/real.pdf'), 'large')
 
     def test_damaged_pdf_shows_a_notice_and_not_its_bytes(self):
         for p in ('/documents/s.pdf', '/documents/big.pdf'):
@@ -246,7 +245,7 @@ class Both:
             self.assertEqual(call(self.b, m, '/').status, 405, m)
 
     def test_post_too_big(self):
-        self.assertEqual(call(self.b, 'POST', '/api/chat', b'x' * (B.MAX_POST + 1)).status, 413)
+        self.assertEqual(call(self.b, 'POST', '/api/setup/start', b'x' * (B.MAX_POST + 1)).status, 413)
 
     def test_path_attacks(self):
         attacks = ['/../canary-root.txt', '/documents/../canary-root.txt', '/%2e%2e/canary-root.txt', '/documents/%2e%2e/%2e%2e/outside-canary.txt', '/canary-root.txt',
@@ -467,20 +466,6 @@ class Both:
         self.assertFalse(r.ok)
 
 
-class AssistantStaysHere(unittest.TestCase):
-    def test_the_assistant_has_no_way_to_a_model_server(self):
-        """The model is the local AI over pipes, or none: neither file can open a connection."""
-        for name in ('assistant.py', 'llm_local.py'):
-            src = (ROOT / name).read_text(encoding='utf-8')
-            for word in ('urllib', 'http.client', 'import socket', 'socket.socket', 'create_connection', 'http://', 'https://'):
-                self.assertNotIn(word, src, name)
-
-    def test_no_model_means_not_online(self):
-        st = REAL_STATUS()
-        self.assertFalse(st['online'])
-        self.assertIsNone(st['local'])
-
-
 class StreamTests(Both, unittest.TestCase):
 
     def test_cancel_mid_body_stops_the_handler(self):
@@ -532,35 +517,29 @@ class StreamTests(Both, unittest.TestCase):
         self.assertEqual(events[-1], 'finish')
         self.assertEqual(set(events[1:-1]), {'data'})
 
-    def test_chat_arrives_piece_by_piece(self):
+    def test_an_answer_arrives_piece_by_piece(self):
         r = Rec()
-        STUB.update(pieces=6, delay=0.1)
         t0 = time.time()
-        self.b.start('POST', '/api/chat', b'{"messages":[{"role":"user","content":"hi"}]}', r)
+        self.b.start('GET', '/documents/t/nolen?mb=6&ms=100', None, r)
         self.assertTrue(r.first.wait(5))
         first_at = time.time() - t0
         self.assertTrue(r.done.wait(10))
         spread = r.times[-1] - r.times[0]
-        OBSERVED['stream chat'] = f'{len(r.parts)} pieces over {spread:.2f} s, first after {first_at * 1000:.0f} ms'
+        OBSERVED['stream'] = f'{len(r.parts)} pieces over {spread:.2f} s, first after {first_at * 1000:.0f} ms'
         self.assertEqual(r.status, 200)
-        self.assertEqual(r.hs['content-type'], 'text/event-stream')
-        self.assertGreaterEqual(len(r.parts), 6)
+        self.assertEqual(len(r.parts), 6)
         self.assertGreater(spread, 0.4)
         self.assertLess(first_at, 0.3)
-        self.assertIn(b'"done"', r.body)
         self.assertTrue(r.ok)
 
-    def test_chat_stop_reaches_the_model_side(self):
+    def test_cancel_stops_a_long_answer(self):
         r = Rec()
-        STUB.update(pieces=200, delay=0.05)
-        before = len(STUB['stopped'])
-        ex = self.b.start('POST', '/api/chat', b'{}', r)
+        ex = self.b.start('GET', '/documents/t/nolen?mb=40&ms=50', None, r)
         self.assertTrue(wait_until(lambda: len(r.parts) >= 3))
         ex.cancel()
-        self.assertTrue(wait_until(lambda: len(STUB['stopped']) > before, 5))
-        self.assertLess(STUB['stopped'][-1], 50)
+        self.assertTrue(wait_until(lambda: self.b.lanes['large'].active == 0, 5))
         self.assertFalse(r.done.is_set())
-        self.assertTrue(wait_until(lambda: self.b.lanes['chat'].active == 0))
+        self.assertLess(len(r.parts), 20)
 
     def test_the_pipe_can_cancel_a_long_answer_after_many_later_requests(self):
         """app/engine_pipe.py keeps a request until its answer ends, not until enough others have come after it."""
@@ -569,15 +548,13 @@ class StreamTests(Both, unittest.TestCase):
         sys.stdout = out
         real_send, P.send = P.send, lambda obj: None
         try:
-            STUB.update(pieces=2000, delay=0.02)
-            before = len(STUB['stopped'])
-            P.start(self.b, 'chat', 'POST', '/api/chat', {})
+            P.start(self.b, 'long', 'GET', '/documents/t/nolen?mb=40&ms=500', None)
             for i in range(300):
                 P.start(self.b, i, 'GET', '/api/t/echo', None)
-            self.assertTrue(wait_until(lambda: list(P._running) == ['chat']))     # the 300 answered ones are gone, the chat is not
-            P.cancel('chat')
-            self.assertTrue(wait_until(lambda: len(STUB['stopped']) > before, 5))
+            self.assertTrue(wait_until(lambda: list(P._running) == ['long']))     # the 300 answered ones are gone, the long one is not
+            P.cancel('long')
             self.assertEqual(P._running, {})
+            self.assertTrue(wait_until(lambda: self.b.lanes['large'].active == 0, 5))
             P.start(self.b, 'bad', 'PUT', '/', None)     # refused at once: nothing is left behind for it
             self.assertEqual(P._running, {})
 
@@ -656,19 +633,9 @@ class StreamTests(Both, unittest.TestCase):
         self.assertIn(b'&quot;&lt;b&gt;', r.body)
         self.assertNotIn(b'"<b>', r.body)
 
-    def test_real_chat_with_no_model_is_plain(self):
-        assistant.model_status, assistant.chat = REAL_STATUS, REAL_CHAT
-        try:
-            r = call(self.b, 'POST', '/api/chat', b'{}', timeout=15)
-        finally:
-            assistant.model_status, assistant.chat = stub_status, stub_chat
-        self.assertEqual(r.status, 200)
-        self.assertIn(b'model_unavailable', r.body)
-        OBSERVED['chat with no model'] = r.body.decode().strip()
-
 
 class WholeProcess(unittest.TestCase):
-    def test_no_listening_socket_and_no_model(self):
+    def test_no_listening_socket(self):
         self.assertEqual(LISTENS, [])
         pid = str(os.getpid())
         lsof = shutil.which('lsof')
@@ -681,30 +648,6 @@ class WholeProcess(unittest.TestCase):
         self.assertEqual(out.strip(), '', out)
         OBSERVED[f'{how} for this process'] = 'no rows' if not out.strip() else out
 
-
-# ---- the stub: stands in for the model. handle_post, emit and wfile are the real ones.
-STUB = {'pieces': 4, 'delay': 0.05, 'runs': [], 'sent': [], 'stopped': []}
-REAL_STATUS, REAL_CHAT = assistant.model_status, assistant.chat
-
-
-def stub_status():
-    return {'online': True, 'local': None}
-
-
-def stub_chat(messages, about, emit, cancelled):
-    STUB['runs'].append(time.time())
-    emit({'type': 'state', 'state': 'thinking'})
-    for i in range(STUB['pieces']):
-        if cancelled():
-            STUB['stopped'].append(i)
-            return
-        time.sleep(STUB['delay'])
-        emit({'type': 'delta', 'text': f'p{i} '})
-        STUB['sent'].append(i)
-    emit({'type': 'done', 'answer': 'x', 'sources': [], 'consulted': [], 'tools': [], 'latency': {}})
-
-
-assistant.model_status, assistant.chat = stub_status, stub_chat
 
 if __name__ == '__main__':
     prog = unittest.main(exit=False, verbosity=2 if '-v' in sys.argv else 1)

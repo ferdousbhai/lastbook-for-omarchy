@@ -3,11 +3,11 @@
 
   python3 -B app/tests/test_setup.py [-v] [Class.test_name]
 
-The test server lives only in this file: it serves a small fake pack and model over HTTPS on 127.0.0.1 with a certificate made
+The test server lives only in this file: it serves a small fake pack and a larger file over HTTPS on 127.0.0.1 with a certificate made
 for the run, and can cut the connection mid-file, send wrong bytes, change the file's ETag, ignore Range, or redirect anywhere.
 The product's allowlist is not touched: tests pass their own `allowed` and TLS context to the downloader. Never packaged.
 """
-import hashlib, http.server, io, json, os, re, shutil, signal, socketserver, ssl, subprocess, sys, tempfile, threading, time, unittest, zipfile
+import hashlib, http.server, io, json, os, shutil, signal, socketserver, ssl, subprocess, sys, tempfile, threading, time, unittest, zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -192,33 +192,26 @@ class Base(unittest.TestCase):
         zpath = self.tmp / 'Lastbook-Small.zip'
         self.installed = make_pack(zpath)
         self.zip = zpath.read_bytes()
-        self.model = os.urandom(2 * MiB + 123)
+        self.blob = os.urandom(2 * MiB + 123)
         F.data['Lastbook-Small.zip'] = self.zip
-        F.data['model.gguf'] = self.model
-        self.marked = []
-        self.llm = mock.Mock()
-        self.llm.mark_checked = lambda p, sha256: self.marked.append((str(p), sha256))
-        self.llm.LOCAL = None
+        F.data['blob.bin'] = self.blob
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def manifest(self, zip_sha=None, model_sha=None):
+    def manifest(self, zip_sha=None):
         m = {'version': 1, 'published': '2026-11-12',
              'packs': [{'id': 'small', 'title': 'Small', 'summary': 's', 'records': 3, 'installed_bytes': self.installed, 'available': True,
                         'files': [{'name': 'Lastbook-Small.zip', 'url': f'{self.base}/Lastbook-Small.zip', 'size': len(self.zip),
                                    'sha256': zip_sha or sha(self.zip), 'kind': 'zip'}]},
-                       {'id': 'all', 'title': 'All', 'available': False, 'files': []}],
-             'models': [{'id': 'gemma', 'title': 'Gemma', 'file': 'model.gguf', 'url': f'{self.base}/model.gguf', 'size': len(self.model),
-                         'sha256': model_sha or sha(self.model), 'memory_bytes': 19_027_384_256, 'available': True}]}
+                       {'id': 'all', 'title': 'All', 'available': False, 'files': []}]}
         v = manifest.validate(m, ALLOWED)
         self.assertIsNotNone(v)
         return manifest.Manifest(bundled=v, remote=None, allowed=ALLOWED, context=self.ctx)
 
     def setup(self, mode='first-run', current=None, **kw):
         kw.setdefault('manifest', self.manifest())
-        return api.Setup(mode, self.settings, self.parent, current=current, allowed=ALLOWED, context=self.ctx, home=self.home,
-                         llm_local=self.llm, **kw)
+        return api.Setup(mode, self.settings, self.parent, current=current, allowed=ALLOWED, context=self.ctx, home=self.home, **kw)
 
     def wait(self, s, states=('done', 'failed', 'paused'), timeout=60):
         t0 = time.time()
@@ -239,12 +232,11 @@ def fast_backoff():
 # ----------------------------------------------------------------------------------------------------------- tests --
 class Allowlist(unittest.TestCase):
     def test_product_hosts(self):
-        ok = ['https://downloads.lastbook.org/1.0.0/Lastbook-Small.zip',
-              'https://huggingface.co/unsloth/x/resolve/abc/f.gguf?download=true', 'https://cas-bridge.xethub.hf.co/xet-bridge-us/abc?X-Amz=1',
-              'https://us.gcp.cdn.hf.co/x']
-        bad = ['http://downloads.lastbook.org/x', 'https://downloads.lastbook.org:8443/x', 'https://evil.com/x', 'https://hf.co.evil.com/x',
-               'https://user:pw@downloads.lastbook.org/x', 'https://lastbook.org/x', 'https://other.r2.dev/x', 'https://pub-28c3cc06eb774c5cac057e6c9343efbd.r2.dev/x.zip', 'ftp://huggingface.co/x',
-               'https://.hf.co/x', 'https://localhost/x', 'https://127.0.0.1/x', 'file:///etc/passwd', 'https://downloads.lastbook.org.evil.com/x']
+        ok = ['https://downloads.lastbook.org/1.0.0/Lastbook-Small.zip', 'https://build.protomaps.com/20261119.pmtiles',
+              'https://build-metadata.protomaps.dev/builds.json', 'https://download.geonames.org/export/dump/cities15000.zip']
+        bad = ['http://downloads.lastbook.org/x', 'https://downloads.lastbook.org:8443/x', 'https://evil.com/x', 'https://protomaps.com.evil.com/x',
+               'https://user:pw@downloads.lastbook.org/x', 'https://lastbook.org/x', 'https://other.r2.dev/x', 'https://pub-28c3cc06eb774c5cac057e6c9343efbd.r2.dev/x.zip', 'ftp://downloads.lastbook.org/x',
+               'https://x.downloads.lastbook.org/x', 'https://localhost/x', 'https://127.0.0.1/x', 'file:///etc/passwd', 'https://downloads.lastbook.org.evil.com/x']
         for u in ok:
             self.assertTrue(download.url_allowed(u), u)
         for u in bad:
@@ -268,35 +260,29 @@ class Allowlist(unittest.TestCase):
                 self.assertNotIn(word, t, f'{p.name}: {word}')
 
     def test_shipped_manifest(self):
-        """The manifest the package ships validates, and its model entry is the file llm_local pins."""
-        import llm_local
+        """The manifest the package ships validates."""
         m = manifest.validate(json.loads((ROOT / 'packaging' / 'arch' / 'manifest-v1.json').read_text()))
         self.assertIsNotNone(m)
         self.assertTrue(m['packs'])
-        model, = m['models']
-        self.assertEqual((model['file'], model['size'], model['sha256']), (llm_local.FILE, llm_local.SIZE, llm_local.SHA256))
-        self.assertIn(re.search(r'revision ([0-9a-f]{40})', llm_local.SOURCE).group(1), model['url'])
 
     def test_fetched_manifest_keeps_bundled_entries(self):
         bundled = manifest.validate({'version': 1, 'published': '2026-11-12', 'packs': [
-            {'id': 'small', 'available': True, 'installed_bytes': 5, 'files': [{'name': 'a.zip', 'url': 'https://downloads.lastbook.org/a.zip', 'size': 1, 'sha256': '0' * 64}]}],
-            'models': [{'id': 'gemma', 'file': 'm.gguf', 'url': 'https://huggingface.co/m', 'size': 1, 'sha256': '1' * 64, 'memory_bytes': 1}]})
+            {'id': 'small', 'available': True, 'installed_bytes': 5, 'files': [{'name': 'a.zip', 'url': 'https://downloads.lastbook.org/a.zip', 'size': 1, 'sha256': '0' * 64}]},
+            {'id': 'all', 'available': False, 'files': []}]})
         fetched = manifest.validate({'version': 1, 'published': '2026-11-13', 'packs': [
             {'id': 'medium', 'available': True, 'installed_bytes': 9, 'files': [{'name': 'b.zip', 'url': 'https://downloads.lastbook.org/b.zip', 'size': 2, 'sha256': '2' * 64}]},
-            {'id': 'small', 'title': 'Small v2', 'available': True, 'installed_bytes': 6, 'files': [{'name': 'a.zip', 'url': 'https://downloads.lastbook.org/a.zip', 'size': 3, 'sha256': '3' * 64}]}],
-            'models': []})
+            {'id': 'small', 'title': 'Small v2', 'available': True, 'installed_bytes': 6, 'files': [{'name': 'a.zip', 'url': 'https://downloads.lastbook.org/a.zip', 'size': 3, 'sha256': '3' * 64}]}]})
         m = manifest.Manifest(bundled=bundled, remote='https://downloads.lastbook.org/manifest-v1.json')
         with mock.patch.object(download, 'fetch_small', lambda *a, **k: json.dumps(fetched).encode()):
             m._fetch()
         self.assertEqual(m.source, 'fetched')
-        self.assertEqual([p['id'] for p in m.current['packs']], ['medium', 'small'])
+        self.assertEqual([p['id'] for p in m.current['packs']], ['medium', 'small', 'all'])   # fetched had no 'all': the bundled one stays
         self.assertEqual(m.pack('small')['title'], 'small')             # in both: the bundled entry is pinned
         self.assertEqual(m.pack('small')['files'][0]['sha256'], '0' * 64)
-        self.assertEqual(m.model()['id'], 'gemma')                        # fetched had none: the bundled one stays
 
     def test_fetched_manifest_rules(self):
         m = {'version': 1, 'packs': [{'id': 'small', 'available': True, 'installed_bytes': 5,
-                                      'files': [{'name': 'a.zip', 'url': 'https://evil.com/a.zip', 'size': 1, 'sha256': '0' * 64}]}], 'models': []}
+                                      'files': [{'name': 'a.zip', 'url': 'https://evil.com/a.zip', 'size': 1, 'sha256': '0' * 64}]}]}
         self.assertIsNone(manifest.validate(m))
         m['packs'][0]['files'][0]['url'] = 'https://downloads.lastbook.org/a.zip'
         self.assertIsNotNone(manifest.validate(m))
@@ -312,25 +298,25 @@ class Downloads(Base):
                                  control or download.Control(), allowed=ALLOWED, context=self.ctx)
 
     def test_plain(self):
-        p = self.dl('model.gguf').run()
-        self.assertEqual(Path(p).read_bytes(), self.model)
+        p = self.dl('blob.bin').run()
+        self.assertEqual(Path(p).read_bytes(), self.blob)
         self.assertFalse(Path(p + '.part').exists())
 
     def test_a_finished_file_is_checked_again_before_it_is_used(self):
         """A download found whole at its name and size is hashed all the same: one that is not the published file is fetched again."""
-        dest = self.tmp / 'dl' / 'model.gguf'
+        dest = self.tmp / 'dl' / 'blob.bin'
         dest.parent.mkdir(parents=True)
-        dest.write_bytes(self.model)
-        self.assertEqual(Path(self.dl('model.gguf').run()).read_bytes(), self.model)
+        dest.write_bytes(self.blob)
+        self.assertEqual(Path(self.dl('blob.bin').run()).read_bytes(), self.blob)
         self.assertEqual(self.files.log, [])                    # the right file: nothing asked of the server
-        dest.write_bytes(bytes(len(self.model)))                # the right size, other bytes
-        self.assertEqual(Path(self.dl('model.gguf').run()).read_bytes(), self.model)
-        self.assertEqual([name for name, _, _ in self.files.log], ['model.gguf'])
+        dest.write_bytes(bytes(len(self.blob)))                # the right size, other bytes
+        self.assertEqual(Path(self.dl('blob.bin').run()).read_bytes(), self.blob)
+        self.assertEqual([name for name, _, _ in self.files.log], ['blob.bin'])
 
     def test_a_file_once_matched_is_not_read_through_again(self):
         """A resume (as while the All pack is unpacked) trusts this process's earlier match only while the file is the same:
         any change and it is hashed again. Nothing beside the file can vouch for it (a drive could bring such a record)."""
-        p = self.dl('model.gguf').run()
+        p = self.dl('blob.bin').run()
         hashed = []
         real = download._sha256
 
@@ -338,76 +324,76 @@ class Downloads(Base):
             hashed.append(path)
             return real(path, control, progress)
         with mock.patch.object(download, '_sha256', counted):
-            self.assertEqual(self.dl('model.gguf').run(), p)
+            self.assertEqual(self.dl('blob.bin').run(), p)
             self.assertEqual(hashed, [])
             st = os.stat(p)
             os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))       # touched: read through once more, then trusted
-            self.assertEqual(self.dl('model.gguf').run(), p)
-            self.assertEqual(self.dl('model.gguf').run(), p)
+            self.assertEqual(self.dl('blob.bin').run(), p)
+            self.assertEqual(self.dl('blob.bin').run(), p)
             self.assertEqual(len(hashed), 1)
             self.assertEqual(list(Path(p).parent.glob('*.json')), [])     # no record on disk to forge
             download._VERIFIED.clear()                                       # a new start: read through once more
-            self.assertEqual(self.dl('model.gguf').run(), p)
+            self.assertEqual(self.dl('blob.bin').run(), p)
             self.assertEqual(len(hashed), 2)
-            Path(p).write_bytes(bytes(len(self.model)))         # other bytes behind a record that now names another time
-            self.assertEqual(Path(self.dl('model.gguf').run()).read_bytes(), self.model)
+            Path(p).write_bytes(bytes(len(self.blob)))         # other bytes behind a record that now names another time
+            self.assertEqual(Path(self.dl('blob.bin').run()).read_bytes(), self.blob)
         self.assertEqual(len(self.files.log), 2)
         download.remove(p)
         self.assertEqual(list(Path(p).parent.iterdir()), [])
 
     def test_a_busy_server_is_asked_again(self):
         """429 is busy, like 5xx: a download waits and asks again rather than failing."""
-        self.files.status['model.gguf'] = [429, 503]
+        self.files.status['blob.bin'] = [429, 503]
         with fast_backoff():
-            self.assertEqual(Path(self.dl('model.gguf').run()).read_bytes(), self.model)
-        self.files.status['model.gguf'] = [403]
+            self.assertEqual(Path(self.dl('blob.bin').run()).read_bytes(), self.blob)
+        self.files.status['blob.bin'] = [403]
         with self.assertRaises(download.Failed):
-            self.dl('model.gguf', size=len(self.model) + 1).run()
+            self.dl('blob.bin', size=len(self.blob) + 1).run()
 
     def test_a_part_request_is_asked_again_after_a_busy_answer(self):
         """The map cutter's range requests: 429 and 5xx are tried again like a broken connection; a plain refusal is not."""
-        url = f'{self.base}/model.gguf'
+        url = f'{self.base}/blob.bin'
         with fast_backoff():
-            self.files.status['model.gguf'] = [503, 429, 500]
+            self.files.status['blob.bin'] = [503, 429, 500]
             got = download.fetch_range(url, 1000, 5000, download.Control(), allowed=ALLOWED, context=self.ctx)
-            self.assertEqual(got, self.model[1000:6000])
+            self.assertEqual(got, self.blob[1000:6000])
             self.assertEqual(len(self.files.log), 4)
-            self.files.status['model.gguf'] = [403]
+            self.files.status['blob.bin'] = [403]
             with self.assertRaises(download.Failed):
                 download.fetch_range(url, 0, 10, download.Control(), allowed=ALLOWED, context=self.ctx)
             self.assertEqual(len(self.files.log), 5)
-            self.files.status['model.gguf'] = [503] * download.NETWORK_TRIES
+            self.files.status['blob.bin'] = [503] * download.NETWORK_TRIES
             with self.assertRaises(download.Failed):
                 download.fetch_range(url, 0, 10, download.Control(), allowed=ALLOWED, context=self.ctx)
 
     def test_cut_mid_file_resumes_with_range(self):
-        self.files.cut_after['model.gguf'] = [700_000, 1_500_000]
+        self.files.cut_after['blob.bin'] = [700_000, 1_500_000]
         with fast_backoff():
-            p = self.dl('model.gguf').run()
-        self.assertEqual(sha(Path(p).read_bytes()), sha(self.model))
-        ranges = [r for n, r, _ in self.files.log if n == 'model.gguf']
+            p = self.dl('blob.bin').run()
+        self.assertEqual(sha(Path(p).read_bytes()), sha(self.blob))
+        ranges = [r for n, r, _ in self.files.log if n == 'blob.bin']
         self.assertEqual(ranges[0], None)
         self.assertTrue(all(r and r.startswith('bytes=') for r in ranges[1:]), ranges)
         self.assertEqual(len(ranges), 3)
 
     def test_etag_changed_starts_over(self):
         """R2 answers 206 whatever If-Range says, so the ETag is compared here."""
-        d = self.dl('model.gguf')
+        d = self.dl('blob.bin')
         os.makedirs(os.path.dirname(d.part), exist_ok=True)
         Path(d.part).write_bytes(b'x' * 600_000)          # bytes of an older copy of the file
         Path(d.meta).write_text(json.dumps({'url': d.url, 'size': d.size, 'sha256': d.sha256, 'etag': '"old"', 'bytes_done': 600_000}))
-        self.files.etag['model.gguf'] = '"new"'
+        self.files.etag['blob.bin'] = '"new"'
         d.run()
-        self.assertEqual(Path(d.dest).read_bytes(), self.model)
+        self.assertEqual(Path(d.dest).read_bytes(), self.blob)
         self.assertEqual([r for _, r, _ in self.files.log], ['bytes=600000-', None])   # tried to resume, then started over
 
     def test_server_ignores_range(self):
         """A 200 with the whole file to a resume (seen on downloads.lastbook.org for minutes after an upload): after one more ask,
         the .part is emptied, the hash and the progress start from 0, and nothing is appended."""
-        self.files.cut_after['model.gguf'] = [500_000]
-        self.files.ignore_range.add('model.gguf')
+        self.files.cut_after['blob.bin'] = [500_000]
+        self.files.ignore_range.add('blob.bin')
         seen, sizes = [], []
-        d = self.dl('model.gguf')
+        d = self.dl('blob.bin')
         d.progress = lambda done, total, phase: (seen.append(done), sizes.append(os.path.getsize(d.part)))
         real = download.Download._fetch
 
@@ -416,25 +402,25 @@ class Downloads(Base):
             return real(self_, start, etag, h, ctx)
         with fast_backoff(), mock.patch.object(download.Download, '_fetch', watched):
             p = d.run()
-        self.assertEqual(Path(p).read_bytes(), self.model)
+        self.assertEqual(Path(p).read_bytes(), self.blob)
         self.assertEqual([r for _, r, _ in self.files.log], [None, 'bytes=500000-', 'bytes=500000-', None])   # asked again once, then from 0
         fetches = [x for x in sizes if isinstance(x, tuple)]
         self.assertEqual(fetches[-1], ('fetch from', 0, 0))              # the .part emptied before the fresh start
         restart = max(i for i, x in enumerate(seen) if x < 500_000)
         self.assertLess(seen[restart], 500_000)                          # progress counted again from 0
-        self.assertTrue(all(isinstance(x, tuple) or x <= len(self.model) for x in sizes))   # never longer than the file: no append
+        self.assertTrue(all(isinstance(x, tuple) or x <= len(self.blob) for x in sizes))   # never longer than the file: no append
 
     def test_wrong_checksum(self):
-        d = self.dl('model.gguf', sha256='0' * 64)
+        d = self.dl('blob.bin', sha256='0' * 64)
         with self.assertRaises(download.BadChecksum):
             d.run()
         self.assertFalse(Path(d.part).exists())
 
     def test_redirects(self):
-        self.files.redirect['a'] = f'{self.base}/model.gguf'
-        d = download.Download(f'{self.base}/a', self.tmp / 'x', len(self.model), sha(self.model), download.Control(), allowed=ALLOWED, context=self.ctx)
-        self.assertEqual(Path(d.run()).read_bytes(), self.model)
-        for where in ('https://evil.example/model.gguf', f'http://127.0.0.1:{self.srv.server_address[1]}/model.gguf'):
+        self.files.redirect['a'] = f'{self.base}/blob.bin'
+        d = download.Download(f'{self.base}/a', self.tmp / 'x', len(self.blob), sha(self.blob), download.Control(), allowed=ALLOWED, context=self.ctx)
+        self.assertEqual(Path(d.run()).read_bytes(), self.blob)
+        for where in ('https://evil.example/blob.bin', f'http://127.0.0.1:{self.srv.server_address[1]}/blob.bin'):
             self.files.redirect['b'] = where
             d = download.Download(f'{self.base}/b', self.tmp / 'y', 10, '0' * 64, download.Control(), allowed=ALLOWED, context=self.ctx)
             with self.assertRaises(download.Failed) as e:
@@ -452,7 +438,7 @@ class Downloads(Base):
 
     def test_untrusted_certificate(self):
         """A server whose chain ends outside roots.pem (this test's own CA) is refused at once, with the product's own context."""
-        d = download.Download(f'{self.base}/model.gguf', self.tmp / 'x', len(self.model), sha(self.model), download.Control(), allowed=ALLOWED)
+        d = download.Download(f'{self.base}/blob.bin', self.tmp / 'x', len(self.blob), sha(self.blob), download.Control(), allowed=ALLOWED)
         t0 = time.time()
         with self.assertRaises(download.Failed) as e:
             d.run()
@@ -462,7 +448,7 @@ class Downloads(Base):
 
     def test_roots_only(self):
         ctx = download.tls_context()
-        self.assertEqual(ctx.cert_store_stats()['x509_ca'], 11)      # roots.pem and nothing from the system
+        self.assertEqual(ctx.cert_store_stats()['x509_ca'], 6)      # roots.pem and nothing from the system
         self.assertEqual(ctx.minimum_version, ssl.TLSVersion.TLSv1_2)
         self.assertTrue(ctx.check_hostname)
         text = download.roots_path().read_text()
@@ -471,25 +457,25 @@ class Downloads(Base):
             download.tls_context()
 
     def test_one_stray_200_does_not_restart(self):
-        self.files.cut_after['model.gguf'] = [700_000]
-        self.files.ignore_once['model.gguf'] = 1
+        self.files.cut_after['blob.bin'] = [700_000]
+        self.files.ignore_once['blob.bin'] = 1
         with fast_backoff():
-            p = self.dl('model.gguf').run()
-        self.assertEqual(Path(p).read_bytes(), self.model)
+            p = self.dl('blob.bin').run()
+        self.assertEqual(Path(p).read_bytes(), self.blob)
         self.assertEqual([r for _, r, _ in self.files.log], [None, 'bytes=700000-', 'bytes=700000-'])   # asked again, not from 0
 
     def test_pause_mid_file(self):
         self.files.pace = 0.01
         c = download.Control()
-        d = self.dl('model.gguf', control=c)
+        d = self.dl('blob.bin', control=c)
         threading.Timer(0.1, c.stop, ['paused']).start()
         with self.assertRaises(download.Stopped):
             d.run()
         self.assertGreater(d.done_bytes(), 0)
-        self.assertLess(d.done_bytes(), len(self.model))
+        self.assertLess(d.done_bytes(), len(self.blob))
         self.files.pace = 0
         d.control = download.Control()
-        self.assertEqual(Path(d.run()).read_bytes(), self.model)
+        self.assertEqual(Path(d.run()).read_bytes(), self.blob)
 
 
 class Unpacking(Base):
@@ -566,11 +552,11 @@ class Jobs(Base):
         self.assertEqual(st['mode'], 'first-run')
         self.assertEqual(st['recommend']['pack'], 'small')
         self.assertNotIn('url', json.dumps(st['manifest']))
-        j = s.start('small', True)
+        j = s.start('small')
         self.assertIsNone(j.get('error'), j)
         j = self.wait(s)
         self.assertEqual(j['state'], 'done', j)
-        self.assertEqual([i['state'] for i in j['items']], ['done', 'done'])
+        self.assertEqual([i['state'] for i in j['items']], ['done'])
         work = self.parent / 'LastbookData.setup'
         self.assertTrue(api._pending_file(self.settings).is_file())         # in the app's settings, not the work folder
         self.assertFalse((work / 'pending.json').exists())
@@ -584,25 +570,21 @@ class Jobs(Base):
         lib, note = api.startup(self.settings)                     # what main.py does on the next start
         self.assertEqual(lib, self.parent / 'LastbookData')
         self.assertTrue((lib / 'library-data' / 'catalog.json').is_file())
-        self.assertEqual((lib / 'models' / 'model.gguf').read_bytes(), self.model)
-        self.assertEqual(note['model_file'], str(lib / 'models' / 'model.gguf'))
-        with mock.patch.dict(sys.modules, {'llm_local': self.llm}):
-            api.opened(self.settings, lib, note)
-        self.assertEqual(self.marked, [(str(lib / 'models' / 'model.gguf'), sha(self.model))])   # the digest setup matched, carried through the switch
+        api.opened(self.settings, lib, note)
         self.assertFalse(work.exists())
         self.assertEqual(json.loads((lib / 'setup-pack.json').read_text())['pack'], 'small')
 
     def test_corrupt_once_then_good(self):
         self.files.corrupt['Lastbook-Small.zip'] = 1
         s = self.setup()
-        s.start('small', False)
+        s.start('small')
         j = self.wait(s)
         self.assertEqual(j['state'], 'done', j)
         self.assertEqual(len([1 for n, _, _ in self.files.log if n == 'Lastbook-Small.zip']), 2)
 
     def test_corrupt_twice_fails_checksum(self):
         s = self.setup(manifest=self.manifest(zip_sha='1' * 64))
-        s.start('small', False)
+        s.start('small')
         j = self.wait(s)
         self.assertEqual(j['state'], 'failed')
         self.assertEqual(j['error']['code'], 'checksum')
@@ -610,21 +592,21 @@ class Jobs(Base):
         self.assertFalse((self.parent / 'LastbookData').exists())
 
     def test_network_failure_then_retry(self):
-        self.files.data.pop('model.gguf')
+        self.files.data.pop('Lastbook-Small.zip')
         s = self.setup()
-        s.start('small', True)
+        s.start('small')
         j = self.wait(s)
         self.assertEqual(j['state'], 'failed')
         self.assertEqual(j['error']['code'], 'network')
-        self.assertEqual([i['state'] for i in j['items']], ['done', 'failed'])
-        self.files.data['model.gguf'] = self.model
+        self.assertEqual([i['state'] for i in j['items']], ['failed'])
+        self.files.data['Lastbook-Small.zip'] = self.zip
         s.retry()
         self.assertEqual(self.wait(s)['state'], 'done')
 
     def test_pause_resume_cancel(self):
         self.files.pace = 0.01
         s = self.setup()
-        s.start('small', False)
+        s.start('small')
         time.sleep(0.3)
         j = s.pause()
         self.assertEqual(j['state'], 'paused')
@@ -644,7 +626,7 @@ class Jobs(Base):
     def test_rate_and_eta(self):
         self.files.pace = 0.06
         s = self.setup()
-        s.start('small', False)
+        s.start('small')
         time.sleep(1.8)
         it = s.public_job()['items'][0]
         s.cancel()
@@ -654,7 +636,7 @@ class Jobs(Base):
     def test_no_space_refusal(self):
         s = self.setup()
         with mock.patch.object(hardware, 'disk_of', lambda p: (10 ** 9, 10 ** 12)):
-            r = s.start('small', True)
+            r = s.start('small')
         self.assertEqual(r['code'], 'no_space')
         self.assertGreater(r['need_bytes'], r['free_bytes'])
         self.assertIn('GB', r['error'])
@@ -662,10 +644,9 @@ class Jobs(Base):
 
     def test_discovery_only_reads_owned_or_selected_library(self):
         lib = self.home / 'Downloads' / 'LastbookData'
-        (lib / 'models').mkdir(parents=True)
-        (lib / 'library-data').mkdir()
+        (lib / 'library-data').mkdir(parents=True)
         (lib / 'library-data' / 'catalog.json').write_text('{}')
-        (lib / 'models' / 'model.gguf').write_bytes(self.model)
+        (lib / 'Lastbook-Small.zip').write_bytes(self.zip)
         for name in ('Downloads', 'Documents', 'Desktop'):
             (self.home / name / 'Lastbook-Small.zip').write_bytes(self.zip)
         original_stat, original_iterdir, original_open = Path.stat, Path.iterdir, Path.open
@@ -691,62 +672,22 @@ class Jobs(Base):
 
         with mock.patch.object(Path, 'stat', stat), mock.patch.object(Path, 'iterdir', iterdir), mock.patch.object(Path, 'open', read):
             self.assertEqual(fresh.found(), [])
-            self.assertEqual([f['path'] for f in selected.found()], [str(lib / 'models' / 'model.gguf')])
-
-    def test_explicit_model_file_is_used(self):
-        model = self.home / 'Downloads' / 'model.gguf'
-        model.write_bytes(self.model)
-        s = self.setup()
-        self.assertTrue(s.use(str(model))['noted'])
-        self.assertEqual([f['path'] for f in s.found()], [str(model)])
-        s.start('small', True)
-        self.assertEqual(self.wait(s)['state'], 'done')
-        self.assertNotIn('model.gguf', [name for name, _, _ in self.files.log])
-        self.assertEqual((self.parent / 'LastbookData.setup' / 'unpack' / 'LastbookData' / 'models' / 'model.gguf').read_bytes(), self.model)
-        self.assertEqual(model.read_bytes(), self.model)        # the person's own file is still theirs, where it was
-        s.cancel()                                              # the staged library goes; their file does not
-        self.assertFalse((self.parent / 'LastbookData.setup' / 'unpack').exists())
-        self.assertEqual(model.read_bytes(), self.model)
-
-    def test_the_persons_model_is_copied_in_pieces_and_a_cancel_stops_it(self):
-        src, dest = self.home / 'Downloads' / 'model.gguf', self.tmp / 'lib' / 'models' / 'model.gguf'
-        src.write_bytes(self.model)
-        dest.parent.mkdir(parents=True)
-        with mock.patch.object(api.os, 'link', side_effect=OSError('no links on this disk')), mock.patch.object(install, 'COPY', 64 * 1024):
-            control, seen = download.Control(), []
-
-            def progress(done, total):
-                seen.append(done)
-                if done > 300_000:
-                    control.stop('cancelled')
-            with self.assertRaises(download.Stopped):
-                api._bring(src, dest, control, progress)
-            self.assertLess(seen[-1], len(self.model))
-            self.assertEqual(list(dest.parent.iterdir()), [])       # nothing half copied is left
-            self.assertEqual(src.read_bytes(), self.model)
-            api._bring(src, dest, download.Control())
-            self.assertEqual((dest.read_bytes(), src.read_bytes()), (self.model, self.model))
-            self.assertEqual(os.stat(dest).st_nlink, 1)
-        dest.unlink()
-        api._bring(src, dest, download.Control())                   # where the disk allows: the same bytes, no second copy
-        self.assertTrue(os.path.samefile(src, dest))
+            self.assertEqual([f['path'] for f in selected.found()], [str(lib / 'Lastbook-Small.zip')])
 
     def test_a_thread_that_outlives_its_cancel_changes_nothing(self):
-        model = self.home / 'Downloads' / 'model.gguf'
-        model.write_bytes(self.model)
-        cur = self.parent / 'LastbookData'
-        (cur / 'library-data').mkdir(parents=True)
-        (cur / 'library-data' / 'catalog.json').write_text('{}')
-        (cur / 'pack.json').write_text('{"name": "small"}')
-        s = self.setup('manage', current=cur)
+        pack = self.home / 'Downloads' / 'Lastbook-Small.zip'
+        pack.write_bytes(self.zip)
+        s = self.setup()
         entered, let_go = threading.Event(), threading.Event()
 
-        def slow(src, dest, control, progress=None):       # a step that does not notice the cancel for a long time
+        def slow(path, dest, *a, **k):       # a step that does not notice the cancel for a long time
             entered.set()
             let_go.wait(20)
-            Path(dest).write_bytes(Path(src).read_bytes())
-        with mock.patch.object(api, '_bring', slow), mock.patch.object(api.Setup, '_join', lambda self: self.thread.join(0.2)):
-            self.assertIsNone(s.use(str(model)).get('error'))
+            lib = Path(dest) / 'LastbookData'
+            lib.mkdir(parents=True, exist_ok=True)
+            return lib
+        with mock.patch.object(install, 'unpack', slow), mock.patch.object(api.Setup, '_join', lambda self: self.thread.join(0.2)):
+            self.assertIsNone(s.use(str(pack)).get('error'))
             self.assertTrue(entered.wait(20))
             j = s.cancel()
             self.assertEqual((j['state'], j['error']['code']), ('failed', 'cancelled'))
@@ -755,7 +696,6 @@ class Jobs(Base):
             thread.join(20)
         j = s.public_job()
         self.assertEqual((j['state'], j['error']['code']), ('failed', 'cancelled'))      # not 'done', whatever the thread did after
-        self.assertEqual(self.marked, [])
         self.assertEqual(json.loads(api._job_file(self.settings).read_text())['state'], 'failed')
 
     def test_a_new_job_does_not_unpack_over_another_packs_staging(self):
@@ -766,7 +706,7 @@ class Jobs(Base):
         (staged / 'library-data' / 'left-over.sqlite').write_bytes(b'from the other pack')
         (self.parent / 'LastbookData.setup' / 'unpack.json').write_text(json.dumps(['0' * 64]))
         s = self.setup()
-        s.start('small', False)
+        s.start('small')
         self.assertEqual(self.wait(s)['state'], 'done')
         with zipfile.ZipFile(io.BytesIO(self.zip)) as z:
             self.assertEqual((staged / 'library-data' / 'big.bin').read_bytes(), z.read('LastbookData/library-data/big.bin'))
@@ -792,7 +732,7 @@ class Jobs(Base):
         bad[100] ^= 0xff
         (self.home / 'Downloads' / 'Lastbook-Small.zip').write_bytes(bad)
         s = self.setup()
-        s.start('small', False)
+        s.start('small')
         self.assertEqual(self.wait(s)['state'], 'done')
         self.assertEqual(len(self.files.log), 1)
         bad_explicit = self.setup()
@@ -905,13 +845,12 @@ class Switching(Base):
         (where / 'library-data' / 'catalog.json').write_text(marker)
         return where
 
-    def test_upgrade_carries_the_model_and_deletes_the_old_library_once_the_new_one_opens(self):
+    def test_upgrade_carries_their_files_and_deletes_the_old_library_once_the_new_one_opens(self):
         cur = self.lib(self.parent / 'LastbookData', 'old')
         (cur / 'models').mkdir()
-        (cur / 'models' / 'model.gguf').write_bytes(self.model)
+        (cur / 'models' / 'model.gguf').write_bytes(self.blob)
         s = self.setup('manage', current=cur)
-        self.assertEqual(s.current_info()['model'], 'gemma')
-        s.start('small', True)          # the model is here already: only the pack is fetched
+        s.start('small')
         j = self.wait(s)
         self.assertEqual(j['state'], 'done', j)
         self.assertEqual([i['kind'] for i in j['items']], ['pack'])
@@ -957,10 +896,11 @@ class Switching(Base):
         self.assertEqual((lib / 'library-data' / 'catalog.json').read_text(), 'open')
 
     def staged(self):
-        """An open library holding the person's model and world map, and a new one staged to replace it at the next start."""
+        """An open library holding a model file an earlier version downloaded and the person's world map, and a new one
+        staged to replace it at the next start."""
         cur = self.lib(self.parent / 'LastbookData', 'old')
         (cur / 'models').mkdir()
-        (cur / 'models' / 'model.gguf').write_bytes(self.model)
+        (cur / 'models' / 'model.gguf').write_bytes(self.blob)
         (cur / 'derived' / 'geo').mkdir(parents=True)
         (cur / 'derived' / 'geo' / 'world.mbtiles').write_bytes(b'the world')
         new = self.lib(self.parent / 'LastbookData.setup' / 'unpack' / 'LastbookData', 'new')
@@ -969,11 +909,11 @@ class Switching(Base):
         return cur, new
 
     def theirs(self, lib):
-        return ((lib / 'models' / 'model.gguf').is_file() and (lib / 'models' / 'model.gguf').read_bytes() == self.model
+        return ((lib / 'models' / 'model.gguf').is_file() and (lib / 'models' / 'model.gguf').read_bytes() == self.blob
                 and (lib / 'derived' / 'geo' / 'world.mbtiles').is_file())
 
     def test_new_library_that_does_not_open_is_rolled_back(self):
-        """The engine cannot open what the switch put in place: the old library goes back, once, with the model and the map."""
+        """The engine cannot open what the switch put in place: the old library goes back, once, with the person's files."""
         sys.path.insert(0, str(ROOT / 'app'))
         out = sys.stdout
         import engine_pipe          # importing it points sys.stdout at the log, as the engine process wants
@@ -1005,30 +945,24 @@ class Switching(Base):
                 engine_pipe.open_library(api, self.settings, None)
             self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData', 'LastbookData.failed'])
 
-    def test_a_rolled_back_switch_marks_no_model_and_its_library_goes_at_a_later_start(self):
-        """After a roll back the model the switch brought is not marked checked (the old library's is not that file), and
-        the library that did not open is listed in setup.json and deleted when a library opens at a later start."""
+    def test_a_rolled_back_library_goes_at_a_later_start(self):
+        """After a roll back the library that did not open is listed in setup.json and deleted when a library opens at a
+        later start."""
         sys.path.insert(0, str(ROOT / 'app'))
         out = sys.stdout
         import engine_pipe
         sys.stdout = out
         cur, new = self.staged()
-        install.stage_switch(api._pending_file(self.settings), new, cur, str(cur / 'models' / 'model.gguf'), model_sha256='a' * 64)
         lib, note = api.startup(self.settings)
-        self.assertEqual(note['model_sha256'], 'a' * 64)
-        marked = []
 
         def init():
             if (cur / 'library-data' / 'catalog.json').read_text() == 'new':
                 raise ValueError('a library that does not open')
-        llm = mock.Mock(mark_checked=lambda p, s: marked.append((p, s)))
-        with mock.patch.dict(sys.modules, {'server': mock.Mock(init=init), 'llm_local': llm}):
+        with mock.patch.dict(sys.modules, {'server': mock.Mock(init=init)}):
             engine_pipe.open_library(api, self.settings, note)
-            self.assertEqual((note['model_file'], note['model_sha256']), (None, None))
             failed = self.parent / 'LastbookData.failed'
             self.assertEqual(json.loads((self.settings / 'setup.json').read_text())['failed'], [str(failed)])
             self.assertIsNone(api.opened(self.settings, lib, note))      # this start: the person is told, nothing deleted
-            self.assertEqual(marked, [])
             self.assertTrue(failed.is_dir())
             api.opened(self.settings, lib, None).join(20)                # the next start
         self.assertFalse(failed.exists())
@@ -1063,9 +997,9 @@ class Switching(Base):
             engine_pipe.main()
         self.assertEqual(sent, [{'error': 'The engine could not open the library (OSError: no memory).'}])     # the first line: the window shows it
 
-    def test_a_failed_library_that_still_holds_their_model_is_not_listed(self):
-        """A rolled-back library keeps a file carry_over could not bring back (the restored one has a model of that name,
-        a damaged one, say): that folder is not put up for deletion."""
+    def test_a_failed_library_that_still_holds_their_file_is_not_listed(self):
+        """A rolled-back library keeps a file carry_over could not bring back (the restored one has a file of that name):
+        that folder is not put up for deletion."""
         kept = []
         folder = self.lib(self.parent / 'LastbookData.failed', 'x')
         self.assertFalse(install._holds_theirs(folder))
@@ -1097,7 +1031,7 @@ class Switching(Base):
         self.assertEqual((elsewhere / 'library-data' / 'catalog.json').read_text(), 'x')
 
     def test_a_rename_that_fails_leaves_the_old_library_whole(self):
-        """Nothing of the person's is moved until both renames are made, so neither failure can strand the model in a
+        """Nothing of the person's is moved until both renames are made, so neither failure can strand a file of theirs in a
         folder that is then cleared."""
         for failing in ('the old library aside', 'the new library in'):
             with self.subTest(failing):
@@ -1125,7 +1059,7 @@ class Switching(Base):
         person's files across: the next start carries on from what is on disk."""
         class Stop(BaseException):
             pass
-        for at in (1, 2, 3, 4, 5, 6):     # saving the plan, the two renames, the model, the map, saving that it is done
+        for at in (1, 2, 3, 4, 5, 6):     # saving the plan, the two renames, the file in models/, the map, saving that it is done
             with self.subTest(replace_call=at):
                 shutil.rmtree(self.parent, ignore_errors=True)
                 shutil.rmtree(self.settings, ignore_errors=True)
@@ -1157,7 +1091,7 @@ class Switching(Base):
         self.assertEqual((lib, (cur / 'library-data' / 'catalog.json').read_text()), (cur, 'new'))
         self.assertIn('kept as LastbookData.old-', note['error'])
         self.assertIsNone(note['old'])
-        self.assertIsNone(api.opened(self.settings, lib, note))          # not listed for deletion: it still holds the model
+        self.assertIsNone(api.opened(self.settings, lib, note))          # not listed for deletion: it still holds their files
         old = [p for p in self.parent.iterdir() if p.name.startswith('LastbookData.old-')]
         self.assertEqual(len(old), 1)
         self.assertTrue(self.theirs(old[0]))
@@ -1171,22 +1105,13 @@ class Switching(Base):
         self.assertEqual((cur / 'library-data' / 'catalog.json').read_text(), 'old')
         self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData', 'LastbookData.setup'])
 
-    def test_ai_only_in_manage_mode(self):
-        cur = self.lib(self.parent / 'LastbookData', '{}')
-        (cur / 'pack.json').write_text('{"name": "small"}')
-        s = self.setup('manage', current=cur)
-        j = s.start('small', True)      # the same library: only the AI
-        self.assertEqual([i['kind'] for i in j['items']], ['model'])
-        self.assertEqual(self.wait(s)['state'], 'done')
-        self.assertEqual(self.marked, [(str(cur / 'models' / 'model.gguf'), sha(self.model))])
-        self.assertEqual(s.start('small', True)['code'], 'nothing')
-
 
 class Manage(Base):
-    """Repair and removing the AI."""
+    """Repair."""
 
     def installed_library(self):
-        """A library as setup installs it: the test pack unpacked, with a pack-manifest.tsv of its files, and the model."""
+        """A library as setup installs it: the test pack unpacked, with a pack-manifest.tsv of its files, and a model file
+        an earlier version downloaded."""
         files = {'library-data/catalog.json': b'{"records": []}', 'pack.json': b'{"name": "small"}', 'library-data/big.bin': os.urandom(MiB)}
         rows = ['path\tbytes\tsha256\thow\tchanges'] + [f'{k}\t{len(v)}\t{sha(v)}\tclone\t' for k, v in files.items()]
         files['pack-manifest.tsv'] = ('\n'.join(rows) + '\n').encode()
@@ -1196,7 +1121,7 @@ class Manage(Base):
         self.files.data['Lastbook-Small.zip'] = self.zip
         lib = install.unpack(zpath, self.parent, self.installed, Control(), lambda d, t: None)
         (lib / 'models').mkdir()
-        (lib / 'models' / 'model.gguf').write_bytes(self.model)
+        (lib / 'models' / 'model.gguf').write_bytes(self.blob)
         zpath.unlink()
         return lib
 
@@ -1204,49 +1129,35 @@ class Manage(Base):
         lib = self.installed_library()
         s = self.setup('manage', current=lib)
         j = s.start(repair=True)
-        self.assertEqual([i['kind'] for i in j['items']], ['pack', 'model'])
+        self.assertEqual([i['kind'] for i in j['items']], ['pack'])
         j = self.wait(s)
         self.assertEqual(j['state'], 'done', j)
         self.assertEqual(self.files.log, [])
         self.assertFalse(api._pending_file(self.settings).exists())
-        self.assertTrue((lib / 'models' / 'model.gguf').is_file())
-        self.assertEqual(sorted(p.name for p in (lib / 'models').iterdir()), ['model.gguf'])     # no model.gguf.partial beside it
+        self.assertEqual((lib / 'models' / 'model.gguf').read_bytes(), self.blob)     # not Lastbook's to check or to touch
 
-    def test_a_model_already_in_place_is_not_brought_again(self):
-        """_bring onto the same file (a path, or a hard link to it) leaves nothing beside it; a .partial an earlier version
-        left there goes at the next setup start, and is never carried into a new library as a model."""
+    def test_a_copy_cut_short_is_not_carried_to_a_new_library(self):
         models = self.parent / 'LastbookData' / 'models'
         models.mkdir(parents=True)
-        (models / 'model.gguf').write_bytes(self.model)
-        os.link(models / 'model.gguf', self.parent / 'linked.gguf')
-        for src in (models / 'model.gguf', self.parent / 'linked.gguf'):
-            api._bring(src, models / 'model.gguf', Control())
-            self.assertEqual(sorted(p.name for p in models.iterdir()), ['model.gguf'])
-        self.assertEqual((models / 'model.gguf').read_bytes(), self.model)
-        (models / 'model.gguf.partial').write_bytes(b'cut short')
-        (models / 'other.gguf.partial').write_bytes(b'no model beside it')
+        (models / 'model.gguf').write_bytes(self.blob)
+        (models / 'other.gguf.partial').write_bytes(b'cut short')
         new = self.parent / 'New'
         install.carry_over(models.parent, new)
         self.assertEqual(sorted(p.name for p in (new / 'models').iterdir()), ['model.gguf'])
-        (new / 'models' / 'model.gguf.partial').write_bytes(b'cut short')
-        api._clear_partials(new)
-        self.assertEqual(sorted(p.name for p in (new / 'models').iterdir()), ['model.gguf'])
-        api._clear_partials(models.parent)
-        self.assertEqual(sorted(p.name for p in models.iterdir()), ['model.gguf.partial', 'other.gguf.partial'])     # no model.gguf there now: kept
 
-    def test_repair_damaged_file_and_model(self):
+    def test_repair_damaged_file(self):
         lib = self.installed_library()
-        for path in (lib / 'library-data' / 'big.bin', lib / 'models' / 'model.gguf'):
-            data = bytearray(path.read_bytes())
-            data[0] ^= 1
-            path.write_bytes(data)
+        path = lib / 'library-data' / 'big.bin'
+        data = bytearray(path.read_bytes())
+        data[0] ^= 1
+        path.write_bytes(data)
         s = self.setup('manage', current=lib)
         s.start(repair=True)
         j = self.wait(s)
         self.assertEqual(j['state'], 'done', j)
-        self.assertEqual(sorted(n for n, _, _ in self.files.log), ['Lastbook-Small.zip', 'model.gguf'])
+        self.assertEqual(sorted(n for n, _, _ in self.files.log), ['Lastbook-Small.zip'])
         new, note = api.startup(self.settings)
-        self.assertEqual(sha((new / 'models' / 'model.gguf').read_bytes()), sha(self.model))
+        self.assertEqual((new / 'models' / 'model.gguf').read_bytes(), self.blob)     # theirs: carried to the repaired library
         self.assertEqual(s._check_library({'state': '', 'bytes_done': 0}, new, Control()), [])
         self.assertTrue(Path(note['old']).exists())        # the damaged copy is kept aside until the repaired one has opened
 
@@ -1285,7 +1196,7 @@ class Maps(Base):
     def test_pack_with_map(self):
         mf, files = self.map_manifest()
         s = self.setup(manifest=mf)
-        j = s.start('small', False, map_id='CA')
+        j = s.start('small', map_id='CA')
         self.assertEqual([i['kind'] for i in j['items']], ['pack', 'map'])
         self.assertEqual(self.wait(s)['state'], 'done')
         lib, _ = api.startup(self.settings)
@@ -1305,7 +1216,7 @@ class Maps(Base):
             (cur / 'derived/geo' / n).write_bytes(b'old ' + n.encode())
         s = self.setup('manage', current=cur, manifest=mf)
         self.assertEqual(s.current_info()['map'], 'base')
-        j = s.start(None, False, map_id='CA')
+        j = s.start(map_id='CA')
         self.assertEqual([i['kind'] for i in j['items']], ['map'])
         self.assertEqual(self.wait(s)['state'], 'done')
         self.assertEqual((cur / 'derived/geo/water.sqlite').read_bytes(), b'old water.sqlite')    # untouched until the restart
@@ -1317,7 +1228,7 @@ class Maps(Base):
         self.assertEqual((Path(note['map_old']) / 'derived/geo/water.sqlite-wal').read_bytes(), b'old water.sqlite-wal')
         api.opened(self.settings, lib, note)
         self.assertFalse((self.parent / 'LastbookData.setup').exists())
-        self.assertEqual(self.setup('manage', current=lib, manifest=mf).start(None, False, map_id='CA')['code'], 'nothing')
+        self.assertEqual(self.setup('manage', current=lib, manifest=mf).start(map_id='CA')['code'], 'nothing')
 
     def test_map_into_a_library_with_another_name(self):
         """1.1.4: a library opened with --data from a folder not called LastbookData got the map in a nested
@@ -1328,7 +1239,7 @@ class Maps(Base):
         (cur / 'library-data/catalog.json').write_text('{}')
         (cur / 'pack.json').write_text('{"name": "small", "map": "base"}')
         s = self.setup('manage', current=cur, manifest=mf)
-        j = s.start(None, False, folder=str(cur), map_id='CA')     # as the window sends it: the shown folder, the library itself
+        j = s.start(folder=str(cur), map_id='CA')     # as the window sends it: the shown folder, the library itself
         self.assertEqual(j['folder'], str(cur))
         self.assertEqual(self.wait(s)['state'], 'done')
         self.assertTrue((self.parent / 'data.setup').is_dir())
@@ -1346,7 +1257,7 @@ class Maps(Base):
         (cur / 'library-data').mkdir(parents=True)
         (cur / 'library-data/catalog.json').write_text('{"mine": 1}')
         s = self.setup('manage', current=cur, manifest=mf)
-        s.start(None, False, map_id='CA')
+        s.start(map_id='CA')
         j = self.wait(s)
         self.assertEqual(j['error']['code'], 'unpack')
         self.assertEqual((cur / 'library-data/catalog.json').read_text(), '{"mine": 1}')
@@ -1373,12 +1284,12 @@ class Maps(Base):
         mf, _ = self.map_manifest()
         s = self.setup(manifest=mf)
         with mock.patch.object(hardware, 'disk_of', lambda p: (10 ** 9, 10 ** 12)):
-            a = s.start('small', False)['need_bytes']
-            b = s.start('small', False, map_id='CA')['need_bytes']
+            a = s.start('small')['need_bytes']
+            b = s.start('small', map_id='CA')['need_bytes']
         self.assertEqual(b - a, mf.map('CA')['download_bytes'] + mf.map('CA')['installed_bytes'])
         self.assertIn('CA', s.state()['recommend']['map_need_bytes'])
         self.assertIn('maps', s.state()['manifest'])
-        self.assertEqual(s.start(None, False, map_id='CA')['code'], 'nothing')    # first run: a library first
+        self.assertEqual(s.start(map_id='CA')['code'], 'nothing')    # first run: a library first
 
     def test_map_zip_without_top_folder(self):
         """The real state zips hold derived/geo/... at the top, with no LastbookData/ folder."""
@@ -1548,13 +1459,13 @@ class ContentRevisions(Base):
         (geo / 'map.sqlite').write_bytes(b'my detailed state map')
         (lib / 'map-set.json').write_text(json.dumps({'name': 'MI', 'files': {'derived/geo/map.sqlite': 21}}))
         (lib / 'models').mkdir()
-        (lib / 'models/model.gguf').write_bytes(self.model)
+        (lib / 'models/model.gguf').write_bytes(self.blob)
         (geo / 'addresses').mkdir()
         (geo / 'addresses/MI.sqlite').write_bytes(b'my address index')
         (geo / 'addresses/MI.json').write_text('{"files": {}}')
         return lib
 
-    def test_same_pack_refresh_preserves_map_model_and_addresses(self):
+    def test_same_pack_refresh_preserves_map_addresses_and_their_files(self):
         mf = self.revised_manifest()
         library = self.old_library()
         setup = self.setup('manage', current=library, manifest=mf)
@@ -1566,7 +1477,7 @@ class ContentRevisions(Base):
         self.assertEqual(opened, library)
         self.assertEqual((library / 'derived/geo/map.sqlite').read_bytes(), b'my detailed state map')
         self.assertEqual(install.map_name(library), 'MI')
-        self.assertEqual((library / 'models/model.gguf').read_bytes(), self.model)
+        self.assertEqual((library / 'models/model.gguf').read_bytes(), self.blob)
         self.assertEqual((library / 'derived/geo/addresses/MI.sqlite').read_bytes(), b'my address index')
         self.assertTrue((library / 'derived/geo/addresses/MI.json').exists())
         refreshed = self.setup('manage', current=library, manifest=mf)
@@ -1594,39 +1505,18 @@ class ContentRevisions(Base):
 
 
 class Recommend(Base):
-    def hw(self, ram, free, gpus=(), unified=True):
-        return {'ram_bytes': ram, 'gpus': list(gpus), 'unified_memory': unified, 'disks': [{'path': str(self.parent), 'free_bytes': free, 'total_bytes': 10 ** 12}],
-                'ai': hardware.estimate_ai(ram, list(gpus), unified, 19_027_384_256)}
+    def hw(self, free):
+        return {'disks': [{'path': str(self.parent), 'free_bytes': free, 'total_bytes': 10 ** 12}]}
 
-    def test_estimates(self):
-        self.assertFalse(hardware.estimate_ai(16 * 2 ** 30, [], True, 19_027_384_256)['fits'])
-        self.assertTrue(hardware.estimate_ai(24 * 2 ** 30, [], True, 19_027_384_256)['fits'])        # no blanket 32 GB floor
-        self.assertFalse(hardware.estimate_ai(16 * 2 ** 30, [], False, 19_027_384_256)['fits'])
-        self.assertTrue(hardware.estimate_ai(16 * 2 ** 30, [{'name': 'RTX', 'vram_bytes': 12 * 2 ** 30}], False, 19_027_384_256)['fits'])
-        self.assertTrue(hardware.estimate_ai(32 * 2 ** 30, [], True, 19_027_384_256)['estimate'])
-
-    def test_apple_silicon_on_linux(self):
-        tree = Path(self.parent) / 'device-tree'
-        tree.mkdir(parents=True)
-        self.assertIsNone(hardware._apple_silicon_linux(tree))
-        (tree / 'compatible').write_bytes(b'apple,j293\0apple,t8103\0apple,arm-platform\0')
-        (tree / 'model').write_bytes(b'Apple MacBook Pro (13-inch, M1, 2020)\0')
-        self.assertEqual(hardware._apple_silicon_linux(tree), 'Apple MacBook Pro (13-inch, M1, 2020)')
-        (tree / 'compatible').write_bytes(b'raspberrypi,5-model-b\0brcm,bcm2712\0')
-        self.assertIsNone(hardware._apple_silicon_linux(tree))
-
-    def test_pack_and_ai_by_space(self):
+    def test_pack_by_space(self):
         s = self.setup()
         with mock.patch.object(hardware, 'disk_of', lambda p: (10 ** 12, 2 * 10 ** 12)):
-            r = s.recommend(self.hw(64 * 2 ** 30, 10 ** 12))
-        self.assertEqual((r['pack'], r['ai']), ('small', True))
+            r = s.recommend(self.hw(10 ** 12))
+        self.assertEqual(r['pack'], 'small')
         with mock.patch.object(hardware, 'disk_of', lambda p: (10 ** 8, 10 ** 11)):
-            r = s.recommend(self.hw(64 * 2 ** 30, 10 ** 8))
+            r = s.recommend(self.hw(10 ** 8))
         self.assertIsNone(r['pack'])
         self.assertIn('free', r['why'])
-        with mock.patch.object(hardware, 'disk_of', lambda p: (10 ** 12, 2 * 10 ** 12)):
-            r = s.recommend(self.hw(8 * 2 ** 30, 10 ** 12))
-        self.assertEqual((r['pack'], r['ai']), ('small', False))
 
     def test_home_disk_first(self):
         """Fresh-user test, 12 Nov: an 8 TB home disk with 137 GB free and an external drive with 605 GB. The library stays on the home disk."""
@@ -1638,16 +1528,13 @@ class Recommend(Base):
         all_pack = {**medium, 'id': 'all', 'title': 'All', 'installed_bytes': 400 * 10 ** 9}
         s = self.setup(manifest=manifest.Manifest(bundled={**m, 'packs': [small, medium, all_pack]}, remote=None))
         with mock.patch.object(hardware, 'disk_of', return_value=(10 ** 12, 2 * 10 ** 12)):
-            self.assertEqual(s.recommend(self.hw(512 * 2 ** 30, 10 ** 12))['pack'], 'small')
-            low_ram = s.recommend(self.hw(8 * 2 ** 30, 10 ** 12))
-            self.assertEqual((low_ram['pack'], low_ram['ai']), ('small', False))
+            self.assertEqual(s.recommend(self.hw(10 ** 12))['pack'], 'small')
         ext = {'path': '/Volumes/Ext', 'name': 'Ext', 'free_bytes': 605 * 10 ** 9, 'total_bytes': 10 ** 12}
-        hw = {**self.hw(512 * 2 ** 30, 137 * 10 ** 9), 'disks': [{'path': str(self.home), 'free_bytes': 137 * 10 ** 9, 'total_bytes': 8 * 10 ** 12}, ext]}
+        hw = {'disks': [{'path': str(self.home), 'free_bytes': 137 * 10 ** 9, 'total_bytes': 8 * 10 ** 12}, ext]}
         same = lambda a, b: not str(a).startswith('/Volumes/')
         with mock.patch.object(hardware, 'disk_of', lambda p: (137 * 10 ** 9, 8 * 10 ** 12)), mock.patch.object(api, '_same_disk', same):
             r = s.recommend(hw)
             self.assertEqual((r['pack'], r['folder']), ('small', str(self.parent)))
-            self.assertTrue(r['ai'])
             self.assertIn('Small is selected', r['why'])
         with mock.patch.object(hardware, 'disk_of', lambda p: (10 * 10 ** 9, 8 * 10 ** 12)), mock.patch.object(api, '_same_disk', same):
             r = s.recommend({**hw, 'disks': [{'path': str(self.home), 'free_bytes': 10 ** 10, 'total_bytes': 8 * 10 ** 12}, ext]})
@@ -1668,11 +1555,6 @@ class Recommend(Base):
             self.assertEqual([d['path'] for d in disks], [str(self.parent)])
             self.assertGreater(disks[0]['free_bytes'], 0)
             self.assertEqual(hardware.candidate_disks(), [])
-
-    def test_hardware_here(self):
-        hw = hardware.detect([self.parent])
-        self.assertGreater(hw['ram_bytes'], 2 ** 30)
-        self.assertTrue(hw['disks'] and hw['disks'][0]['free_bytes'] > 0)
 
 
 class Through(Base):
@@ -1725,8 +1607,8 @@ def child(cfg):
             prog = a[4]
             return real(*a[:4], lambda d, t: (time.sleep(0.002), prog(d, t)))
         install.unpack = slow
-    s = api.Setup('first-run', cfg['settings'], cfg['parent'], manifest=m, allowed=ALLOWED, context=ctx, home=cfg['home'], llm_local=False)
-    print(s.start('small', False), flush=True)
+    s = api.Setup('first-run', cfg['settings'], cfg['parent'], manifest=m, allowed=ALLOWED, context=ctx, home=cfg['home'])
+    print(s.start('small'), flush=True)
     time.sleep(600)
 
 

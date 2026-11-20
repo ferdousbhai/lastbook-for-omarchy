@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 # Runs the window, built with feature `qa`, through a QA script (omui's scripted QA: its README, "Scripted QA") over
 # the made-up library of dev/seed.py, on a broadway display of its own with a private HOME and XDG directories and no
-# session bus: no window opens anywhere visible, nothing of the desktop this is run from is read, and no real library,
-# Recall or model is used. Prints each command with its answer and exits with the window's status, non-zero when a
+# session bus: no window opens anywhere visible, nothing of the desktop this is run from is read, and no real library
+# or Recall is used. Prints each command with its answer and exits with the window's status, non-zero when a
 # command failed or GLib logged a warning or a critical. bin/test runs every script in dev/qa.
 #
 #   native/dev/qa.sh <script.jsonl> [shots-dir]
@@ -71,10 +71,10 @@ status=0
 (
   cd "$shots"
   exec env -u WAYLAND_DISPLAY -u DISPLAY -u DBUS_SESSION_BUS_ADDRESS -u GTK_THEME -u LASTBOOK_DATA -u LASTBOOK_ENGINE \
-    -u LASTBOOK_MODEL_DIR -u LASTBOOK_OPEN -u XDG_DOCUMENTS_DIR \
+    -u LASTBOOK_OPEN -u XDG_DOCUMENTS_DIR \
     HOME="$root/home" XDG_CONFIG_HOME="$root/config" XDG_STATE_HOME="$root/state" XDG_DATA_HOME="$root/data" \
     XDG_CACHE_HOME="$root/cache" XDG_RUNTIME_DIR="$root/runtime" \
-    LASTBOOK_DEV=1 PYTHONPATH="$deps" LASTBOOK_LOCAL_AI=0 LASTBOOK_RECALL_SOCKET="$root/no-recall.sock" \
+    LASTBOOK_DEV=1 PYTHONPATH="$deps" LASTBOOK_RECALL_SOCKET="$root/no-recall.sock" \
     WEBKIT_DISABLE_DMABUF_RENDERER=1 \
     GDK_BACKEND=broadway BROADWAY_DISPLAY=":$display" OMUI_QA=1 OMUI_QA_INPUT="127.0.0.1:$port" OMUI_QA_FD=3 \
     timeout "${LASTBOOK_QA_TIMEOUT:-120}" "$binary" --data "$root/library" < "$script" 3> "$root/answers"

@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from engine.setup import download  # noqa: E402
 
-HOSTS = sorted(download.ALLOWED_HOSTS) + ['us.aws.cdn.hf.co', 'us.gcp.cdn.hf.co', 'cdn-lfs.hf.co', 'cdn-lfs-us-1.hf.co']   # *.hf.co seen on 12 Nov 2026
+HOSTS = sorted(download.ALLOWED_HOSTS)
 OUTSIDE = 'www.digicert.com'     # a DigiCert chain: no DigiCert root is in roots.pem
 
 

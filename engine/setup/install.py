@@ -7,7 +7,7 @@ Every member of a zip is checked before anything is written: a relative name und
 no symbolic link, no device, and a total no larger than the manifest's installed_bytes. Files are written as <name>.partial and
 renamed when whole, so an unpack that stops (a crash, power) carries on where it was. Switching is one rename on one disk.
 An upgrade first moves the old library aside to LastbookData.old-<date>, puts the new one in its place, and only then brings
-the person's own files across (the model, their maps): apply_pending, called by app/engine_pipe.py before the engine starts.
+the person's own files across (their maps): apply_pending, called by app/engine_pipe.py before the engine starts.
 Each step is written down first, so a switch cut short is finished at the next start. If the engine then cannot open the new
 library, the old one is put back, once (roll_back). Once the new one has opened, the old one is deleted (api.opened;
 is_old_of says which folders that may be).
@@ -167,13 +167,11 @@ def unpack(zip_path, into, installed_bytes, control, progress, allowed=None, ver
 
 
 # ------------------------------------------------------------------------------------------------------------ space --
-def need_bytes(pack, model, have_files=()):
+def need_bytes(pack, have_files=()):
     """Room needed on the target disk: what is still to download, plus the unpacked size, plus SPACE_MARGIN."""
     n = SPACE_MARGIN
     if pack:
         n += sum(f['size'] for f in pack['files'] if f['name'] not in have_files) + (pack.get('installed_bytes') or 0)
-    if model:
-        n += model['size'] if model['file'] not in have_files else 0
     return n
 
 
@@ -204,21 +202,19 @@ def is_old_of(path, lib):
                 and _real(p.parent) == _real(lib.parent) and not p.is_symlink() and p.is_dir())
 
 
-def stage_switch(pend, new_lib, target, model_file=None, kind=None, model_sha256=None):
+def stage_switch(pend, new_lib, target, kind=None):
     """Writes what the switch will do to `pend`, a file in the app's own settings folder (never the work folder), for
     apply_pending. Nothing is renamed yet."""
-    d = {'new': str(new_lib), 'target': str(target), 'model_file': model_file, 'written': time.time()}
+    d = {'new': str(new_lib), 'target': str(target), 'written': time.time()}
     if kind:
         d['kind'] = kind
-    if model_sha256:
-        d['model_sha256'] = model_sha256     # the digest setup matched, for llm_local.mark_checked after the switch
     Path(pend).parent.mkdir(parents=True, exist_ok=True)
     _write_json(pend, d)
     return d
 
 
 def _holds_theirs(folder):
-    """Whether `folder` still has anything carry_over would have taken: a model, address index or map of the person's."""
+    """Whether `folder` still has anything carry_over would have taken: a file in models/, an address index or a map of the person's."""
     folder = Path(folder)
     models = folder / 'models'
     if models.is_dir() and any(f.is_file() and not f.name.endswith('.partial') for f in models.iterdir()):
@@ -230,8 +226,9 @@ def _holds_theirs(folder):
 
 
 def carry_over(old, new):
-    """What belongs to the person, not the pack, goes with them: the model file, address indexes, the world map and its
-    regions (engine/setup/maps.py), and the AI's record of having checked the model file."""
+    """What belongs to the person, not the pack, goes with them: address indexes, the world map and its regions
+    (engine/setup/maps.py), and any file in models/ (an earlier version's local AI download: Lastbook no longer uses
+    it, and never deletes it)."""
     old, new = Path(old), Path(new)
     moved = []
     src = old / 'models'
@@ -239,7 +236,7 @@ def carry_over(old, new):
         (new / 'models').mkdir(parents=True, exist_ok=True)
         for f in src.iterdir():
             dest = new / 'models' / f.name
-            if f.is_file() and not f.name.endswith('.partial') and not dest.exists():      # a copy cut short is not a model
+            if f.is_file() and not f.name.endswith('.partial') and not dest.exists():      # a copy cut short is nobody's file
                 os.replace(f, dest)
                 moved.append(dest)
     addresses = old / 'derived' / 'geo' / 'addresses'
@@ -259,17 +256,13 @@ def carry_over(old, new):
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(source, dest)
                 moved.append(dest)
-    state = old / 'derived' / 'llm' / 'state.json'
-    if state.is_file() and not (new / 'derived' / 'llm' / 'state.json').exists():
-        (new / 'derived' / 'llm').mkdir(parents=True, exist_ok=True)
-        shutil.copy2(state, new / 'derived' / 'llm' / 'state.json')
     return moved
 
 
 def switch(new_lib, target, old=None, resume=False):
     """The renames, then the person's own files brought across from the old library (carry_over). Returns the old library's
     new name, or None when there was none. Raises Refused with things as they were: nothing of the person's is moved until
-    both renames have been made, so a rename that fails leaves the old library whole, model and maps in it.
+    both renames have been made, so a rename that fails leaves the old library whole, maps in it.
 
     old: the name the old library goes to, when the caller chose and saved it beforehand (apply_pending). resume: this
     switch was begun before and cut short (the program stopped), so whatever of it is already done is taken as done and
@@ -339,9 +332,9 @@ def roll_back(pend, work, kept=None):
     os.replace(target, broken)
     os.replace(old, target)
     try:
-        carry_over(broken, target)      # the model, the maps and the address indexes went into the new one: they go back too
+        carry_over(broken, target)      # the maps and the address indexes went into the new one: they go back too
         # Listed for deletion only if nothing of the person's stayed behind (carry_over leaves a file whose name the
-        # restored library already has: a newly downloaded model beside a damaged one, say).
+        # restored library already has).
         if kept is not None and not _holds_theirs(broken):
             kept.append(str(broken))
     except OSError as e:
@@ -514,12 +507,6 @@ def _pending_ok(d, work):
     if old is not None and not (isinstance(old, str) and _real(Path(old).parent) == _real(target.parent)
                                 and Path(old).name.startswith(target.name + '.old-')):
         return False
-    sha = d.get('model_sha256')
-    if sha is not None and not (isinstance(sha, str) and re.fullmatch(r'[0-9a-f]{64}', sha)):
-        return False
-    mf = d.get('model_file')
-    if mf is not None and not (isinstance(mf, str) and _real(Path(mf).parent) == _real(target / 'models')):
-        return False
     return True
 
 
@@ -540,7 +527,7 @@ def apply_pending(pend, work):
             pass
         return None, None
     target = Path(d['target'])
-    note = {'target': str(target), 'old': None, 'model_file': d.get('model_file'), 'model_sha256': d.get('model_sha256')}
+    note = {'target': str(target), 'old': None}
     if d.get('kind') == 'map':
         return _apply_map(work, pend, d, target, note)
     if not d.get('switched'):
@@ -572,10 +559,9 @@ def apply_pending(pend, work):
 
 
 def rolled_back_note(note, said):
-    """The note once the old library is back: nothing to delete, and the model the switch brought is not the one now in
-    place (the old library's own, or none), so it is not marked as checked with that model's digest. The library set
-    aside is deleted at a later start, not this one (api.opened)."""
-    note.update(error=said, old=None, model_file=None, model_sha256=None, rolled_back=True)
+    """The note once the old library is back: nothing to delete. The library set aside is deleted at a later start, not
+    this one (api.opened)."""
+    note.update(error=said, old=None, rolled_back=True)
     return note
 
 

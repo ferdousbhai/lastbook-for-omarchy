@@ -31,7 +31,7 @@ source_commit=$(git -c safe.directory="$PWD" rev-parse HEAD)
 git -c safe.directory="$PWD/.git" clone --quiet --no-hardlinks "$PWD" "$work/source"
 [[ $(git -C "$work/source" rev-parse HEAD) == "$source_commit" ]]
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-$(nproc)}
-# makepkg's llama.cpp clone (over 1 GB) outlives the temporary clone: in the checkout's dist/ (ignored), or beside the
+# What makepkg downloads (the two wheels) outlives the temporary clone: in the checkout's dist/ (ignored), or beside the
 # output when the checkout is read-only (CI's mount).
 sources=$(realpath -m "${SRCDEST:-$PWD/dist/sources}")
 if ! mkdir -p "$sources" 2>/dev/null || [[ ! -w $sources ]]; then

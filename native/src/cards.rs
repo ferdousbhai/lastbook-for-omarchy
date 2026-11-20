@@ -166,7 +166,7 @@ pub fn clock(t: f64) -> String {
 }
 
 /// Where a source opens: a PDF page, a saved page, a video moment, an encyclopedia article or a place on the map.
-/// Accepts the engine's source records (chat, retrieve) and catalog records (find, topics' `src`).
+/// Accepts the engine's source records (retrieve) and catalog records (find, topics' `src`).
 pub fn route_of(s: &Value) -> Option<Route> {
     let kind = s["kind"].as_str().unwrap_or_default();
     let id = s["doc_id"].as_str().or_else(|| s["id"].as_str()).unwrap_or_default().to_owned();

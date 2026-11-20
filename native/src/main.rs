@@ -8,13 +8,11 @@
 //! answers over pipes; this window reads the library's files (PDFs, thumbnails, videos) directly.
 
 mod cards;
-mod chat;
 mod cli;
 mod engine;
 mod guides;
 mod library;
 mod map;
-mod md;
 mod mvt;
 mod pdf;
 mod reader;

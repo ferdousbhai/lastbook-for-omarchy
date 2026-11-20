@@ -15,8 +15,7 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    # The PKGBUILD compiles llama.cpp (Vulkan and every CPU variant) as well as the window.
-    timeout-minutes: 180
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

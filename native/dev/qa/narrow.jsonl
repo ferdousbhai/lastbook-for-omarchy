@@ -17,17 +17,17 @@
 {"do":"wait","role":"window","name":"Safe water at home — Lastbook"}
 {"do":"wait","size":[840,700]}
 {"do":"shot","path":"half-reader.png"}
-{"do":"select","role":"list-item","name":"Chat"}
-{"do":"wait","role":"button","name":"Ask","visible":true}
+{"do":"select","role":"list-item","name":"Videos"}
+{"do":"wait","role":"search-box","name":"Search video titles","visible":true}
 {"do":"wait","size":[840,700]}
-{"do":"shot","path":"half-chat.png"}
+{"do":"shot","path":"half-videos.png"}
 
 # A third of a screen, with the sidebar away.
 {"do":"key","keys":"<Control>b"}
-{"do":"wait","role":"list-item","name":"Chat","visible":false}
+{"do":"wait","role":"list-item","name":"Videos","visible":false}
 {"do":"resize","width":560,"height":700}
 {"do":"wait","size":[560,700]}
-{"do":"shot","path":"narrow-chat.png"}
+{"do":"shot","path":"narrow-videos.png"}
 {"do":"key","keys":"<Alt>Left"}
 {"do":"wait","role":"window","name":"Safe water at home — Lastbook"}
 {"do":"wait","size":[560,700]}

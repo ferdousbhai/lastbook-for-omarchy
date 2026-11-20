@@ -2,12 +2,13 @@
 
 An offline survival library for Omarchy (Arch Linux with Hyprland, on x86_64 and on aarch64 Apple silicon through Asahi). It puts
 manuals, videos, encyclopedias, an offline map and short practical guides on one computer. After setup, it works offline. The
-desktop sidebar opens Search, Chat, Guides, Library, Videos, Map and Saved, with About in its footer. Search finds encyclopedia
-articles too (it has an Encyclopedias filter). Chat answers questions from the library, encyclopedias included, and cites its sources.
+desktop sidebar opens Search, Guides, Library, Videos, Map and Saved, with About in its footer. Search finds encyclopedia
+articles too (it has an Encyclopedias filter). Lastbook has no AI of its own: an AI agent on the computer answers questions
+from the library through the `lastbook` command line and its agent skill (below).
 
 A hard fork of [Lastbook](https://github.com/Immortal-Protocols/lastbook) (<https://lastbook.org>), made Omarchy-only, with one native window: the macOS,
 Windows and iPad apps, the browser interface, the websites, the pack-building tools and the update checker are gone; meaning-based search uses
-[Recall for Omarchy](https://github.com/ferdousbhai/recall-for-omarchy)'s embedding model; Chat reads the encyclopedias. The
+[Recall for Omarchy](https://github.com/ferdousbhai/recall-for-omarchy)'s embedding model; search reads the encyclopedias. The
 download packs are Lastbook's own, pre-built, from `downloads.lastbook.org`; the map is made on your computer in setup.
 
 > MIT License ([LICENSE](LICENSE)), as upstream. See [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -18,11 +19,9 @@ download packs are Lastbook's own, pre-built, from `downloads.lastbook.org`; the
 curl -fsSL https://ferdousbhai.com/lastbook/install.sh | sudo bash
 ```
 
-It adds Lastbook's signed package repository (both architectures; with `vulkan-asahi` on Apple silicon) and installs
-`lastbook-for-omarchy`; re-running is safe.
+It adds Lastbook's signed package repository (both architectures) and installs `lastbook-for-omarchy`; re-running is safe.
 
-Or build and install the package from this checkout (it compiles the window and the local AI's runner, which takes a while;
-it needs Rust):
+Or build and install the package from this checkout (it compiles the window; it needs Rust):
 
 ```bash
 cd packaging/arch && makepkg -si
@@ -31,7 +30,7 @@ cd packaging/arch && makepkg -si
 The installer offers to add Recall for Omarchy for meaning-based search (or later: `curl -fsSL https://ferdousbhai.com/recall/install.sh | sudo bash`).
 Without it everything works, and search matches words only.
 
-Open Lastbook from the application menu. First-run setup downloads your chosen library, makes the map and, if you want it, downloads the local AI.
+Open Lastbook from the application menu. First-run setup downloads your chosen library and makes the map.
 The window is a native GTK 4 program (`lastbook`); it uses the system's WebKitGTK, Poppler and GStreamer codecs, and runs
 the Python engine as its own child process. Your library and settings stay in your home folder
 (`~/.local/share/Lastbook`, `~/.config/Lastbook`, `~/.cache/Lastbook`). Updates come from pacman (`omarchy update`).
@@ -51,9 +50,10 @@ the Python engine as its own child process. Your library and settings stay in yo
   tiles wanted) and builds place search from GeoNames (`engine/setup/maps.py`; the area list is
   `packaging/arch/map-regions.json`, made by `tools/make_region_list.py`). Where a library holds upstream's US map files,
   the window does not draw them, but US place and street-address search still use them ([docs/MAPS.md](docs/MAPS.md)).
-- **Optional local AI.** Ask questions in plain words and get answers that cite library pages, from a model that runs on
-  the computer itself (see "The local AI" below). Without it, Chat still finds the right pages.
-- **One-download setup.** On first run, setup defaults to Small and selects local AI when the computer can run it.
+- **For AI agents too.** The same library from the command line, as JSON, with a skill that tells an agent how to
+  search it, read the pages and cite them (below). The agent can be any on the computer, with a local model as well
+  (through Omarchy's `omarchy-local-ai`, say).
+- **One-download setup.** On first run, setup defaults to Small.
   The person can choose Small, Medium or All, picks the world map and any street-level regions, and starts the checked
   downloads. A library already on the computer (a folder or a pack zip) can be used instead of downloading.
 
@@ -69,33 +69,30 @@ lastbook page med-443ae5cfaa6ecc68 38             # one PDF page as a PNG (in ~/
 lastbook transcript VIDEO_ID --query "tinder"     # a video's timed lines
 lastbook place "Denpasar" --nearby hospital       # the offline gazetteer, and help points near the first match
 lastbook guides; lastbook guide hurt              # the situation guides and the pages they point to
-lastbook ask "How do I make water safe?"          # the local AI's cited answer: {answer, sources, steps}
-lastbook status                                   # library folder and counts, local AI, meaning search, map files
+lastbook status                                   # library folder and counts, meaning search, map files
 lastbook open med-443ae5cfaa6ecc68 38             # a new window at that page; also routes: guide:hurt, search:burns
 ```
 
 `lastbook --help` lists them. Exit codes: 0 success (no matches too), 1 a runtime error (no library yet, an unknown
 id), 2 invalid arguments; an error is one line on standard error. `--data FOLDER` names the library, as for the window.
 The commands run beside an open window: they only read the library (the window keeps indexing), and write nothing but
-the engine's own caches. Only `ask` loads the AI model, in a process of its own (so with the window's model loaded too
-there are two in memory, about 17 GB each); it exits 1 without a local AI, or when too little memory is free to load the model, and `search` still finds the passages. Only `open` starts a window.
+the engine's own caches. Only `open` starts a window.
 
-The agent skill (`skills/lastbook/SKILL.md`) tells an agent when and how to use these. `lastbook skill` prints it;
+The agent skill (`skills/lastbook/SKILL.md`) tells an agent when and how to use these: to answer a question it searches,
+reads the pages the results point at, and cites document title and page. `lastbook skill` prints it;
 `lastbook skill install` writes it to `~/.agents/skills/lastbook` and links it from `~/.claude/skills` and
 `~/.codex/skills`. The installer does that for the desktop user, and the window keeps an installed skill current.
 
 ## Privacy and network use
 
 - **No listening port.** The desktop app opens no network port. The window (`native/`) and the engine talk in JSON lines over
-  the engine's standard input and output (`app/engine_pipe.py`, through the in-memory bridge `app/bridge.py`). The local AI runner speaks JSON
-  lines on standard input and output and opens no socket either. Meaning-based search asks Recall for Omarchy's
+  the engine's standard input and output (`app/engine_pipe.py`, through the in-memory bridge `app/bridge.py`). Meaning-based search asks Recall for Omarchy's
   EmbeddingGemma over a local Unix socket in the user's runtime folder; nothing of it leaves the computer.
 - **One use of the network, started by the person.** Setup's downloader (`engine/setup/`), when the person starts or
   resumes a download. It goes through `engine/setup/download.py`, the only module that opens a connection: HTTPS on port
-  443 only, to allow-listed hosts only (`downloads.lastbook.org` for upstream's packs and the manifest; Hugging Face's
-  download hosts for the AI model; Protomaps' build hosts for the map; `download.geonames.org` for place names), no proxy
+  443 only, to allow-listed hosts only (`downloads.lastbook.org` for upstream's packs and the manifest; Protomaps' build hosts for the map; `download.geonames.org` for place names), no proxy
   from the system, and a redirect is followed only to another allowed host.
-- **Pinned trust.** The downloader trusts only the root certificates in `engine/setup/roots.pem` (11 roots from Mozilla's
+- **Pinned trust.** The downloader trusts only the root certificates in `engine/setup/roots.pem` (6 roots from Mozilla's
   bundle), never the system's trust store. `python3 -I -B packaging/check_tls_roots.py` checks that those roots
   still cover the allowed hosts; it needs the network, so `bin/release` runs it and `bin/check` does not.
 - **Checked files.** Every download is checked against the SHA-256 in the manifest before it is used. Zips are checked
@@ -115,10 +112,10 @@ The setup contract is in [docs/SETUP-API.md](docs/SETUP-API.md); the engine side
 | `native/` | The desktop window: a Rust crate (binary `lastbook`, app id `io.github.ferdousbhai.Lastbook`) on GTK 4, WebKitGTK 6 and Poppler. It starts the engine as a child process. |
 | `app/` | The engine's side of the app: the pipe the window talks to (`engine_pipe.py`), the command line (`cli.py`), library lookup and setup hooks (`main.py`), the no-port bridge (`bridge.py`), and tests (`app/tests/`). |
 | `engine/` | Paths, the request handler's base and file rules (`library.py`), saved pages, offline address search (`address_search.py`) and setup (`engine/setup/`, which also makes the map). |
-| `server.py`, `assistant.py`, `retrieval.py`, `encyclopedia.py`, `llm_local.py` | The engine: request handler, the assistant and its citation checks, keyword plus meaning-based search (through Recall), encyclopedia articles as passages, and the local AI (model pins, fit check, runner control). |
+| `server.py`, `retrieval.py`, `encyclopedia.py` | The engine: request handler and the fused search (`server.hybrid`), meaning-based search (through Recall), and encyclopedia articles as passages. |
 | `skills/` | The agent skill (`lastbook/SKILL.md`), built into the program and shipped in the package. |
 | `content/` | The curated guides (`topics/*.json`) and what curators looked for and did not find (`gaps.json`). Format: `content/SCHEMA.md`. |
-| `packaging/` | The Arch package (`arch/`: PKGBUILD, the manifest and map region list it ships, the package scan), the desktop entry (`linux/`), the icon (`icon/`), release manifest, TLS roots tools, and `packaging/llm/` (the local AI runner). |
+| `packaging/` | The Arch package (`arch/`: PKGBUILD, the manifest and map region list it ships, the package scan), the desktop entry (`linux/`), the icon (`icon/`), release manifest and TLS roots tools. |
 | `tools/` | Curator helpers (`libq.py`, `validate_topics.py`), the map area list's maker (`make_region_list.py`), and the retrieval check (`eval/`). |
 | `docs/` | How the window and the engine talk (`ENGINE.md`), the setup contract (`SETUP-API.md`) and how the offline map is put together (`MAPS.md`). |
 
@@ -140,10 +137,10 @@ LASTBOOK_DEV=1 PYTHONPATH=$(bin/test-deps) native/target/debug/lastbook --data /
 Existing libraries elsewhere are accessed when the person chooses them. If no library is available, it opens setup.
 The full order is in `app/main.py`.
 
-## How Chat finds what it cites
+## How search finds passages
 
-Every question first goes through `assistant.hybrid()`, which fuses three ranked lists with reciprocal-rank fusion and hands the
-best eight passages to the model, with their provenance (document, PDF page, video moment or article section):
+The window's Search and `lastbook search` both go through `server.hybrid()`, which fuses three ranked lists with
+reciprocal-rank fusion and gives the best passages with their provenance (document, PDF page, video moment or article section):
 
 1. **Keyword search**: the library's SQLite FTS5 index of every page (`search.sqlite`), BM25-ranked, with everyday words mapped
    to the words manuals use (`server.SYN`).
@@ -153,17 +150,16 @@ best eight passages to the model, with their provenance (document, PDF page, vid
    rebuilds it. Without Recall this list is empty.
 3. **Encyclopedias** (`encyclopedia.py`): each ZIM file's own full-text and title indexes find candidate articles; with Recall,
    their openings and a few passages are ranked by meaning and weak ones dropped. Nothing is embedded ahead of time. The best
-   article that clears the bar keeps the last of the eight places, since library pages usually win on both other lists.
+   article that clears the bar keeps the last place of a list of six or more, since library pages usually win on both
+   other lists.
 
-The model can then search again, read whole pages (`read_pages`) or articles (`read_article`), transcripts, and the offline
-gazetteer. Every `[S#]` in its answer is checked against what the tools returned in that turn. `tools/eval/run.py` measures
+`tools/eval/run.py` measures
 hits@8, MRR and timing on `tools/eval/questions.json` against a real data folder.
 
 ## Build
 
 `packaging/arch/PKGBUILD` builds the package from the committed source (`git archive HEAD`): the window
-(`cargo build --release --locked --manifest-path native/Cargo.toml`, installed as `/usr/bin/lastbook`), the local AI's runner
-(`packaging/llm/build_llm_linux.sh`, llama.cpp at a pinned tag with Vulkan and every CPU variant), and the two Python packages Arch does not carry (libzim and pypdfium2, pinned wheels). Everything else comes from Arch. Check a
+(`cargo build --release --locked --manifest-path native/Cargo.toml`, installed as `/usr/bin/lastbook`) and the two Python packages Arch does not carry (libzim and pypdfium2, pinned wheels). Everything else comes from Arch. Check a
 built package with `python3 packaging/arch/scan_package.py <package>`. Releases: `bin/release <version>` (with
 `packaging/release-notes.md` written first) tags, builds both architectures natively in CI (`.github/workflows/packages.yml`,
 `bin/build-packages`), signs the packages and repository databases locally and publishes them with `install.sh`.
@@ -172,7 +168,7 @@ Release day, in order: commit the release notes on main; publish this commit's `
 stopped part way is resumed by running it again); `verify-release.yml` then installs the release on both
 architectures.
 
-## Packs and the local AI
+## Packs
 
 - **Packs** are data folders: a library plus its catalog, search index and US map data. They come pre-built from
   upstream Lastbook, on `downloads.lastbook.org`; nothing here builds them. Setup downloads the one the person picks and
@@ -181,12 +177,6 @@ architectures.
 - **State maps** are upstream's detailed map set and address index for one US state. The window does not offer or draw
   them (it draws its own map of the world); the engine still installs and repairs them where a library has one, and
   address search uses the index.
-- **The local AI** is optional: Gemma 4 26B A4B (Unsloth's `gemma-4-26B-A4B-it-UD-Q4_K_M.gguf`, about 17 GB). The file
-  name, size, SHA-256 and Hugging Face revision are pinned in `llm_local.py`. Setup offers it only where the measured fit
-  says it fits (about 18 GB of memory for model and context, plus a reserve) and says why in plain words when it does not.
-  Setup downloads it directly from Hugging Face. The model is never part of the app or of this repository. The runner,
-  `lastbook-llm`, is our own small program (`packaging/llm/lastbook_llm.cpp`) on llama.cpp tag b12032, with
-  Vulkan and CPU fallbacks.
 - **Meaning-based search** uses EmbeddingGemma through Recall for Omarchy, over a local socket. Without Recall running,
   search is keyword search.
 
@@ -194,8 +184,7 @@ architectures.
 
 - **The library** (`library-data/`): hundreds of gigabytes of third-party manuals, videos and encyclopedias, each under
   its own terms. It is distributed as packs, with a Sources and permissions page in each pack.
-- **Models and maps** (GGUF, map data): large, and published by their makers or built from public data. Setup
-  fetches the model (its checksum and pin are here) and makes the map on the person's computer.
+- **Maps**: large, and built from public data. Setup makes the map on the person's computer.
 - **Generated data** (`derived/`, builds): indexes, caches and logs the engine makes as it runs, and build output.
 - **Release and signing material**: signing keys, deploy settings and the release folders.
 - **Private data**: a household's own home area, machine and user names, keys and internal security-audit notes. The
@@ -216,7 +205,7 @@ Recall; the others run without a library. `bin/check` adds the installer test.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Lastbook’s original code and
 documentation use the [MIT License](LICENSE), permitting commercial use, modification and redistribution with the
-copyright and license notice. Third-party software, models, media and library content retain their own licenses,
+copyright and license notice. Third-party software, media and library content retain their own licenses,
 listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and each library pack. Distributed packages include
 GPL-covered components such as python-libzim and libzim and must also meet those components’ license obligations.
 

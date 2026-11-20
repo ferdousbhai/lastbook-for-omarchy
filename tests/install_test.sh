@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Run install.sh for real, with pacman, pacman-key, curl, gpg and uname
 # stubbed, inside a user and mount namespace where /etc/pacman.conf,
-# /etc/pacman.d, /root and /sys/firmware are scratch copies: nothing on this
-# machine changes. Covers both architectures (vulkan-asahi only on Apple
-# hardware), plain Arch, re-running and options. First, outside the
-# namespace, checks the add_signed_repo hash; only the installer runs are
-# skipped where unprivileged namespaces are off.
+# /etc/pacman.d and /root are scratch copies: nothing on this machine
+# changes. Covers both architectures, plain Arch, re-running and options.
+# First, outside the namespace, checks the add_signed_repo hash; only the
+# installer runs are skipped where unprivileged namespaces are off.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$PWD"
@@ -75,21 +74,13 @@ export PATH="$work/bin:$PATH" PACMAN_LOG="$work/pacman.log" SUDO_USER=root
 # A fresh scratch /etc and /root for each scenario.
 setup() {
   local s="$work/scene"
-  umount -q /etc/pacman.conf /etc/pacman.d /root /sys/firmware 2>/dev/null || true
+  umount -q /etc/pacman.conf /etc/pacman.d /root 2>/dev/null || true
   rm -rf "${s:?}" "$PACMAN_LOG"
   mkdir -p "$s/pacman.d" "$s/root/.config/omarchy/hooks/pre-refresh-pacman.d"
   printf '[options]\nArchitecture = auto\n\n[core]\nInclude = /etc/pacman.d/mirrorlist\n' >"$s/pacman.conf"
   mount --bind "$s/pacman.conf" /etc/pacman.conf
   mount --bind "$s/pacman.d" /etc/pacman.d
   mount --bind "$s/root" /root
-}
-# Usage: firmware <device-tree model, or empty for no device tree>
-firmware() {
-  mount -t tmpfs tmpfs /sys/firmware
-  if [[ -n $1 ]]; then
-    mkdir -p /sys/firmware/devicetree/base
-    printf '%s\0' "$1" >/sys/firmware/devicetree/base/model
-  fi
 }
 hooks=/root/.config/omarchy/hooks/pre-refresh-pacman.d
 # What the last install asked for, whichever way it installed (omarchy-pkg-add on Omarchy).
@@ -138,26 +129,13 @@ bash "$hooks/lastbook-for-omarchy"
 awk '/^[[:space:]]*\[/ { omit = ($0 ~ /^[[:space:]]*\[omarchy\][[:space:]]*(#.*)?$/) } !omit { print }' /etc/pacman.conf > "$work/arm.conf"
 check "refresh hook Include survives ARM source replacement" grep -qxF 'Include = /etc/pacman.d/lastbook-for-omarchy.conf' "$work/arm.conf"
 
-# aarch64: its own repository; the Asahi Vulkan driver only on Apple hardware.
+# aarch64: its own repository.
 setup
-firmware 'Apple MacBook Pro (16-inch, M1 Max, 2021)'
 STUB_ARCH=aarch64 bash install.sh >/dev/null 2>&1
 check "aarch64 uses the [lastbook-for-omarchy-aarch64] repository" [ "$(count_include lastbook-for-omarchy-aarch64)" = 1 ]
 check "aarch64 repository config is written" [ -e /etc/pacman.d/lastbook-for-omarchy-aarch64.conf ]
 check "aarch64 leaves the x86 repository out" [ "$(count_include lastbook-for-omarchy)" = 0 ]
-check "Apple hardware also gets vulkan-asahi" [ "$(installed)" = "lastbook-for-omarchy vulkan-asahi" ]
-setup
-firmware 'Raspberry Pi 5 Model B Rev 1.0'
-STUB_ARCH=aarch64 bash install.sh >/dev/null 2>&1
-check "other ARM hardware does not get vulkan-asahi" [ "$(installed)" = "lastbook-for-omarchy" ]
-setup
-firmware ''
-STUB_ARCH=aarch64 bash install.sh >/dev/null 2>&1
-check "ARM without a device tree does not get vulkan-asahi" [ "$(installed)" = "lastbook-for-omarchy" ]
-setup
-firmware 'Apple MacBook Pro'
-bash install.sh >/dev/null 2>&1
-check "x86_64 never gets vulkan-asahi" [ "$(installed)" = "lastbook-for-omarchy" ]
+check "aarch64 installs lastbook-for-omarchy" [ "$(installed)" = "lastbook-for-omarchy" ]
 
 setup
 status=0
@@ -181,7 +159,7 @@ done
 PATH="$work/plain" bash install.sh >"$work/plain.out" 2>&1 || true
 check "without Omarchy it installs in one pacman -Syu" grep -qx 'pacman -Syu --needed --noconfirm lastbook-for-omarchy' "$PACMAN_LOG"
 
-umount -q /etc/pacman.conf /etc/pacman.d /root /sys/firmware 2>/dev/null || true
+umount -q /etc/pacman.conf /etc/pacman.d /root 2>/dev/null || true
 if (( fail )); then
   echo "FAIL install_test" >&2
   exit 1

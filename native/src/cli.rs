@@ -21,17 +21,16 @@ Commands:
   transcript VIDEO_ID [--query TEXT]  timed lines of a video: all, or those nearest the query
   place QUERY [--nearby hospital,pharmacy,…]   places on the offline map, and help points near the first
   guides | guide ID                   the situation guides; one guide's branches and the pages they point to
-  ask QUESTION                        an answer from the local AI with its sources (slow: loads the 17 GB model)
-  status                              library folder and counts, local AI, meaning search, map files
+  status                              library folder and counts, meaning search, map files
   open TARGET [PAGE] [--dry-run]      show a document (DOC_ID) or a route (guide:hurt, search:burns, map:LAT,LON,LABEL) in a new window
   skill [install]
 
 With no command, lastbook opens its window. --data FOLDER names the library (else LASTBOOK_DATA, else the window's own).
 Exit codes: 0 success (including no matches), 1 runtime error, 2 invalid arguments.
-Only `open` starts a window; only `ask` loads the AI model. Errors are one line on standard error.";
+Only `open` starts a window. Errors are one line on standard error.";
 
 /// The commands app/cli.py answers.
-const ENGINE: &[&str] = &["search", "read", "page", "transcript", "place", "guides", "guide", "ask", "status", "open"];
+const ENGINE: &[&str] = &["search", "read", "page", "transcript", "place", "guides", "guide", "status", "open"];
 const SKILL: &str = include_str!("../../skills/lastbook/SKILL.md");
 /// Beside the skill, saying whose it is, as other tools' skills do: what syncs a person's own skills between their
 /// computers leaves a marked folder to the Lastbook installed on each.

@@ -4,7 +4,7 @@
   PYTHONPATH=<deps> python3 -B app/tests/test_cli.py [-v]
 
 Runs the commands as the native program does (a Python process each) against the made-up library the bridge tests use,
-and against a second small one made here with a text, a transcript and a gazetteer. No model, no Recall. Never packaged."""
+and against a second small one made here with a text, a transcript and a gazetteer. No Recall. Never packaged."""
 import json, os, sqlite3, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
@@ -17,7 +17,7 @@ DATA = fixture.ensure()
 TMP = Path(tempfile.mkdtemp(prefix='lastbook-cli-'))
 ENV = {**os.environ, 'HOME': str(TMP / 'home'), 'XDG_CONFIG_HOME': str(TMP / 'home/config'), 'XDG_DATA_HOME': str(TMP / 'home/data'),
        'XDG_CACHE_HOME': str(TMP / 'home/cache'), 'LASTBOOK_RECALL_SOCKET': str(TMP / 'no-recall.sock')}
-for k in ('LASTBOOK_DATA', 'LASTBOOK_DEV', 'LASTBOOK_LOCAL_AI', 'LASTBOOK_OPEN'):
+for k in ('LASTBOOK_DATA', 'LASTBOOK_DEV', 'LASTBOOK_OPEN'):
     ENV.pop(k, None)
 
 
@@ -128,7 +128,6 @@ class Shapes(unittest.TestCase):
         self.assertEqual(out['version'], (ROOT / 'VERSION').read_text().strip())
         self.assertEqual(out['meaning_search']['ready'], False)
         self.assertEqual(out['meaning_search']['recall']['running'], False)
-        self.assertIn(out['ai']['state'], ('absent', 'no runtime'))
         self.assertEqual(out['maps'], {'world': False, 'places': True, 'regions': []})
 
     def test_open_only_says_where_with_dry_run(self):
@@ -165,9 +164,6 @@ class ExitCodes(unittest.TestCase):
         self.assertIn('run `lastbook`', self.fails(1, 'status', data=None))
         self.assertIn('not a Lastbook library', self.fails(1, 'search', 'x', data=TMP / 'home'))
         self.assertFalse((TMP / 'home' / 'data').exists())         # nothing was made on the way
-
-    def test_ask_without_a_local_ai_is_1(self):
-        self.assertIn('No local AI', self.fails(1, 'ask', 'how do I boil water?', data=SMALL, env={**ENV, 'LASTBOOK_LOCAL_AI': '0'}))
 
 
 class Shipped(unittest.TestCase):

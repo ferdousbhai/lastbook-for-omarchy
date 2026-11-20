@@ -8,10 +8,9 @@
 # package-signing key (checked against the fingerprint pinned below), adds
 # the [lastbook-for-omarchy] repository, installs an Omarchy hook that
 # restores it after `omarchy refresh pacman` rewrites /etc/pacman.conf, and
-# installs the package (with vulkan-asahi on Apple hardware, for the local
-# AI on the graphics card). Then, as the desktop user who ran sudo, it
-# installs the agent skill (`lastbook skill install`). The first launch
-# opens Lastbook's own setup, which downloads the library you choose.
+# installs the package. Then, as the desktop user who ran sudo, it installs
+# the agent skill (`lastbook skill install`). The first launch opens
+# Lastbook's own setup, which downloads the library you choose.
 # At a terminal it then asks whether to add Recall for Omarchy (optional:
 # search by meaning); `| sudo bash -s -- --yes` asks nothing.
 set -euo pipefail
@@ -127,38 +126,30 @@ if [[ ! $SIGNING_KEY_FINGERPRINT =~ ^[0-9A-F]{40}$ ]]; then
   exit 1
 fi
 
-packages=("$PACKAGE")
 # One repository per architecture: ARM needs a separate database.
 case "$(uname -m)" in
   x86_64) ;;
-  aarch64)
-    REPO+=-aarch64
-    # Apple GPUs on Linux use the Asahi Vulkan userspace driver; other ARM
-    # machines bring their own driver, or the local AI uses the CPU.
-    if grep -aqs Apple /sys/firmware/devicetree/base/model; then
-      packages+=(vulkan-asahi)
-    fi
-    ;;
+  aarch64) REPO+=-aarch64 ;;
   *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
 echo "Adding the [$REPO] repository"
 add_signed_repo "$REPO" "$RELEASES" "$SIGNING_KEY_FINGERPRINT"
 
-echo "Installing ${packages[*]}"
+echo "Installing $PACKAGE"
 if command -v omarchy-pkg-add >/dev/null; then
   # Omarchy's pacman hook aborts a direct `pacman -Syu` (system upgrades go
   # through `omarchy update`), so install the way Omarchy installs its own
   # apps; the next `omarchy update` brings everything current.
-  omarchy-pkg-add "${packages[@]}"
+  omarchy-pkg-add "$PACKAGE"
 else
   # Upgrade and install in one transaction. add_signed_repo has just synced
   # every repository's database, and installing from those without upgrading
   # is Arch's unsupported partial upgrade.
   if (( EUID == 0 )); then
-    pacman -Syu --needed --noconfirm "${packages[@]}"
+    pacman -Syu --needed --noconfirm "$PACKAGE"
   else
-    sudo pacman -Syu --needed --noconfirm "${packages[@]}"
+    sudo pacman -Syu --needed --noconfirm "$PACKAGE"
   fi
 fi
 # omarchy-pkg-add can skip a package it cannot find and still succeed.
@@ -215,7 +206,7 @@ fi
 
 echo
 echo "Done. Open Lastbook from the application menu; its first launch sets up the"
-echo "library, the map and the optional local AI."
+echo "library and the map."
 if (( recall_hint )); then
   echo "For meaning-based search, add Recall for Omarchy (optional):"
   echo "  curl -fsSL $RECALL_INSTALLER | sudo bash"

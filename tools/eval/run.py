@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retrieval check against a real data folder: what Chat would be handed for each question, before the model sees it.
+"""Retrieval check against a real data folder: the passages search gives for each question.
 
   LASTBOOK_DATA=<folder> python3 tools/eval/run.py [--out results.json] [--compare old.json]
 
@@ -17,16 +17,16 @@ ap.add_argument('--compare')
 ap.add_argument('-k', type=int, default=8)
 a = ap.parse_args()
 
-import server, assistant  # noqa: E402
+import server  # noqa: E402
 server.init(no_index=True)
 qs = json.loads((Path(__file__).parent / 'questions.json').read_text())
 runs, hit, rr, times, cold = {}, 0, 0.0, [], []
 for q in qs:
     t = time.perf_counter()
-    assistant.hybrid(q['q'], a.k)  # cold: articles parsed and embedded, the question embedded
+    server.hybrid(q['q'], a.k)  # cold: articles parsed and embedded, the question embedded
     cold.append(time.perf_counter() - t)
     t = time.perf_counter()
-    res = assistant.hybrid(q['q'], a.k)
+    res = server.hybrid(q['q'], a.k)
     times.append(time.perf_counter() - t)
     rows = [{'title': r['title'], 'doc_id': r['doc_id'], 'page': r['page'], 't': r['t'], 'kind': r['kind'], 'by': r['found_by']} for r in res]
     runs[q['q']] = rows

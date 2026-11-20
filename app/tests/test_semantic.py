@@ -5,7 +5,7 @@
 
 The stand-in speaks Recall's api 1 (capabilities, embed) on a Unix socket in a temporary folder and embeds by hashing words,
 so similar wording gives similar vectors. No model, no network. Never packaged."""
-import hashlib, json, re, socket, sqlite3, sys, tempfile, threading, time, unittest
+import hashlib, json, re, socket, sqlite3, sys, tempfile, threading, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -236,138 +236,6 @@ class Articles(unittest.TestCase):
         d = encyclopedia.Encyclopedias.doc_id('mdwiki_en_all_maxi_2025-11.zim', 'Snake/bite_(a)')
         self.assertEqual(encyclopedia.Encyclopedias.split_id(d), ('mdwiki_en_all_maxi_2025-11.zim', 'Snake/bite_(a)'))
         self.assertIsNone(encyclopedia.Encyclopedias.split_id('med-123'))
-
-
-class Warm(unittest.TestCase):
-    """llm_local.Local.warm: starts the model ahead of a question and reads the shared prefix, at most once at a time."""
-
-    def local(self, state='stopped', fits=True):
-        import llm_local
-        L = llm_local.Local.__new__(llm_local.Local)
-        L.lock, L.gen_lock, L.warming, L.spawns = threading.RLock(), threading.Lock(), False, 0
-        L.state, L.path, L.fit = state, Path('/m.gguf'), {'fits': fits}
-        L.started, L.read = threading.Event(), []
-        L.ensure_running = lambda *a, **k: (L.started.wait(5), None)[1]
-        L.generate = lambda segs, n, *a: L.read.append((segs, n))
-        return L
-
-    def test_not_set_up(self):
-        for state, fits in (('absent', True), ('too_big', False), ('loading', True), ('stopped', False)):
-            self.assertFalse(self.local(state, fits).warm([['x', False]]))
-
-    def test_once_then_reads_prefix(self):
-        L = self.local()
-        self.assertTrue(L.warm([['<|turn>system\n', True], ['rules', False]]))
-        self.assertFalse(L.warm([['x', False]]), 'a second warm while the first runs does nothing')
-        L.started.set()
-        for _ in range(100):
-            if not L.warming:
-                break
-            threading.Event().wait(0.02)
-        self.assertEqual(L.read, [([['<|turn>system\n', True], ['rules', False]], 1)])
-        self.assertFalse(L.warming)
-
-
-class LocalStates(unittest.TestCase):
-    """llm_local.Local with no model and no program run: what a failed start and a search that found nothing leave behind,
-    and that setup measures the fit exactly as the engine does."""
-
-    def local(self, state, path=Path('/m.gguf'), fits=True):
-        import llm_local
-        L = llm_local.Local.__new__(llm_local.Local)
-        L.lock, L.gen_lock, L.looked, L.proc, L.spawned, L.warming, L.spawns = threading.RLock(), threading.Lock(), threading.Event(), None, [], False, 0
-        L.state, L.pct, L.message, L.path, L.fit = state, None, 'It failed.', path, {'fits': fits, 'needs': 1}
-
-        def spawn():
-            L.spawned.append(1)
-            L.spawns += 1
-            L.state, L.message = 'error', 'It failed again.'
-        L._spawn = spawn
-        return L
-
-    def test_a_failed_start_is_tried_again_once_a_question(self):
-        import llm_local
-        L = self.local('error')
-        self.assertTrue(L.available())
-        with mock.patch.object(llm_local, 'not_enough_free', return_value=None):
-            self.assertEqual(L.ensure_running(), 'It failed again.')
-        self.assertEqual(len(L.spawned), 1)     # one start a question, however it ends
-        self.assertTrue(L.available())          # and the next question tries again
-        with mock.patch.object(llm_local, 'not_enough_free', return_value='Not enough free memory.'):
-            self.assertEqual(L.ensure_running(), 'Not enough free memory.')
-        self.assertEqual(len(L.spawned), 1)     # the free-memory check still comes before a start
-        self.assertFalse(self.local('error', path=None).available())     # no runtime, or the file could not be measured
-        self.assertFalse(self.local('error', fits=False).available())
-        self.assertFalse(self.local('too_big', fits=False).available())
-        self.assertFalse(self.local('error').warm())                     # opening Chat does not retry: only a question does
-
-    def test_one_start_a_question_when_the_warm_start_fails_first(self):
-        """assistant.chat warms the model, searches the library, then asks for it: a start that failed meanwhile is not made twice."""
-        import llm_local
-        L = self.local('stopped')
-        with mock.patch.object(llm_local, 'not_enough_free', return_value=None):
-            since = L.spawns
-            self.assertTrue(L.warm())
-            for _ in range(250):
-                if not L.warming:
-                    break
-                time.sleep(0.02)
-            self.assertEqual(len(L.spawned), 1)
-            self.assertEqual(L.ensure_running(since=since), 'It failed again.')
-            self.assertEqual(len(L.spawned), 1)
-            self.assertEqual(L.ensure_running(since=L.spawns), 'It failed again.')     # the next question makes its own
-            self.assertEqual(len(L.spawned), 2)
-
-    def test_a_measure_in_another_shape_does_not_leave_it_measuring(self):
-        import llm_local
-        L = self.local('absent')
-        L.runner = Path('/runner')
-        with mock.patch.object(llm_local, 'measure', return_value=({'ev': 'fit', 'status': 'fits', 'memory': [5]}, None)), \
-                mock.patch.object(llm_local, 'unified_memory', return_value=False):
-            L._measure()
-        self.assertEqual(L.state, 'error')
-        self.assertFalse(L.available())
-
-    def test_settle_waits_for_the_search_and_not_after_it_found_nothing(self):
-        import llm_local
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(llm_local, 'places', return_value=[Path(tmp)]), \
-                mock.patch.object(llm_local, '_load', return_value={}):
-            L = llm_local.Local()
-            L.runner = Path(tmp) / 'runner'
-            said = []
-            first = threading.Thread(target=L.settle, args=(lambda: said.append('waiting'),))
-            first.start()
-            first.join(0.6)
-            self.assertTrue(first.is_alive())       # not looked yet: 'absent' is not an answer
-            L.discover()
-            first.join(5)
-            self.assertFalse(first.is_alive())
-            self.assertEqual((L.state, said), ('absent', ['waiting']))
-            t0 = time.time()
-            L.settle(lambda: said.append('again'))
-            self.assertLess(time.time() - t0, 0.2)  # looked, none found: no question waits for it again
-            self.assertEqual(said, ['waiting'])
-
-    def test_setup_measures_the_fit_as_the_engine_does(self):
-        import llm_local
-        from engine.setup import hardware
-        ran = []
-
-        def run(argv, **kw):
-            ran.append(argv)
-            return mock.Mock(stdout=b'{"ev":"fit","status":"fits","ram_total":%d,"host_bytes":1}\n' % (64 * 2 ** 30), stderr=b'')
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(llm_local.subprocess, 'run', run), \
-                mock.patch.object(llm_local, 'runner_path', return_value=Path(tmp) / 'runner'):
-            model = Path(tmp) / llm_local.FILE
-            model.write_bytes(b'x')
-            got = hardware.measure_ai(llm_local, model)
-            L = self.local('absent', path=model)
-            L.runner = llm_local.runner_path()
-            L._measure()
-        self.assertEqual(ran[0], ran[1])
-        self.assertIn('--ubatch', ran[0])
-        self.assertEqual(ran[0][-1], '--measure')
-        self.assertEqual((got['fits'], got['estimate'], L.state), (True, False, 'stopped'))
 
 
 if __name__ == '__main__':
