@@ -354,6 +354,8 @@ impl SetupPage {
             .collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
         let dd = gtk::DropDown::from_strings(&refs);
+        // Its first line says what it is for; a screen reader hears the same.
+        dd.update_property(&[gtk::accessible::Property::Label("Add streets for an area")]);
         dd.set_enable_search(true);
         dd.set_search_match_mode(gtk::StringFilterMatchMode::Substring);
         dd.set_expression(Some(gtk::PropertyExpression::new(gtk::StringObject::static_type(), gtk::Expression::NONE, "string")));

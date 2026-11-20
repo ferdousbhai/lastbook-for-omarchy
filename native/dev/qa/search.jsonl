@@ -1,4 +1,5 @@
-# Search from the keyboard, a result opened, saved with Ctrl+D, found in Saved, and un-saved again.
+# Search from the keyboard (Ctrl+F, and Ctrl+K from another screen), a result opened, saved with Ctrl+D, found in
+# Saved, and un-saved again.
 # native/dev/qa.sh native/dev/qa/search.jsonl [shots-dir]
 
 {"do":"wait","role":"window","name":"Guides — Lastbook"}
@@ -12,7 +13,8 @@
 {"do":"shot","path":"search.png"}
 
 # A kind of result: Manuals & pages alone.
-{"do":"click","role":"toggle-button","name":"Manuals & pages"}
+{"do":"focus","role":"toggle-button","name":"Manuals & pages"}
+{"do":"key","keys":"space"}
 {"do":"wait","role":"toggle-button","name":"Manuals & pages","checked":true}
 {"do":"wait","role":"toggle-button","name":"Everything","checked":false}
 {"do":"wait","role":"generic","name":"Safe water at home, Preview Press · page 2 of 2","visible":true}
@@ -42,4 +44,9 @@
 {"do":"wait","role":"window","name":"Saved — Lastbook"}
 {"do":"wait","role":"generic","name":"Safe water at home, Page 2","visible":false}
 {"do":"shot","path":"saved-empty.png"}
+
+# Ctrl+K is Ctrl+F: back to the search, its words kept and the keyboard in its field.
+{"do":"key","keys":"<Control>k"}
+{"do":"wait","role":"window","name":"Search — Lastbook"}
+{"do":"wait","role":"search-box","name":"What do you need? A word, a question, a model number…","focused":true,"text":"boil water"}
 {"do":"quit"}
