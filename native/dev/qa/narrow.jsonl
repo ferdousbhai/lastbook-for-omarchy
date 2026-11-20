@@ -43,7 +43,8 @@
 {"do":"wait","role":"grid-cell","name":"Get safe drinking water","visible":true}
 {"do":"wait","role":"list-item","name":"Guides","visible":false}
 
-# Ctrl+B shows the sidebar in the screen's place, and again the screen; a screen chosen in the sidebar takes its place.
+# Ctrl+B shows the sidebar in the screen's place, and again the screen. The arrows walk the sidebar, which stays, and
+# Enter or a click on a row puts its screen in the sidebar's place.
 {"do":"key","keys":"<Control>b"}
 {"do":"wait","role":"list-item","name":"Guides","visible":true,"selected":true}
 {"do":"wait","role":"grid-cell","name":"Get safe drinking water","visible":false}
@@ -54,11 +55,28 @@
 {"do":"wait","role":"list-item","name":"Guides","visible":false}
 {"do":"key","keys":"<Control>b"}
 {"do":"wait","role":"list-item","name":"Guides","visible":true}
-{"do":"select","role":"list-item","name":"Library"}
+{"do":"key","keys":"Down"}
+{"do":"wait","role":"window","name":"Library — Lastbook"}
+{"do":"wait","role":"list-item","name":"Library","visible":true,"selected":true,"focused":true}
+{"do":"key","keys":"Down"}
+{"do":"wait","role":"window","name":"Videos — Lastbook"}
+{"do":"wait","role":"list-item","name":"Videos","visible":true,"selected":true,"focused":true}
+{"do":"shot","path":"narrow-sidebar-walked.png"}
+{"do":"key","keys":"Up"}
+{"do":"wait","role":"list-item","name":"Library","visible":true,"selected":true,"focused":true}
+{"do":"key","keys":"Return"}
 {"do":"wait","role":"window","name":"Library — Lastbook"}
 {"do":"wait","role":"grid-cell","name":"Water & sanitation","visible":true}
 {"do":"wait","role":"list-item","name":"Library","visible":false}
 {"do":"wait","size":[560,700]}
+{"do":"key","keys":"<Control>b"}
+{"do":"wait","role":"list-item","name":"Library","visible":true,"selected":true}
+{"do":"click","role":"list-item","name":"Videos"}
+{"do":"wait","role":"window","name":"Videos — Lastbook"}
+{"do":"wait","role":"list-item","name":"Videos","visible":false}
+{"do":"key","keys":"<Alt>Left"}
+{"do":"wait","role":"window","name":"Library — Lastbook"}
+{"do":"wait","role":"grid-cell","name":"Water & sanitation","visible":true}
 # Ctrl+F on the search screen itself, from the sidebar: the field it goes to is in view.
 {"do":"key","keys":"<Control>f"}
 {"do":"wait","role":"window","name":"Search — Lastbook"}

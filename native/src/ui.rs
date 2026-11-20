@@ -317,6 +317,8 @@ impl App {
         click.connect_pressed(move |_, _, _, _| a.sidebar_keyed.set(false));
         app.sidebar.add_controller(click);
         // A click on the row already selected goes back to that section's first screen (from a guide to the guides).
+        // Enter or a click on a row chooses its screen: in a window of one pane, where the arrows only walk the
+        // sidebar, the screen then takes its place.
         let a = app.clone();
         app.sidebar.connect_row_activated(move |_, row| {
             if let Some(s) = SECTIONS.iter().find(|s| s.0 == row.widget_name().as_str() && s.0 != "search")
@@ -324,6 +326,7 @@ impl App {
             {
                 a.navigate(Route::Section(s.0));
             }
+            a.screen_in_view();
         });
         app.keys();
         app.navigate(Route::Section("guides"));
@@ -546,7 +549,10 @@ impl App {
             }
         };
         self.stack.set_visible_child_name(page);
-        self.screen_in_view();
+        // Not under someone walking the sidebar with the arrows: each row would take the sidebar away from them.
+        if !self.sidebar_has_focus() {
+            self.screen_in_view();
+        }
         let title = if title.is_empty() { route.title_key().and_then(|k| self.titles.borrow().get(&k).cloned()).unwrap_or_default() } else { title };
         // A page with no <title> of its own is named by its file until (if ever) it says otherwise.
         let title = match route {
