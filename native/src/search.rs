@@ -65,7 +65,7 @@ pub struct SearchPage {
 }
 
 impl SearchPage {
-    pub fn build(app: &Rc<App>) -> Rc<Self> {
+    pub fn build(app: &Weak<App>) -> Rc<Self> {
         let (scroll, column) = cards::column(14);
         let title = gtk::Label::new(None);
         omui::i18n::bind_label(&title, "Search the library");
@@ -87,14 +87,8 @@ impl SearchPage {
         let status = gtk::Label::new(None);
         status.add_css_class("meta");
         status.set_xalign(0.0);
-        let meaning = gtk::Label::new(None);
-        meaning.add_css_class("meta");
-        meaning.set_xalign(0.0);
-        meaning.set_wrap(true);
-        let recall = gtk::Label::new(None);
-        recall.add_css_class("meta");
-        recall.set_xalign(0.0);
-        recall.set_wrap(true);
+        let meaning = omui::label("", "meta");
+        let recall = omui::label("", "meta");
         recall.set_selectable(true);   // the command, to copy into a terminal
         recall.set_visible(false);
         let results = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -108,7 +102,7 @@ impl SearchPage {
 
         let page = Rc::new(Self {
             root: scroll.upcast(),
-            app: Rc::downgrade(app),
+            app: app.clone(),
             entry,
             chips,
             status,
@@ -223,7 +217,10 @@ impl SearchPage {
                 query("/api/find", &[("q", &q), ("kind", find_kind)]),
             );
             let by_title = kind != "encyclopedia";   // articles have no place in the catalog's titles
-            let (relevant, docs) = futures_join(async move { e1.get(&p1).await }, async move { if by_title { e2.get(&p2).await.ok() } else { None } }).await;
+            // Both at once, on the main loop.
+            let relevant = glib::spawn_future_local(async move { e1.get(&p1).await });
+            let docs = glib::spawn_future_local(async move { if by_title { e2.get(&p2).await.ok() } else { None } });
+            let (relevant, docs) = (relevant.await.expect("task"), docs.await.expect("task"));
             let Some(page) = page.upgrade() else { return };
             if page.generation.get() != generation {
                 return;   // a newer search replaced this one
@@ -322,7 +319,7 @@ impl SearchPage {
         let title = r["title"].as_str().unwrap_or_default();
         let card = card(title, &plain_markup(r["excerpt"].as_str().unwrap_or_default(), 320), &source_meta(r), r["trust"].as_str());
         self.thumb_slot(&card, kind, &doc, page.unwrap_or(1));
-        self.activate(&card, route_of(r));
+        activate(&card, self.app.clone(), route_of(r));
         card.upcast()
     }
 
@@ -345,20 +342,20 @@ impl SearchPage {
             self.queue_thumb(&card, d["path"].as_str().unwrap_or_default(), first_page);
         }
         let target = if kind == "pdf" { Some(Route::Read { doc: id, page: first_page }) } else { route_of(d) };
-        self.activate(&card, target);
+        activate(&card, self.app.clone(), target);
         card.upcast()
     }
 
     /// A passage only names its document: its file comes from /api/doc (once per document).
-    fn thumb_slot(self: &Rc<Self>, card: &gtk::Box, kind: &str, doc: &str, page: i32) -> Option<()> {
+    fn thumb_slot(self: &Rc<Self>, card: &gtk::Box, kind: &str, doc: &str, page: i32) {
         if kind != "pdf" {
-            return None;
+            return;
         }
         if let Some(path) = self.docs.borrow().get(doc).and_then(|d| d["path"].as_str().map(str::to_owned)) {
             self.queue_thumb(card, &path, page);
-            return Some(());
+            return;
         }
-        let app = self.app.upgrade()?;
+        let Some(app) = self.app.upgrade() else { return };
         let engine = app.engine.clone();
         let (card, doc, page_ref) = (card.clone(), doc.to_owned(), Rc::downgrade(self));
         glib::spawn_future_local(async move {
@@ -371,7 +368,6 @@ impl SearchPage {
                 p.pump_thumbs();
             }
         });
-        Some(())
     }
 
     fn queue_thumb(&self, card: &gtk::Box, path: &str, page: i32) {
@@ -406,19 +402,6 @@ impl SearchPage {
             }
         });
     }
-
-    fn activate(&self, card: &gtk::Box, target: Option<Route>) {
-        if let Some(target) = target {
-            activate(card, self.app.clone(), target);
-        }
-    }
-}
-
-/// Both futures, run together on the main loop.
-async fn futures_join<A: 'static, B: 'static>(a: impl std::future::Future<Output = A> + 'static, b: impl std::future::Future<Output = B> + 'static) -> (A, B) {
-    let a = glib::spawn_future_local(a);
-    let b = glib::spawn_future_local(b);
-    (a.await.expect("task"), b.await.expect("task"))
 }
 
 #[cfg(test)]

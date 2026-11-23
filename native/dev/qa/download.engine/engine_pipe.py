@@ -4,26 +4,17 @@ with a {"job": state} line as the real engine tells it. A job started anew finis
 is how the script sees a window put away for a download come back.
 
 Never packaged."""
-import json
 import sys
 import threading
+from pathlib import Path
 
-lock = threading.Lock()
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import standin  # noqa: E402
+from standin import answer, send  # noqa: E402
+
 job = {'id': 'made-up', 'state': 'downloading', 'error': None, 'folder': '/made-up/LastbookData',
        'items': [{'id': 'small', 'kind': 'pack', 'title': 'Small', 'state': 'downloading', 'source': 'download',
                   'bytes_done': 2_000_000_000, 'bytes_total': 8_000_000_000, 'rate_bps': 5_000_000, 'eta_s': 1200, 'error': None}]}
-
-
-def send(obj):
-    with lock:
-        sys.stdout.write(json.dumps(obj) + '\n')
-        sys.stdout.flush()
-
-
-def answer(rid, body):
-    send({'id': rid, 'head': 200, 'type': 'application/json'})
-    send({'id': rid, 'chunk': json.dumps(body)})
-    send({'id': rid, 'end': True})
 
 
 def become(state, error=None):
@@ -43,10 +34,7 @@ def state():
 
 
 send({'ready': {'setup': True, 'data': None, 'library': '', 'version': 'stand-in'}})
-for line in sys.stdin:
-    req = json.loads(line)
-    if 'cancel' in req:
-        continue
+for req in standin.requests():
     name = req['path'].rsplit('/', 1)[-1]
     if name == 'pause':
         become('paused')

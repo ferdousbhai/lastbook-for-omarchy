@@ -12,10 +12,10 @@ url='https://github.com/ferdousbhai/lastbook-for-omarchy'
 license=('MIT')
 # The engine is Python (numpy, Beautiful Soup, and the two wheels below); the window is GTK 4 (native/), with WebKitGTK 6 for
 # articles, Poppler for PDFs and GStreamer for videos: H.264/AAC through gst-libav, VP9 through gst-plugins-good, AV1 through gst-plugin-dav1d.
-depends=('python>=3.14' 'python<3.15' 'python-numpy' 'python-beautifulsoup4' 'glib2' 'gtk4' 'webkitgtk-6.0' 'poppler-glib'
+depends=('python>=3.14' 'python<3.15' 'python-numpy' 'glib2' 'gtk4' 'webkitgtk-6.0' 'poppler-glib'
   'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'gst-plugin-dav1d' 'sqlite' 'gcc-libs')
 optdepends=('recall-for-omarchy: meaning-based search, with the embedding model Recall already runs')
-makedepends=('git' 'rust' 'gcc' 'pkgconf' 'python-pillow' 'binutils')
+makedepends=('git' 'rust' 'python-pillow')   # with base-devel (gcc, pkgconf, binutils), which bin/build-packages installs
 options=('!debug' '!lto' '!strip')
 # Not in the Arch repositories: the ZIM reader and PDFium's bindings, as published on PyPI (pinned files, checked here).
 # libzim stays below 4: 4.0.0 renamed getResults and getEstimatedMatches, which engine/library.py calls. pypdfium2's
@@ -50,11 +50,10 @@ package() {
   cd "$srcdir/lastbook"
   local lib="$pkgdir/usr/lib/$pkgname"
   install -d "$lib/app" "$lib/engine/setup" "$lib/setup" "$lib/lib"
-  # app/cli.py answers `lastbook COMMAND`; the skill (also inside the program, for `lastbook skill`) tells agents how to use it.
-  install -m644 app/engine_pipe.py app/main.py app/bridge.py app/cli.py "$lib/app/"
-  install -Dm644 skills/lastbook/SKILL.md "$lib/skills/lastbook/SKILL.md"
-  install -m644 server.py retrieval.py encyclopedia.py VERSION "$lib/"
-  install -m644 engine/__init__.py engine/paths.py engine/library.py engine/saved_pages.py engine/map_pois.py "$lib/engine/"
+  # Every module of the engine, by glob (app/tests is a folder, so not among them); app/cli.py answers `lastbook COMMAND`.
+  install -m644 app/*.py "$lib/app/"
+  install -m644 *.py VERSION "$lib/"
+  install -m644 engine/*.py "$lib/engine/"
   install -m644 engine/setup/*.py engine/setup/roots.pem "$lib/engine/setup/"
   install -m644 packaging/arch/manifest-v1.json packaging/arch/map-regions.json "$lib/setup/"
   # The guides and nothing else of content/ (scan_package.py checks that).

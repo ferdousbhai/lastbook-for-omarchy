@@ -133,17 +133,11 @@ fn main() -> glib::ExitCode {
                     Ok(engine) => {
                         library.set(true);
                         let ui = ui::App::build(window.clone(), shell, engine.clone(), theme);
-                        if let Some(page) = ui.manage.borrow().as_ref() {
-                            setup::follow(&app, &engine, page);
-                            page.guard_close(&app);
-                            // A download finished with the window put away is shown where its buttons are.
-                            let back = std::rc::Rc::downgrade(&ui);
-                            page.on_return(move || {
-                                if let Some(ui) = back.upgrade() {
-                                    ui.navigate(ui::Route::Manage);
-                                }
-                            });
-                        }
+                        let page = &ui.manage;
+                        setup::follow(&app, &engine, page);
+                        page.guard_close(&app);
+                        // A download finished with the window put away is shown where its buttons are.
+                        page.on_return(cards::weak(&ui, |ui| ui.navigate(ui::Route::Section("manage"))));
                         say(&engine, window.upcast_ref());
                         // The screens live as long as the application does.
                         unsafe { app.set_data("lastbook-ui", ui) };

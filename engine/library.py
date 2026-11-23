@@ -9,17 +9,9 @@ import http.server, json, mimetypes, os, re, threading, urllib.parse
 from pathlib import Path
 
 from engine.paths import LIB as ROOT
-try:
- from bs4 import BeautifulSoup
-except ImportError:BeautifulSoup=None
-MAX_PARSED_PAGE=8*1024**2  # parsing a page to rewrite its links takes about 100 times its size in memory and seconds of time; a larger one is served as it is
 CLIENT_GONE=(BrokenPipeError,ConnectionResetError,ConnectionAbortedError,TimeoutError)
 # The library folders a file may be served from. One may itself be a link to another disk (videos-external).
 SERVED_FOLDERS=('documents','pages','videos','videos-external','transcripts','metadata/videos','courses','collections','assets')
-
-def real_path(path):
- """Where a path really ends up: links followed."""
- return os.path.realpath(path)
 
 def parts_below(real,root):
  """The path parts of real below root, or None when real is not inside root."""
@@ -49,7 +41,7 @@ def zim_file(name):
  """The file behind a /zim/<name>/ address, after the same checks as any other file; ValueError if refused."""
  if not name or '\0' in name or Path(name).name!=name:raise ValueError('Invalid collection')
  path=ROOT/'collections'/name
- real=real_path(path);parts=parts_below(real,real_path(ROOT/'collections'))
+ real=os.path.realpath(path);parts=parts_below(real,os.path.realpath(ROOT/'collections'))
  if parts is None or parts_refused(parts) or not real.lower().endswith('.zim'):raise ValueError('Invalid collection')
  return path
 
@@ -77,20 +69,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
  extensions_map={**http.server.SimpleHTTPRequestHandler.extensions_map,'.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.svg':'image/svg+xml'}
  def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT),**kwargs)
  def log_message(self,*args):pass
- SERVED_ONLY=False  # True: a file must really sit in a served folder, not just somewhere in the library
  def file_ok(self,path,folders=False):
   """May this translated path be read, judged by where it really leads? Links and junctions leaving the allowed places are refused."""
   try:
    if os.path.isfile(path) and os.stat(path).st_nlink>1:return False  # a hard link looks like an ordinary file at an ordinary path, so the real-path checks below cannot see where else it lives
    asked=parts_below(os.path.abspath(path),ROOT)
    if asked is None or parts_refused(asked,folders):return False
-   real=real_path(path)
+   real=os.path.realpath(path)
    for folder in SERVED_FOLDERS:
-    parts=parts_below(real,real_path(ROOT/folder))
+    parts=parts_below(real,os.path.realpath(ROOT/folder))
     if parts is not None:return not parts_refused((*folder.split('/'),*parts),folders)
-   parts=parts_below(real,real_path(ROOT))
+   parts=parts_below(real,os.path.realpath(ROOT))
    if parts is None or parts_refused(parts,folders):return False
-   return not self.SERVED_ONLY or parts in ((),('reader.css',))
+   return parts in ((),('reader.css',))  # outside the served folders: only the library's top and its reader.css
   except (OSError,ValueError):return False
  def send_head(self):
   path=self.translate_path(self.path)
@@ -103,6 +94,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
   return super().send_head()
  def send_data(self,data,mime='application/json',status=200):
   self.send_response(status);self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+ def send_json(self,obj,status=200):self.send_data(json.dumps(obj,separators=(',',':')).encode(),status=status)
  def do_GET(self):
   url=urllib.parse.urlsplit(self.path)
   if url.path.startswith('/zim/'):
@@ -115,18 +107,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     self.send_data(bytes(item.content),item.mimetype);return
    except CLIENT_GONE:return
    except Exception:self.send_data(b'Not found','text/plain; charset=utf-8',404);return  # libzim's own messages carry the full file path
-  if url.path.endswith(('.html','.htm')):
-   path=Path(self.translate_path(url.path))
-   if path.is_file() and path.name!='index.html' and path.stat().st_size<=MAX_PARSED_PAGE and self.file_ok(path,folders=True):
-    try:
-     records=json.loads((ROOT/'catalog.json').read_text(encoding='utf-8'))
-     mapping={r[k]:r['path'] for r in records for k in ['source_url','final_url'] if r.get(k)}
-     soup=BeautifulSoup(path.read_text(encoding='utf-8',errors='replace'),'html.parser')
-     for a in soup.select('a[href]'):
-      base,fragment=urllib.parse.urldefrag(a['href'])
-      if base in mapping:a['href']='/'+mapping[base]+('#'+fragment if fragment else '')
-     self.send_data(str(soup).encode(),'text/html; charset=utf-8');return
-    except Exception:pass
   if self.headers.get('Range') and url.path.lower().endswith(('.mp4','.webm','.mkv')):
    path=Path(self.translate_path(url.path))
    if not self.file_ok(path,folders=True):

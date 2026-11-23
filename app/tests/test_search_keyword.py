@@ -6,12 +6,13 @@ the order of what server.hybrid() gives. Against a small made-up library; no Rec
 
 The engine reads its data folder when it is first imported, so each check that needs server.py runs it in a process of
 its own (as the command line does), over a copy of the library made here."""
-import json, os, shutil, sqlite3, subprocess, sys, tempfile, unittest
+import json, os, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT)]
+from app.tests.fixture import search_db  # noqa: E402
 
 TMP = Path(tempfile.mkdtemp(prefix='lastbook-search-'))
 ENV = {**os.environ, 'HOME': str(TMP / 'home'), 'XDG_CONFIG_HOME': str(TMP / 'home/config'), 'XDG_DATA_HOME': str(TMP / 'home/data'),
@@ -25,7 +26,6 @@ ROLLING = ('WEBVTT\n\n00:00:01.000 --> 00:00:03.000\ngather dry tinder first\n\n
            '00:00:06.000 --> 00:00:06.010\nthen strike the rod\n\n'
            '00:00:06.010 --> 00:00:09.000\nthen strike the rod\nand shield the flame\n\n'
            '00:00:09.000 --> 00:00:09.010\nand shield the flame\n')
-TABLE = 'CREATE VIRTUAL TABLE pages USING fts5(doc_id UNINDEXED,title,collection,category,path UNINDEXED,page UNINDEXED,body,tokenize="unicode61")'
 
 
 def library(name):
@@ -52,11 +52,7 @@ def library(name):
         rows.append((f'fill{i}', f'Filler {i}', 'Test', 'test', f'documents/f{i}.pdf', 1, f'Keep river water in clean jars, note {i}.'))
     (lib / 'catalog.json').write_text(json.dumps(recs))
     (lib / 'summary.json').write_text('{"resources": 8}')
-    con = sqlite3.connect(lib / 'search.sqlite')
-    con.execute(TABLE)
-    con.executemany('INSERT INTO pages VALUES (?,?,?,?,?,?,?)', rows)
-    con.commit()
-    con.close()
+    search_db(lib / 'search.sqlite', rows)
     return data
 
 

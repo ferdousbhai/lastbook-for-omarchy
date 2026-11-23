@@ -351,10 +351,9 @@ def meaning(S):
 
 def nudge(S, m=None):
     """Documents wait to be embedded, Recall is there and nobody is indexing: ask the index service to (retrieval.kick),
-    which costs this command nothing. Only the installed program, on the library the service would find."""
-    import engine.paths
+    which costs this command nothing. Only the installed program, on the library the service would find (kick decides)."""
     import retrieval
-    if not (engine.paths.INSTALLED or os.environ.get('LASTBOOK_INDEX_KICK') == '1') or not DEFAULT_LIBRARY or not retrieval.recall_socket().exists():
+    if not retrieval.recall_socket().exists():
         return False
     try:
         pending = m['pending'] if m else S.INDEX.coverage()['pending']

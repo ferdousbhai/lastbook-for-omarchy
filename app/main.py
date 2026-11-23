@@ -7,10 +7,10 @@ starts in setup (engine/setup/) to download one or choose an existing library.
 Output goes to <data>/derived/logs/lastbook.log, rotated by size, because a packaged app has no console.
 """
 import json
+import logging.handlers
 import os
 import sys
 import tempfile
-import threading
 from pathlib import Path
 
 # The installed package, which alone has a lib/ folder. Worked out here, not from engine.paths: that module fixes the data
@@ -83,12 +83,6 @@ def link_library(data):
         print('could not link the library:', e, flush=True)
 
 
-def places():
-    """The remembered selection and app-owned data only."""
-    yield remembered()
-    yield app_folders()[1] / DATA_NAME
-
-
 def writable(folder):
     try:
         with tempfile.TemporaryFile(dir=folder):
@@ -126,14 +120,10 @@ def data_folder(arg):
 
 
 # ---------------------------------------------------------------------------------------------------------------- setup --
-def default_parent():
-    """Where setup puts LastbookData unless the person chooses: the app's own data folder."""
-    return app_folders()[1]
-
-
 def libraries_here():
+    """The libraries of the remembered selection and app-owned data only."""
     out = []
-    for folder in places():
+    for folder in (remembered(), app_folders()[1] / DATA_NAME):
         if folder is not None and (found := check(folder)[0]) and found not in out:
             out.append(found)
     return out
@@ -141,45 +131,23 @@ def libraries_here():
 
 def setup_options():
     """Setup's hooks. The window that runs setup supplies on_finish (app/engine_pipe.py)."""
-    return {'settings_dir': app_folders()[0], 'default_parent': default_parent(), 'look_for_libraries': libraries_here}
+    # default_parent: where setup puts LastbookData unless the person chooses, the app's own data folder
+    return {'settings_dir': app_folders()[0], 'default_parent': app_folders()[1], 'look_for_libraries': libraries_here}
 
 
-class RotatingLog:
-    """Stands in for stdout and stderr: keeps lastbook.log and a few older copies, each up to LOG_LIMIT."""
-    encoding = 'utf-8'
-    errors = 'replace'
-
-    def __init__(self, path):
-        self.path = Path(path)
-        self.lock = threading.Lock()
-        self.file = open(self.path, 'ab')
+class Log(logging.handlers.RotatingFileHandler):
+    """Stands in for stdout and stderr: keeps lastbook.log and LOG_BACKUPS older copies, each up to LOG_LIMIT."""
+    terminator = ''
 
     def write(self, text):
-        data = text.encode('utf-8', 'replace')
-        with self.lock:
-            if self.file.tell() + len(data) > LOG_LIMIT:
-                self.rotate()
-            self.file.write(data)
-            self.file.flush()
+        self.handle(logging.makeLogRecord({'msg': text}))
         return len(text)
-
-    def rotate(self):
-        self.file.close()
-        try:
-            for i in range(LOG_BACKUPS - 1, 0, -1):
-                older = self.path.with_name(f'{self.path.name}.{i}')
-                if older.exists():
-                    os.replace(older, self.path.with_name(f'{self.path.name}.{i + 1}'))
-            os.replace(self.path, self.path.with_name(f'{self.path.name}.1'))
-            self.file = open(self.path, 'ab')
-        except OSError:  # could not rotate: start over rather than grow without limit
-            self.file = open(self.path, 'wb')
-
-    def flush(self):
-        pass
 
     def isatty(self):
         return False
+
+    def handleError(self, record):   # this is where errors would be printed
+        pass
 
 
 def open_log(data):
@@ -188,5 +156,5 @@ def open_log(data):
         return
     logs = data / 'derived' / 'logs'
     logs.mkdir(parents=True, exist_ok=True)
-    sys.stdout = sys.stderr = RotatingLog(logs / 'lastbook.log')
+    sys.stdout = sys.stderr = Log(logs / 'lastbook.log', maxBytes=LOG_LIMIT, backupCount=LOG_BACKUPS, encoding='utf-8', errors='replace')
 

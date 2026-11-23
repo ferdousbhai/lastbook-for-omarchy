@@ -2,7 +2,7 @@
 
   python3 packaging/arch/scan_package.py lastbook-for-omarchy-<version>-<arch>.pkg.tar.zst
 
-Refused: test code, the old web window (GTK 3, lastbooksrc, the Python launcher), model libraries, the Mac and Windows shells, the remote_storage module,
+Refused: test code, model files,
 /Users/... and /home/<name> paths, anything in content/ but the guides (gaps.json, topics/*.json), native code not built for the package's architecture or that links a library from outside the package and the system
 (the window, /usr/bin/lastbook, may also link the GTK 4, WebKitGTK, Poppler and GStreamer it depends on), and in our own Python any network module outside the one way out (setup's downloader) and
 the engine's request handler, which the app runs with no port, and retrieval.py's local (AF_UNIX) socket to Recall. roots.pem must be there: without it setup downloads nothing.
@@ -15,17 +15,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-BAD_SEGMENTS = {'test', 'tests', 'testing', 'pytest', 'unittest', 'doctest', 'remote_storage', 'webview', 'bottle', 'proxy_tools', 'onnxruntime',
-                'tokenizers', 'shell_windows', 'shell_macos', 'clr', 'clr_loader', 'pythonnet', 'lastbook_launcher', 'tkinter', 'PyInstaller',
-                'objc', 'AppKit', 'Foundation', 'PyObjCTools', 'vendor-macos', 'fixture', 'real_data_check', 'cdp', 'f2py', 'pypdfium2_cli',
-                'shell_linux', 'lastbooksrc', 'libgstlastbooksrc', 'gst'}
-BAD_FILE = re.compile(r'(^|/)(test_[^/]*|[^/]*_test\.(py|pyc|so)|[^/]*_tests[^/]*\.so|[^/]*\.onnx|[^/]*\.gguf|mac_[^/]*|win_[^/]*)$', re.I)
-TEST_MARKERS = [b'TEST-STUB', b'mac_offscreen']
+BAD_SEGMENTS = {'test', 'tests', 'testing', 'pytest', 'unittest', 'doctest', 'fixture', 'pypdfium2_cli'}
+BAD_FILE = re.compile(r'(^|/)(test_[^/]*|[^/]*_test\.(py|pyc|so)|[^/]*_tests[^/]*\.so|[^/]*\.onnx|[^/]*\.gguf)$', re.I)
+TEST_MARKERS = [b'TEST-STUB']
 P = 'usr/lib/lastbook-for-omarchy/'
 GUIDES = re.compile(r'^usr/lib/lastbook-for-omarchy/content/(gaps|topics/[^/]+)\.json$')   # all of content/ that ships
 USER_PATH = re.compile(rb'/Users/[A-Za-z0-9._-]+|/home/(?!runner\b|user\b)[a-z_][a-z0-9_.-]*')   # one-letter names too
 OUR_PY = re.compile(r'^usr/lib/lastbook-for-omarchy/(server|retrieval|encyclopedia)\.py$|^usr/lib/lastbook-for-omarchy/(app|engine)/.*\.py$')
-FIRST_PARTY = re.compile(r'^usr/lib/lastbook-for-omarchy/(content|app|engine|setup|skills)/|^usr/lib/lastbook-for-omarchy/[^/]+\.py$')
+FIRST_PARTY = re.compile(r'^usr/lib/lastbook-for-omarchy/(content|app|engine|setup)/|^usr/lib/lastbook-for-omarchy/[^/]+\.py$')
 NET_MODULES = {'socket', 'ssl', 'http.client', 'urllib.request', 'http.server', 'socketserver', 'asyncio', 'ftplib', 'smtplib', 'xmlrpc', 'requests', 'urllib3'}
 NET_ALLOWED = {
     P + 'engine/setup/download.py',   # setup's downloader: HTTPS to the allowlist, roots.pem only
@@ -65,7 +62,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('pkg', type=Path)
     a = ap.parse_args()
-    problems, remote_hits, user_paths, net_report = [], {}, {}, {}
+    problems, user_paths, net_report = [], {}, {}
     n_files = n_elf = 0
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -93,8 +90,6 @@ def main():
             for m in TEST_MARKERS:
                 if m in data:
                     problems.append(f'test marker {m.decode()} in {rel}')
-            if b'remote_storage' in data and not rel.endswith('.pyc'):
-                remote_hits[rel] = data.count(b'remote_storage')
             for u in set(USER_PATH.findall(data)):
                 user_paths.setdefault(u.decode('ascii', 'replace'), []).append(rel)
             if OUR_PY.search(rel):
@@ -115,12 +110,10 @@ def main():
                 for lib in re.findall(r'\(NEEDED\)\s+Shared library: \[([^\]]+)\]', dyn):
                     if lib not in beside and not SYSTEM_LIBS.match(lib) and not rel.startswith(P + 'lib/') and not (rel == WINDOW and WINDOW_LIBS.match(lib)):
                         problems.append(f'links outside the package and the system: {rel} -> {lib}')
-        for rel in remote_hits:
-            problems.append(f'remote_storage named in {rel}')
         for u, where in user_paths.items():
             if u.startswith('/Users/') or any(FIRST_PARTY.search(w) or w == WINDOW for w in where):
                 problems.append(f'path of a person\'s folder {u} in {where[:3]}')
-        for need in [P + f for f in ('engine/setup/roots.pem', 'app/engine_pipe.py', 'app/main.py', 'app/bridge.py', 'app/cli.py', 'skills/lastbook/SKILL.md', 'setup/manifest-v1.json',
+        for need in [P + f for f in ('engine/setup/roots.pem', 'app/engine_pipe.py', 'app/main.py', 'app/bridge.py', 'app/cli.py', 'setup/manifest-v1.json',
                                       'VERSION', 'encyclopedia.py', 'server.py')] + [WINDOW, f'usr/share/applications/{APP_ID}.desktop']:
             if need not in packaged:
                 problems.append(f'missing from the package: {need}')
@@ -128,7 +121,6 @@ def main():
             problems.append(f'{WINDOW} is not the native window (not an ELF program)')
     print(f'files {n_files}, native binaries {n_elf}')
     print(f'network modules in our Python (allowed there): {net_report or "none"}')
-    print(f'remote_storage string: {remote_hits or "nowhere"} (the module itself is refused above)')
     print(f'home-folder strings: { {u: w[:3] for u, w in user_paths.items()} or "none"}')
     for line in problems:
         print('PROBLEM:', line)

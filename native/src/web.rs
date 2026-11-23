@@ -23,8 +23,9 @@ use serde_json::Value;
 use webkit6::prelude::*;
 
 use crate::{
+    cards::{on_click, weak},
     engine::Engine,
-    reader::{FindBar, Related},
+    reader::{FindBar, Related, bar_meta, status_note},
     ui::{App, Route},
 };
 
@@ -47,7 +48,7 @@ pub struct WebPage {
     note: gtk::Label,
     manager: webkit6::UserContentManager,
     theme: Rc<Theme>,
-    themed: RefCell<bool>,
+    themed: Cell<bool>,
     /// The filter that blocks the network is in place; until then a page asked for waits in `waiting`.
     filtered: Rc<Cell<bool>>,
     waiting: Rc<RefCell<Option<String>>>,
@@ -180,8 +181,8 @@ fn register_scheme(engine: Arc<Engine>) {
 }
 
 impl WebPage {
-    pub fn build(app: &Rc<App>) -> Rc<Self> {
-        register_scheme(app.engine.clone());
+    pub fn build(app: &Weak<App>, engine: Arc<Engine>, theme: Rc<Theme>) -> Rc<Self> {
+        register_scheme(engine);
         let session = webkit6::NetworkSession::new_ephemeral();
         let manager = webkit6::UserContentManager::new();
         let view = webkit6::WebView::builder().network_session(&session).user_content_manager(&manager).build();
@@ -220,11 +221,7 @@ impl WebPage {
 
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         bar.add_css_class("reader-bar");
-        let meta = gtk::Label::new(None);
-        meta.add_css_class("meta");
-        meta.set_xalign(0.0);
-        meta.set_hexpand(true);
-        meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let meta = bar_meta();
         let related = Related::new(app);
         let find_button = omui::icon_button(omui::icons::name::SEARCH, "");
         omui::i18n::bind_tooltip(&find_button, "Find in this page (Ctrl+F)");
@@ -233,10 +230,7 @@ impl WebPage {
         bar.append(&find_button);
         let find = FindBar::new(n_!("Find in this page"));
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let note = gtk::Label::new(None);
-        note.add_css_class("status-line");
-        note.set_wrap(true);
-        note.set_visible(false);
+        let note = status_note();
         root.append(&bar);
         root.append(&find.bar);
         root.append(&blocked);
@@ -244,13 +238,13 @@ impl WebPage {
         root.append(&view);
         let page = Rc::new(Self {
             root: root.upcast(),
-            app: Rc::downgrade(app),
+            app: app.clone(),
             view,
             meta,
             note,
             manager,
-            theme: app.theme.clone(),
-            themed: RefCell::new(false),
+            theme,
+            themed: Cell::new(false),
             filtered,
             waiting,
             find,
@@ -258,10 +252,11 @@ impl WebPage {
             stepped: Cell::new(0),
             related,
         });
-        let p = Rc::downgrade(&page);
-        find_button.connect_clicked(move |_| if let Some(p) = p.upgrade() { p.find(); });
-        let p = Rc::downgrade(&page);
-        page.find.entry.connect_search_changed(move |_| if let Some(p) = p.upgrade() { p.look() });
+        on_click(&find_button, &page, |p| {
+            p.find();
+        });
+        let look = weak(&page, |p| p.look());
+        page.find.entry.connect_search_changed(move |_| look());
         let p = Rc::downgrade(&page);
         page.find.on_step(move |way| {
             if let Some(p) = p.upgrade()
@@ -309,7 +304,7 @@ impl WebPage {
         let p = Rc::downgrade(&page);
         page.theme.on_change(&page.view, move |_| {
             if let Some(p) = p.upgrade() {
-                p.apply_style(*p.themed.borrow());
+                p.apply_style(p.themed.get());
             }
         });
         // Navigation stays on lastbook:; a link to the web goes nowhere (this is an offline library). A link to another
@@ -390,7 +385,7 @@ impl WebPage {
     /// Loads `path` (served by the engine, e.g. /zim/<file>/<article> or /pages/...). `themed`: recolour it to the theme
     /// (encyclopedia articles); a saved web page keeps its own look, on a browser's white page.
     pub fn open(&self, path: &str, meta: &str, themed: bool) {
-        self.themed.replace(themed);
+        self.themed.set(themed);
         self.apply_style(themed);
         self.meta.set_text(meta);
         self.note.set_visible(false);

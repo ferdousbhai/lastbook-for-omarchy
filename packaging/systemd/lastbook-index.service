@@ -23,6 +23,3 @@ Restart=no
 Nice=19
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
-
-[Install]
-WantedBy=default.target

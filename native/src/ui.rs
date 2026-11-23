@@ -5,7 +5,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 
@@ -35,8 +35,7 @@ pub enum Route {
     Web { path: String, meta: String },
     MapAt { lat: f64, lon: f64, label: String },
     Shelf(String),
-    /// Library and downloads (setup, on the library that is open).
-    Manage,
+    /// A sidebar screen (SECTIONS), Library and downloads ("manage": setup, on the library that is open) among them.
     Section(&'static str),
 }
 
@@ -80,13 +79,13 @@ impl Route {
             "web" => Route::Web { path: rest.to_owned(), meta: String::new() },
             "search" => Route::Search { q: rest.to_owned(), kind: "any".into() },
             "shelf" => Route::Shelf(rest.to_owned()),
-            "manage" => Route::Manage,
+            "manage" => Route::Section("manage"),
             "map" => {
                 let mut it = rest.splitn(3, ',');
                 let (lat, lon) = (it.next()?.trim().parse().ok()?, it.next()?.trim().parse().ok()?);
                 Route::MapAt { lat, lon, label: it.next().map(str::to_owned).unwrap_or_else(|| tr("Here")) }
             }
-            "section" => section_route(SECTIONS.iter().find(|s| s.0 == rest).map(|s| s.0)?),
+            "section" => Route::Section(SECTIONS.iter().find(|s| s.0 == rest).map(|s| s.0)?),
             _ => return None,
         })
     }
@@ -105,11 +104,6 @@ pub const SECTIONS: &[(&str, &str, &str)] = &[
     ("manage", n_!("Library and downloads"), name::DRIVE),
     ("about", n_!("About"), name::SETTINGS),
 ];
-
-/// Where a sidebar row leads. Library and downloads is a screen of its own (`Route::Manage`), not a section's list.
-fn section_route(id: &'static str) -> Route {
-    if id == "manage" { Route::Manage } else { Route::Section(id) }
-}
 
 /// Every key of the window, for the shortcuts overlay (`?`, F1), in the language of the moment. Setup (`library`
 /// false) has the general keys alone. README.md's table lists the same.
@@ -182,7 +176,6 @@ const SIDEBAR_BESIDE_FROM: i32 = 760;
 
 pub struct App {
     pub engine: Arc<Engine>,
-    pub theme: Rc<Theme>,
     pub window: gtk::ApplicationWindow,
     /// The window's content under what is shown over it: toasts (an undo, a file that could not be saved) and questions.
     pub shell: Rc<omui::Shell>,
@@ -210,15 +203,15 @@ pub struct App {
     titles: RefCell<HashMap<String, String>>,
     /// The sidebar section of the screen shown, so a row re-selected by focus (not by the person) does nothing.
     section: RefCell<String>,
-    pub search: RefCell<Option<Rc<SearchPage>>>,
-    pub reader: RefCell<Option<Rc<Reader>>>,
-    pub guides: RefCell<Option<Rc<Guides>>>,
-    pub videos: RefCell<Option<Rc<Videos>>>,
-    pub web: RefCell<Option<Rc<WebPage>>>,
-    pub browse: RefCell<Option<Rc<Browse>>>,
-    pub encyclopedias: RefCell<Option<Rc<Encyclopedias>>>,
-    pub map: RefCell<Option<Rc<MapPage>>>,
-    pub manage: RefCell<Option<Rc<crate::setup::SetupPage>>>,
+    search: Rc<SearchPage>,
+    reader: Rc<Reader>,
+    guides: Rc<Guides>,
+    videos: Rc<Videos>,
+    web: Rc<WebPage>,
+    browse: Rc<Browse>,
+    encyclopedias: Rc<Encyclopedias>,
+    map: Rc<MapPage>,
+    pub manage: Rc<crate::setup::SetupPage>,
 }
 
 impl App {
@@ -295,72 +288,64 @@ impl App {
         let split = omui::Split::new(&sidebar_shell, &stack, (SIDEBAR_WIDTH, SIDEBAR_WIDTH), Some(SIDEBAR_BESIDE_FROM));
         shell.overlay.set_child(Some(&split.widget));
 
-        let app = Rc::new(Self {
-            engine,
-            theme,
-            window,
-            shell,
-            stack,
-            sidebar,
-            split,
-            section_labels,
-            sidebar_beside: Cell::new(true),
-            collapsed: Cell::new(false),
-            title,
-            back,
-            forward,
-            star,
-            history: RefCell::new(Vec::new()),
-            pos: Cell::new(0),
-            syncing: Cell::new(false),
-            sidebar_keyed: Cell::new(false),
-            revisiting: Cell::new(false),
-            titles: RefCell::new(HashMap::new()),
-            section: RefCell::new(String::new()),
-            search: RefCell::new(None),
-            reader: RefCell::new(None),
-            guides: RefCell::new(None),
-            videos: RefCell::new(None),
-            web: RefCell::new(None),
-            browse: RefCell::new(None),
-            encyclopedias: RefCell::new(None),
-            map: RefCell::new(None),
-            manage: RefCell::new(None),
+        // The screens hold the window weakly, and none reaches it while it is being built.
+        let app = Rc::new_cyclic(|app: &Weak<Self>| {
+            let search = SearchPage::build(app);
+            stack.add_named(&search.root, Some("search"));
+            let reader = Reader::build(app);
+            stack.add_named(&reader.root, Some("reader"));
+            let guides = Guides::build(app, engine.clone());
+            stack.add_named(&guides.list_root, Some("guides"));
+            stack.add_named(&guides.page_root, Some("guide"));
+            let videos = Videos::build(app);
+            stack.add_named(&videos.list_root, Some("videos"));
+            stack.add_named(&videos.player_root, Some("watch"));
+            let web = WebPage::build(app, engine.clone(), theme.clone());
+            stack.add_named(&web.root, Some("web"));
+            let browse = Browse::build(app);
+            stack.add_named(&browse.library_root, Some("library"));
+            stack.add_named(&browse.shelf_root, Some("shelf"));
+            stack.add_named(&browse.saved_root, Some("saved"));
+            stack.add_named(&browse.about_root, Some("about"));
+            let encyclopedias = Encyclopedias::build(app);
+            stack.add_named(&encyclopedias.root, Some("encyclopedias"));
+            let map = MapPage::build(app, &theme);
+            stack.add_named(&map.root, Some("map"));
+            let manage = crate::setup::SetupPage::build(engine.clone());
+            manage.set_window(&window);
+            stack.add_named(&manage.root, Some("manage"));
+            Self {
+                engine,
+                window,
+                shell,
+                stack,
+                sidebar,
+                split,
+                section_labels,
+                sidebar_beside: Cell::new(true),
+                collapsed: Cell::new(false),
+                title,
+                back,
+                forward,
+                star,
+                history: RefCell::new(Vec::new()),
+                pos: Cell::new(0),
+                syncing: Cell::new(false),
+                sidebar_keyed: Cell::new(false),
+                revisiting: Cell::new(false),
+                titles: RefCell::new(HashMap::new()),
+                section: RefCell::new(String::new()),
+                search,
+                reader,
+                guides,
+                videos,
+                web,
+                browse,
+                encyclopedias,
+                map,
+                manage,
+            }
         });
-
-        let search = SearchPage::build(&app);
-        app.stack.add_named(&search.root, Some("search"));
-        app.search.replace(Some(search));
-        let reader = Reader::build(&app);
-        app.stack.add_named(&reader.root, Some("reader"));
-        app.reader.replace(Some(reader));
-        let guides = Guides::build(&app);
-        app.stack.add_named(&guides.list_root, Some("guides"));
-        app.stack.add_named(&guides.page_root, Some("guide"));
-        app.guides.replace(Some(guides));
-        let videos = Videos::build(&app);
-        app.stack.add_named(&videos.list_root, Some("videos"));
-        app.stack.add_named(&videos.player_root, Some("watch"));
-        app.videos.replace(Some(videos));
-        let web = WebPage::build(&app);
-        app.stack.add_named(&web.root, Some("web"));
-        app.web.replace(Some(web));
-        let browse = Browse::build(&app);
-        app.stack.add_named(&browse.library_root, Some("library"));
-        app.stack.add_named(&browse.shelf_root, Some("shelf"));
-        app.stack.add_named(&browse.saved_root, Some("saved"));
-        app.stack.add_named(&browse.about_root, Some("about"));
-        app.browse.replace(Some(browse));
-        let encyclopedias = Encyclopedias::build(&app);
-        app.stack.add_named(&encyclopedias.root, Some("encyclopedias"));
-        app.encyclopedias.replace(Some(encyclopedias));
-        let map = MapPage::build(&app);
-        app.stack.add_named(&map.root, Some("map"));
-        app.map.replace(Some(map));
-        let manage = crate::setup::SetupPage::build(app.engine.clone());
-        manage.set_window(&app.window);
-        app.stack.add_named(&manage.root, Some("manage"));
-        app.manage.replace(Some(manage));
 
         let a = app.clone();
         toggle.connect_clicked(move |_| a.toggle_sidebar());
@@ -392,10 +377,10 @@ impl App {
                     return;
                 }
                 let route = if id == "search" {
-                    let s = a.search.borrow().as_ref().map(|s| s.current()).unwrap_or_default();
+                    let s = a.search.current();
                     Route::Search { q: s.0, kind: s.1 }
                 } else {
-                    section_route(SECTIONS.iter().find(|s| s.0 == id.as_str()).map(|s| s.0).unwrap_or("guides"))
+                    Route::Section(SECTIONS.iter().find(|s| s.0 == id.as_str()).map(|s| s.0).unwrap_or("guides"))
                 };
                 a.navigate(route);
             }
@@ -420,20 +405,15 @@ impl App {
         let a = app.clone();
         app.sidebar.connect_row_activated(move |_, row| {
             if let Some(s) = SECTIONS.iter().find(|s| s.0 == row.widget_name().as_str() && s.0 != "search")
-                && a.current() != Some(section_route(s.0))   // a click on another row has just gone there (row-selected)
+                && a.current() != Some(Route::Section(s.0))   // a click on another row has just gone there (row-selected)
             {
-                a.navigate(section_route(s.0));
+                a.navigate(Route::Section(s.0));
             }
             a.screen_in_view();
         });
         app.keys();
         // A language switch: what was written from text is written again, and the screen on show drawn anew.
-        let a = Rc::downgrade(&app);
-        omui::i18n::on_change(&app.window, move || {
-            if let Some(a) = a.upgrade() {
-                a.retranslate();
-            }
-        });
+        omui::i18n::on_change(&app.window, crate::cards::weak(&app, |a| a.retranslate()));
         app.navigate(Route::Section("guides"));
         // LASTBOOK_OPEN opens a screen at start: it is how `lastbook open` works (app/cli.py). Any Route::from_key form.
         if let Ok(open) = std::env::var("LASTBOOK_OPEN")
@@ -474,30 +454,14 @@ impl App {
             label.set_text(&text);
             row.update_property(&[gtk::accessible::Property::Label(&text)]);
         }
-        if let Some(s) = self.search.borrow().as_ref() {
-            s.retranslate();
-        }
-        if let Some(g) = self.guides.borrow().as_ref() {
-            g.retranslate();
-        }
-        if let Some(v) = self.videos.borrow().as_ref() {
-            v.retranslate();
-        }
-        if let Some(b) = self.browse.borrow().as_ref() {
-            b.retranslate();
-        }
-        if let Some(e) = self.encyclopedias.borrow().as_ref() {
-            e.retranslate();
-        }
-        if let Some(m) = self.map.borrow().as_ref() {
-            m.retranslate();
-        }
-        if let Some(m) = self.manage.borrow().as_ref() {
-            m.retranslate();
-        }
-        if let Some(r) = self.reader.borrow().as_ref() {
-            r.retranslate();
-        }
+        self.search.retranslate();
+        self.guides.retranslate();
+        self.videos.retranslate();
+        self.browse.retranslate();
+        self.encyclopedias.retranslate();
+        self.map.retranslate();
+        self.manage.retranslate();
+        self.reader.retranslate();
         // Shown again as a step back would show it: a video carries on where it is.
         if let Some(route) = self.current() {
             self.revisiting.set(true);
@@ -523,11 +487,10 @@ impl App {
     }
 
     /// Ctrl+F on a reading screen finds in it (reader.rs, web.rs); anywhere else it goes to Search, as Ctrl+K does.
-    /// The screen is cloned out of its cell first: finding can turn the page, which comes back here for the route.
     fn find_in_page(&self) -> bool {
         let found = match self.stack.visible_child_name().as_deref() {
-            Some("reader") => self.reader.borrow().clone().is_some_and(|r| r.find()),
-            Some("web") => self.web.borrow().clone().is_some_and(|w| w.find()),
+            Some("reader") => self.reader.find(),
+            Some("web") => self.web.find(),
             _ => false,
         };
         if found {
@@ -538,13 +501,11 @@ impl App {
 
     fn focus_search(self: &Rc<Self>) {
         if self.stack.visible_child_name().as_deref() != Some("search") {
-            let (q, kind) = self.search.borrow().as_ref().map(|s| s.current()).unwrap_or_default();
+            let (q, kind) = self.search.current();
             self.navigate(Route::Search { q, kind });
         }
         self.screen_in_view();
-        if let Some(s) = self.search.borrow().as_ref() {
-            s.focus();
-        }
+        self.search.focus();
     }
 
     fn current(&self) -> Option<Route> {
@@ -639,93 +600,54 @@ impl App {
     }
 
     fn show(self: &Rc<Self>, route: &Route) {
-        if !matches!(route, Route::Watch { .. })
-            && let Some(v) = self.videos.borrow().as_ref()
-        {
-            v.pause();
+        if !matches!(route, Route::Watch { .. }) {
+            self.videos.pause();
         }
         let (page, section, title) = match route {
             Route::Search { q, kind } => {
-                if let Some(s) = self.search.borrow().as_ref() {
-                    s.run(q, kind);
-                }
+                self.search.run(q, kind);
                 ("search", "search", tr("Search"))
             }
             Route::Read { doc, page } => {
-                if let Some(r) = self.reader.borrow().as_ref() {
-                    r.open(doc, *page);
-                }
+                self.reader.open(doc, *page);
                 ("reader", "library", String::new())
             }
             Route::Guide(id) => {
-                let title = self.guides.borrow().as_ref().and_then(|g| g.show(id)).unwrap_or_else(|| tr("Guides"));
+                let title = self.guides.show(id).unwrap_or_else(|| tr("Guides"));
                 ("guide", "guides", title)
             }
             Route::Watch { video, t } => {
-                if let Some(v) = self.videos.borrow().as_ref() {
-                    v.play(video, *t, self.revisiting.get());
-                }
+                self.videos.play(video, *t, self.revisiting.get());
                 ("watch", "videos", String::new())
             }
             Route::Wiki { path } => {
                 let enc = encyclopedia_name(path.split('/').next().unwrap_or_default());
-                if let Some(w) = self.web.borrow().as_ref() {
-                    w.open(&format!("/zim/{path}"), &tr!("{} · community-written: check safety-critical steps against a manual", enc), true);
-                }
+                self.web.open(&format!("/zim/{path}"), &tr!("{} · community-written: check safety-critical steps against a manual", enc), true);
                 let article = path.rsplit('/').next().unwrap_or_default().replace('_', " ");
                 ("web", "encyclopedias", urlencoding::decode(&article).map(|s| s.into_owned()).unwrap_or(article))
             }
             Route::Web { path, meta } => {
-                if let Some(w) = self.web.borrow().as_ref() {
-                    w.open(path, meta, false);
-                }
+                self.web.open(path, meta, false);
                 ("web", "library", String::new())
             }
             Route::MapAt { lat, lon, label } => {
-                if let Some(m) = self.map.borrow().as_ref() {
-                    m.show_at(*lat, *lon, label);
-                }
+                self.map.show_at(*lat, *lon, label);
                 ("map", "map", tr("Map"))
             }
             Route::Shelf(id) => {
                 let name = id.replace('-', " ");
-                if let Some(b) = self.browse.borrow().as_ref() {
-                    b.show_shelf(id, &name);
-                }
+                self.browse.show_shelf(id, &name);
                 ("shelf", "library", tr("Library"))
-            }
-            Route::Manage => {
-                if let Some(m) = self.manage.borrow().as_ref() {
-                    m.refresh();
-                }
-                ("manage", "manage", tr("Library and downloads"))
             }
             Route::Section(id) => {
                 match *id {
-                    "videos" => {
-                        if let Some(v) = self.videos.borrow().as_ref() {
-                            v.show_list();
-                        }
-                    }
-                    "library" | "saved" | "about" => {
-                        if let Some(b) = self.browse.borrow().as_ref() {
-                            match *id {
-                                "library" => b.show_library(),
-                                "saved" => b.show_saved(),
-                                _ => b.show_about(),
-                            }
-                        }
-                    }
-                    "map" => {
-                        if let Some(m) = self.map.borrow().as_ref() {
-                            m.show();
-                        }
-                    }
-                    "encyclopedias" => {
-                        if let Some(e) = self.encyclopedias.borrow().as_ref() {
-                            e.show();
-                        }
-                    }
+                    "videos" => self.videos.show_list(),
+                    "library" => self.browse.show_library(),
+                    "saved" => self.browse.show_saved(),
+                    "about" => self.browse.show_about(),
+                    "map" => self.map.show(),
+                    "encyclopedias" => self.encyclopedias.show(),
+                    "manage" => self.manage.refresh(),
                     _ => {}
                 }
                 (*id, *id, SECTIONS.iter().find(|s| s.0 == *id).map(|s| omui::i18n::translate(s.1)).unwrap_or_default())
@@ -826,7 +748,8 @@ mod tests {
         }
         assert_eq!(Route::Search { q: "x".into(), kind: "any".into() }.key(), None, "a search is not saved");
         assert_eq!(Route::from_key("section:map"), Some(Route::Section("map")));
-        assert_eq!(Route::from_key("section:manage"), Some(Route::Manage));
+        assert_eq!(Route::from_key("section:manage"), Some(Route::Section("manage")));
+        assert_eq!(Route::from_key("manage:"), Some(Route::Section("manage")), "app/cli.py's `lastbook open manage`");
         assert_eq!(Route::from_key("nonsense"), None);
     }
 }

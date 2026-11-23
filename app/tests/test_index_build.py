@@ -6,7 +6,7 @@
 A stand-in Recall on a Unix socket (it can stop answering, reject one document, change its vectors' width) and a made-up
 library in a temporary folder per test. The one invariant checked after every scenario: row i of vectors.f16 is the
 vector of passage id i+1, for every passage search may return. No model, no network. Never packaged."""
-import contextlib, hashlib, io, json, os, re, socket, sqlite3, subprocess, sys, tempfile, threading, time, unittest
+import contextlib, fcntl, io, json, os, sqlite3, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -15,6 +15,7 @@ sys.path[:0] = [str(ROOT)]
 import numpy as np  # noqa: E402
 import engine.paths as paths  # noqa: E402
 import retrieval  # noqa: E402
+from app.tests.fixture import FakeRecall, search_db, vector  # noqa: E402
 
 SENTENCES = ['Boil the water for one minute to kill the germs before you drink it or cook with it.',
              'Press firmly on the wound with a clean cloth and keep pressing until the bleeding stops.',
@@ -27,65 +28,6 @@ SENTENCES = ['Boil the water for one minute to kill the germs before you drink i
 def page(doc, n):
     """A page long enough to be one passage, different for every (doc, n)."""
     return ' '.join(f'{s} This is page {n} of the {doc} manual.' for s in SENTENCES[n % 3:n % 3 + 3])
-
-
-def vector(text, dim):
-    v = np.zeros(dim, dtype=np.float32)
-    for w in re.findall(r'[a-z0-9]+', text.lower().split('|', 1)[-1]):
-        v[int(hashlib.md5(w.encode()).hexdigest(), 16) % dim] += 1
-    n = np.linalg.norm(v)
-    return (v / n if n else v).tolist()
-
-
-class FakeRecall(threading.Thread):
-    """Recall's api 1. embeds: passages embedded so far. stop_after: requests for passages answered before it refuses to
-    embed anything (None: never). reject: some words; a request holding them is refused, the others answered."""
-
-    def __init__(self, path, dim=48):
-        super().__init__(daemon=True)
-        self.path, self.dim, self.source = path, dim, 'fake-model@1'
-        self.embeds, self.requests, self.stop_after, self.reject, self.biggest, self.delay = [], 0, None, None, 0, 0
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.bind(str(path))
-        self.sock.listen(16)
-        self.start()
-
-    def run(self):
-        while True:
-            try:
-                c, _ = self.sock.accept()
-            except OSError:
-                return
-            with c:
-                buf = b''
-                while not buf.endswith(b'\n'):
-                    piece = c.recv(65536)
-                    if not piece:
-                        break
-                    buf += piece
-                if not buf:
-                    continue
-                req = json.loads(buf)
-                if req.get('op') == 'capabilities':
-                    reply = {'api': 1, 'operations': ['embed'], 'source': self.source}
-                else:
-                    passages = [t for t in req['inputs'] if t.startswith('title:')]   # not the probes, not questions
-                    self.biggest = max(self.biggest, len(req['inputs']))
-                    if self.stop_after is not None and self.requests >= self.stop_after:
-                        reply = {'api': 1, 'error': 'Recall is busy'}
-                    elif self.reject and any(self.reject in t for t in req['inputs']):
-                        reply = {'api': 1, 'error': 'cannot embed this'}
-                    else:
-                        if passages:
-                            time.sleep(self.delay)
-                            self.requests += 1
-                            self.embeds += passages
-                        reply = {'api': 1, 'source': self.source, 'embeddings': [{'vector': vector(t, self.dim)} for t in req['inputs']]}
-                c.sendall(json.dumps(reply).encode() + b'\n')
-
-    def close(self):
-        self.sock.close()
-        Path(self.path).unlink(missing_ok=True)
 
 
 class Case(unittest.TestCase):
@@ -102,18 +44,12 @@ class Case(unittest.TestCase):
         retrieval.IDX, retrieval.LIB = self.tmp / 'derived' / 'index', self.tmp / 'library-data'
         retrieval.LIB.mkdir(parents=True)
         self.fts = retrieval.LIB / 'search.sqlite'
-        con = sqlite3.connect(self.fts)
-        con.execute('CREATE VIRTUAL TABLE pages USING fts5(doc_id UNINDEXED,title,collection,category,path UNINDEXED,page UNINDEXED,body,tokenize="unicode61")')
-        for d, n in self.DOCS.items():
-            for i in range(1, n + 1):
-                con.execute('INSERT INTO pages VALUES (?,?,?,?,?,?,?)', (d, d, 'Manuals', 'health', f'documents/{d}.pdf', i, page(d, i)))
-        con.commit()
-        con.close()
+        search_db(self.fts, [(d, d, 'Manuals', 'health', f'documents/{d}.pdf', i, page(d, i)) for d, n in self.DOCS.items() for i in range(1, n + 1)])
         self.cat = {'by_id': {d: {'id': d, 'kind': 'pdf', 'title': f'{d} manual', 'sha256': d * 4, 'pages': n, 'path': f'documents/{d}.pdf'}
                               for d, n in self.DOCS.items()}, 'by_path': {}, 'video_tx': {}, 'thumbs': {}}
         self.order = {d: i for i, d in enumerate(self.DOCS)}
         self.sock = self.tmp / 'recall.sock'
-        self.fake = FakeRecall(self.sock)
+        self.fake = FakeRecall(self.sock, dim=48)
         self.addCleanup(self.fake.close)
 
     def tearDown(self):
@@ -260,13 +196,13 @@ class Build(Case):
         with open(vec, 'ab') as f:
             f.write(np.ones(self.fake.dim * 3, dtype=np.float16).tobytes())
         size = vec.stat().st_size
-        other = retrieval.Index(lambda: self.cat, lambda r: ('Reference', 1.0), self.fts, retrieval.Recall(self.sock), truncate=True)
+        other = retrieval.Index(lambda: self.cat, lambda r: ('Reference', 1.0), self.fts, retrieval.Recall(self.sock))
         self.addCleanup(other.close)
         self.assertEqual(len(other.mat), 25)
         self.assertTrue(other.semantic('boil the water', floor=-1, margin=-1))
         self.assertEqual(vec.stat().st_size, size)
         with open(retrieval.IDX / 'indexer.lock', 'a') as held:      # while someone indexes, update() stands down, and cuts nothing
-            paths.try_lock(held)
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.assertEqual(other.update(), -1)
             self.assertEqual(other.status['state'], 'indexing (other process)')
             self.assertTrue(other.indexing_now())
@@ -297,7 +233,7 @@ cat = {{'by_id': {{}}, 'by_path': {{}}, 'video_tx': {{}}, 'thumbs': {{}}}}
 end, n = time.time() + 30, 0
 Path({str(self.tmp)!r}, f'ready-{{sys.argv[1]}}').touch()
 while time.time() < end and not Path({str(self.tmp / 'done')!r}).exists():
-    ix = retrieval.Index(lambda: cat, lambda r: ('Reference', 1.0), {str(self.fts)!r}, retrieval.Recall({str(self.sock)!r}), truncate=True)
+    ix = retrieval.Index(lambda: cat, lambda r: ('Reference', 1.0), {str(self.fts)!r}, retrieval.Recall({str(self.sock)!r}))
     ix.semantic('boil the water', floor=-1, margin=-1)
     ix.close()
     n += 1
@@ -534,7 +470,7 @@ class CommandLine(Case):
     def test_index_stands_down_while_another_process_indexes(self):
         retrieval.IDX.mkdir(parents=True)
         with open(retrieval.IDX / 'indexer.lock', 'a') as held:
-            paths.try_lock(held)
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
             code, out, err = self.run_cli('index')
             self.assertEqual((code, out['outcome'], err), (0, 'indexing elsewhere', ''))
             self.assertEqual(out['meaning_search']['state'], 'indexing')

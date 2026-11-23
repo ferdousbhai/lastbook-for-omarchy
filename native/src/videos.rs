@@ -69,7 +69,7 @@ fn cue_at(times: &[Option<f64>], now: f64) -> Option<usize> {
 const CARD_WIDTH: i32 = 230;
 
 impl Videos {
-    pub fn build(app: &Rc<App>) -> Rc<Self> {
+    pub fn build(app: &Weak<App>) -> Rc<Self> {
         // The list: search, then rails.
         let (list_scroll, column) = cards::column(12);
         let t = gtk::Label::new(None);
@@ -90,10 +90,7 @@ impl Videos {
         video.set_vexpand(true);
         video.add_css_class("player");
         let title = omui::label("", "section-title");
-        let meta = gtk::Label::new(None);
-        meta.add_css_class("meta");
-        meta.set_xalign(0.0);
-        meta.set_wrap(true);
+        let meta = omui::label("", "meta");
         let left = gtk::Box::new(gtk::Orientation::Vertical, 6);
         left.set_hexpand(true);
         left.set_margin_top(12);
@@ -121,7 +118,7 @@ impl Videos {
         let v = Rc::new(Self {
             list_root: list_scroll.upcast(),
             player_root: player.upcast(),
-            app: Rc::downgrade(app),
+            app: app.clone(),
             rails,
             entry,
             video,
@@ -184,12 +181,7 @@ impl Videos {
                 Ok(rails) => rails,
                 Err(e) => {
                     me.loaded.set(false);   // the next visit asks again, as the button does
-                    let again = Rc::downgrade(&me);
-                    me.rails.append(&cards::problem(&tr("Lastbook could not read the library's videos."), &e.to_string(), move || {
-                        if let Some(me) = again.upgrade() {
-                            me.show_list();
-                        }
-                    }));
+                    me.rails.append(&cards::problem(&tr("Lastbook could not read the library's videos."), &e.to_string(), &me, |me| me.show_list()));
                     return;
                 }
             };
@@ -221,12 +213,8 @@ impl Videos {
             let r = match found {
                 Ok(r) => r,
                 Err(e) => {
-                    let (again, q) = (Rc::downgrade(&me), q.clone());
-                    me.rails.append(&cards::problem(&tr("Lastbook could not search the videos."), &e.to_string(), move || {
-                        if let Some(me) = again.upgrade() {
-                            me.search(&q);
-                        }
-                    }));
+                    let q = q.clone();
+                    me.rails.append(&cards::problem(&tr("Lastbook could not search the videos."), &e.to_string(), &me, move |me| me.search(&q)));
                     return;
                 }
             };
@@ -280,10 +268,7 @@ impl Videos {
                 badge.set_margin_bottom(6);
                 overlay.add_overlay(&badge);
             }
-            let title = gtk::Label::new(it["title"].as_str());
-            title.add_css_class("result-title");
-            title.set_xalign(0.0);
-            title.set_wrap(true);
+            let title = omui::label(it["title"].as_str().unwrap_or_default(), "result-title");
             title.set_lines(2);
             title.set_max_width_chars(26);                // no wider than its tile, so the tile sets the column
             title.set_width_chars(1);
@@ -298,7 +283,7 @@ impl Videos {
             card.append(&overlay);
             card.append(&title);
             card.append(&meta);
-            activate(&card, self.app.clone(), Route::Watch { video: it["id"].as_str().unwrap_or_default().to_owned(), t: -1.0 });
+            activate(&card, self.app.clone(), Some(Route::Watch { video: it["id"].as_str().unwrap_or_default().to_owned(), t: -1.0 }));
             grid.insert(&card, -1);
         }
     }
@@ -388,11 +373,8 @@ impl Videos {
                 return;   // another video was opened while this one's transcript was read
             }
             if let Err(e) = &tx {
-                let (l, e) = (gtk::Label::new(None), e.to_string());
+                let (l, e) = (omui::label("", "error"), e.to_string());
                 omui::i18n::bind(&l, move |l| l.set_text(&tr!("Lastbook could not read this video's transcript: {}", e)));
-                l.add_css_class("error");
-                l.set_wrap(true);
-                l.set_xalign(0.0);
                 me.cues.append(&l);
             }
             if let Ok(tx) = tx {
@@ -403,9 +385,7 @@ impl Videos {
                     tl.set_visible(t.is_some());
                     tl.add_css_class("cue-time");
                     tl.set_valign(gtk::Align::Start);
-                    let text = gtk::Label::new(c["text"].as_str());
-                    text.set_wrap(true);
-                    text.set_xalign(0.0);
+                    let text = omui::label(c["text"].as_str().unwrap_or_default(), "");
                     text.set_hexpand(true);
                     row.append(&tl);
                     row.append(&text);

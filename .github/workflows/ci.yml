@@ -1,7 +1,9 @@
 name: CI
-# Every push, on any branch, and every pull request (which also covers those from forks).
+# Every push to a branch (not a tag: a release tag's commit was tested when it was pushed), and every pull request
+# (which also covers those from forks).
 on:
   push:
+    branches: ['**']
   pull_request:
 permissions:
   contents: read
@@ -11,17 +13,15 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     timeout-minutes: 60
-    env:
-      # A test that needs a tool this job lacks (lsof, libzim) fails here where it would skip on a contributor's
-      # computer: a skipped check proves nothing, and a green run would hide it (app/tests, tests/install_test.sh).
-      CI: "true"
+    # GitHub sets CI=true, so a test that needs a tool this job lacks (lsof, libzim) fails here where it would skip on a
+    # contributor's computer: a skipped check proves nothing, and a green run would hide it (app/tests, tests/install_test.sh).
     steps:
       # gtk4 brings gtk4-broadwayd, the display the scripted window QA runs on, and a font for it (adwaita-fonts); lsof
       # is test_bridge's check that the engine listens on no socket.
       - name: Install Arch packages
         run: |
           pacman -Syu --noconfirm --needed git curl base-devel rust pkgconf gtk4 webkitgtk-6.0 poppler-glib sqlite \
-            gstreamer gst-plugins-base python python-numpy python-beautifulsoup4 lsof
+            gstreamer gst-plugins-base python python-numpy lsof
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -38,8 +38,8 @@ jobs:
         run: |
           PYTHONPATH=$(bin/test-deps) python3 -c 'import libzim, pypdfium2'
           command -v lsof gtk4-broadwayd
-      # The window's tests (cargo test, then every script in native/dev/qa driven on a broadway display, where any GLib
-      # warning or critical fails the run), then the engine's (README, Tests).
+      # One version (VERSION is native/Cargo.toml's), the window's tests (cargo test, then every script in native/dev/qa
+      # driven on a broadway display, where any GLib warning or critical fails the run), then the engine's (README, Tests).
       - run: bin/test
   installer:
     runs-on: ubuntu-24.04
@@ -49,7 +49,5 @@ jobs:
       - run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo touch /etc/pacman.conf && sudo mkdir -p /etc/pacman.d   # what the scenarios mount their scratch copies over
-      - run: |
-          set -o pipefail
-          git ls-files bin '*.sh' packaging/arch/PKGBUILD | xargs -n1 bash -n
-          tests/install_test.sh
+      # `bash -n` on every script, then the installer (tests/install_test.sh).
+      - run: tests/install_test.sh

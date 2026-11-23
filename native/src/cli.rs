@@ -101,12 +101,6 @@ fn home() -> io::Result<PathBuf> {
     std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from).ok_or_else(|| io::Error::other("HOME is not set"))
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
-    fs::write(&tmp, bytes)?;
-    fs::rename(&tmp, path)
-}
-
 /// Where the person's choice not to have the skill is kept (`skill uninstall`), so nothing puts it back.
 fn declined(home: &Path) -> PathBuf {
     // Tests give a home of their own and must never reach the real settings folder through the environment.
@@ -130,8 +124,8 @@ fn install_skill(home: &Path) -> io::Result<serde_json::Value> {
         return Err(io::Error::other(format!("{} is there already and is not Lastbook's; move it away first", shared.display())));
     }
     fs::create_dir_all(&shared)?;
-    atomic_write(&shared.join("SKILL.md"), SKILL.as_bytes())?;
-    atomic_write(&shared.join(SKILL_MARKER), b"")?;
+    crate::engine::write_atomic(&shared.join("SKILL.md"), SKILL.as_bytes())?;
+    crate::engine::write_atomic(&shared.join(SKILL_MARKER), b"")?;
     let mut links = Vec::new();
     for entry in skill_links(home) {
         if entry.symlink_metadata().is_err() {
@@ -163,7 +157,7 @@ fn uninstall_skill(home: &Path) -> io::Result<serde_json::Value> {
     }
     let mark = declined(home);
     fs::create_dir_all(mark.parent().expect("has a parent"))?;
-    atomic_write(&mark, b"")?;
+    crate::engine::write_atomic(&mark, b"")?;
     Ok(json!({"removed": removed}))
 }
 
@@ -213,7 +207,7 @@ fn ensure_skill_in(home: &Path) {
     if !skill.exists() {
         let _ = install_skill(home);
     } else if ours && fs::read(&skill).is_ok_and(|now| now != SKILL.as_bytes()) {
-        let _ = atomic_write(&skill, SKILL.as_bytes());
+        let _ = crate::engine::write_atomic(&skill, SKILL.as_bytes());
     }
 }
 

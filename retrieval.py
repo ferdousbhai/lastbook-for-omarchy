@@ -16,7 +16,7 @@ Who builds it: `lastbook index` (app/cli.py), which the user service lastbook-in
 derived/index/indexer.lock; every other process only reads, and maps the vector file instead of loading it. A document is
 saved a few passages at a time, so an indexer that is stopped carries on where it was.
 """
-import functools, hashlib, html, json, os, re, shutil, socket, sqlite3, sys, threading, time
+import fcntl, functools, hashlib, html, json, os, re, shutil, socket, sqlite3, sys, threading, time
 from pathlib import Path
 
 import numpy as np
@@ -217,9 +217,17 @@ def cues(path):
     return out
 
 
+PAGED = ('pdf', 'html', 'pptx')   # the kinds of document that are read as pages of text
+
+
+def text_file(r):
+    """The file of a document's text, one page after another."""
+    return LIB / (r.get('text_path') or f"text/{r['id']}.txt")  # catalog may be mid-rewrite and miss text_path
+
+
 def page_texts(r):
     """The document's text, one string per page. Cached per file version: the same few documents are read many times."""
-    p = LIB / (r.get('text_path') or f"text/{r['id']}.txt")  # catalog may be mid-rewrite and miss text_path
+    p = text_file(r)
     try:
         st = p.stat()
     except OSError:
@@ -233,15 +241,30 @@ def _page_texts(path, _mtime_ns, _size):
     return tuple(t.split('\n\f\n') if '\n\f\n' in t else t.split('\f'))
 
 
+def said(path):
+    """(seconds, text) of each cue of a VTT file that adds something, without what the cue before said (auto captions
+    roll: each cue is the line before, then the new one)."""
+    last = ''
+    for at, t in cues(path):
+        if last and t.startswith(last):
+            t = t[len(last):].strip()
+        if t:
+            last = t
+            yield at, t
+
+
+def vtt_for(r, cat):
+    """The caption file a video's transcript is read from: its transcript record's, else its first .vtt caption, whichever
+    is there first; None if neither is."""
+    tx = cat['video_tx'].get(r['path'])
+    vtts = ([tx['vtt_path']] if tx and tx.get('vtt_path') else []) + [c for c in r.get('captions', []) if c.endswith('.vtt')]
+    return next((v for v in vtts if (LIB / v).is_file()), None)
+
+
 def vtt_windows(path, span=45):
     """Timed transcript windows (~45 s) so answers can cite a moment in a video."""
-    out, start, buf, last = [], None, [], ''
-    for t, txt in cues(path):
-        if txt.startswith(last) and last:
-            txt = txt[len(last):].strip()
-        last = txt or last
-        if not txt:
-            continue
+    out, start, buf = [], None, []
+    for t, txt in said(path):
         if start is None:
             start = t
         buf.append(txt)
@@ -288,12 +311,11 @@ def file_sig(path):
 
 
 class Index:
-    def __init__(self, catalog_fn, trust_fn, fts_db, recall=None, excluded_fn=lambda: set(), truncate=True):
+    def __init__(self, catalog_fn, trust_fn, fts_db, recall=None, excluded_fn=lambda: set()):
         """excluded_fn: the ids of rejected videos and of their records (server.excluded_videos); never indexed or returned.
         Opening it writes nothing and reads only which model made the index and how much it holds: the vectors are mapped
-        (not loaded) the first time a search needs them. truncate is accepted from older callers and ignored: vectors past
-        the committed rows may be another process's, mid-write, so the file is only ever cut by the process holding the
-        indexer lock (update())."""
+        (not loaded) the first time a search needs them. Vectors past the committed rows may be another process's,
+        mid-write, so the file is only ever cut by the process holding the indexer lock (update())."""
         self.catalog_fn, self.trust_fn, self.fts_db, self.excluded = catalog_fn, trust_fn, fts_db, excluded_fn
         self.db_path = IDX / 'semantic.sqlite'
         self.vec_path = IDX / 'vectors.f16'
@@ -318,9 +340,7 @@ class Index:
     # ------------------------------------------------------------- the files --
     def _db(self):
         """Writer connection: autocommit, so no transaction is ever left open by accident; writes use tx()."""
-        db = sqlite3.connect(self.db_path, timeout=60, isolation_level=None, check_same_thread=False)
-        db.execute('PRAGMA busy_timeout=60000')
-        return db
+        return sqlite3.connect(self.db_path, timeout=60, isolation_level=None, check_same_thread=False)
 
     def _writer(self):
         """The indexer's connection, with the tables made. A file SQLite cannot read is set aside and a new index begun:
@@ -578,13 +598,12 @@ class Index:
             if r['id'] in excl:
                 continue
             k = r['kind']
-            if k in ('pdf', 'html', 'pptx'):
+            if k in PAGED:
                 sig = f"{r.get('sha256')}:{r.get('pages')}"
                 out.append((r['id'], sig, -self.trust_fn(r)[1], ('pages', r)))
             elif k == 'video':
                 tx = cat['video_tx'].get(r['path'])
-                vtts = ([tx['vtt_path']] if tx and tx.get('vtt_path') else []) + [c for c in r.get('captions', []) if c.endswith('.vtt')]
-                vtt = next((v for v in vtts if (LIB / v).is_file()), None)
+                vtt = vtt_for(r, cat)
                 if vtt:
                     try:   # the file's content, not only its name: a corrected transcript is embedded again
                         sig = f'vtt:{vtt}:{file_sig(LIB / vtt)}'
@@ -607,7 +626,7 @@ class Index:
             finally:
                 con.close()
             if not rows:  # not in the keyword index (yet); fall back to the extracted text file
-                if not (LIB / (r.get('text_path') or f"text/{r['id']}.txt")).is_file():
+                if not text_file(r).is_file():
                     raise FileNotFoundError('not in the keyword index and no text file')
                 rows = list(enumerate(page_texts(r), 1))
             return [(int(p), None, c) for p, b in rows for c in chunks_of(b)]
@@ -655,10 +674,10 @@ class Index:
         try:
             with open(IDX / 'indexer.lock', 'rb') as f:
                 try:
-                    lastbook_paths.try_lock(f)
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except OSError:
                     return True
-                lastbook_paths.unlock(f)
+                fcntl.flock(f, fcntl.LOCK_UN)
         except OSError:
             pass
         return False
@@ -671,7 +690,7 @@ class Index:
         lockf = open(IDX / 'indexer.lock', 'a')
         for again in (False, True):
             try:
-                lastbook_paths.try_lock(lockf)
+                fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except OSError:  # another process is indexing; just follow its progress
                 if again:
@@ -693,7 +712,7 @@ class Index:
                     self._set_aside(e)
         finally:
             self._indexing = False
-            lastbook_paths.unlock(lockf)
+            fcntl.flock(lockf, fcntl.LOCK_UN)
             lockf.close()
 
     def _pass(self):
@@ -1109,11 +1128,3 @@ def rrf(lists, k=60):
             e['score'] += 1 / (k + rank + 1)
             e['ranks'][name] = rank + 1
     return scores
-
-
-if __name__ == '__main__':  # python retrieval.py  -> build/refresh the semantic index (as `lastbook index` does)
-    sys.path.insert(0, str(lastbook_paths.APP))
-    import server
-    ix = Index(server.catalog, server.trust, server.library.DB, excluded_fn=server.excluded_videos)
-    print('documents:', len(ix.sources()), flush=True)
-    print('done', json.dumps(ix.build(report=lambda s: print(json.dumps(s), flush=True))), json.dumps(ix.status), flush=True)

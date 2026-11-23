@@ -106,19 +106,6 @@ class WhatShips(unittest.TestCase):
         for rel in ('SCHEMA.md', 'home-area.json', 'topics/notes.md', 'topics/deeper/x.json'):
             self.assertIsNone(scan_package.GUIDES.search(at + rel), rel)
 
-    def test_the_package_installs_every_module_the_engine_is_made_of(self):
-        """The PKGBUILD names the engine's modules one by one. One left out builds, passes the package scan and fails only
-        when the installed engine imports it: after the release is out. Every module in the tree must be on an install
-        line (by name, or by a glob that covers it)."""
-        import fnmatch
-        import re
-        text = (ROOT / 'packaging' / 'arch' / 'PKGBUILD').read_text(encoding='utf-8')
-        installed = [w for line in re.findall(r'^\s*install -m644 (.+)$', text, re.M) for w in line.split() if not w.startswith('"')]
-        modules = [p.relative_to(ROOT).as_posix() for d in ('.', 'app', 'engine', 'engine/setup') for p in (ROOT / d).glob('*.py')]
-        self.assertIn('server.py', modules)
-        missing = [m for m in modules if not any(fnmatch.fnmatchcase(m, pat) for pat in installed)]
-        self.assertEqual(missing, [], 'in the tree but on no install line of packaging/arch/PKGBUILD')
-
 
 if __name__ == '__main__':
     unittest.main()

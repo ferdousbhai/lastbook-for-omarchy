@@ -6,7 +6,7 @@ Against a local HTTPS test server, as app/tests/test_setup.py does (a certificat
 `allowed` and TLS context; the product's allowlist is not touched). No real internet. Never packaged.
 The floors are made small for the run (STALL_*, GIVE_UP_*); FloorTests checks the real numbers with made-up seconds.
 """
-import contextlib, errno, hashlib, http.server, io, os, shutil, socketserver, ssl, subprocess, sys, tempfile, threading, time, unittest
+import contextlib, errno, hashlib, http.server, io, os, shutil, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -14,6 +14,7 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent), str(HERE.parents[1])]
 from engine.setup import download  # noqa: E402
+from app.tests import fixture  # noqa: E402
 
 ALLOWED = {'127.0.0.1'}
 KiB = 1024
@@ -107,36 +108,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
 
-class TLSServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-    daemon_threads = True
-    allow_reuse_address = True
-
-    def handle_error(self, request, client_address):
-        if not isinstance(sys.exception(), OSError):       # a client that hangs up is what these tests ask for
-            super().handle_error(request, client_address)
-
-
-def start_server(folder, files):
-    """(server, the client's TLS context, base address) on 127.0.0.1 with a certificate made for the run."""
-    key, crt = folder / 'key.pem', folder / 'cert.pem'
-    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=localhost',
-                    '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1', '-keyout', str(key), '-out', str(crt)],
-                   check=True, capture_output=True)
-    srv = TLSServer(('127.0.0.1', 0), Handler)
-    sctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    sctx.load_cert_chain(crt, key)
-    srv.socket = sctx.wrap_socket(srv.socket, server_side=True)
-    srv.files = files
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    return srv, ssl.create_default_context(cafile=str(crt)), f'https://127.0.0.1:{srv.server_address[1]}'
-
-
 class ServerCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp_class = Path(tempfile.mkdtemp(prefix='lastbook-dl-srv-')).resolve()
         cls.files = Files()
-        cls.srv, cls.ctx, cls.base = start_server(cls.tmp_class, cls.files)
+        cls.srv, cls.ctx, cls.base = fixture.start_server(cls.tmp_class, cls.files, Handler)
 
     @classmethod
     def tearDownClass(cls):
@@ -501,7 +478,7 @@ class DiskTests(ServerCase):
     def test_a_write_that_fails_is_not_a_broken_connection(self):
         self.patch(BACKOFF=(0.05,) * 6, SAVE_EVERY=0.0)
         self.files.pace = 0.01
-        real, calls = download._save_meta, []
+        real, calls = download.write_json, []
 
         def save(path, d):
             calls.append(path)
@@ -509,7 +486,7 @@ class DiskTests(ServerCase):
                 raise PermissionError(errno.EACCES, 'Permission denied', path)
             return real(path, d)
         d = self.dl()
-        with mock.patch.object(download, '_save_meta', save), contextlib.redirect_stdout(self.out), self.assertRaises(download.Failed) as e:
+        with mock.patch.object(download, 'write_json', save), contextlib.redirect_stdout(self.out), self.assertRaises(download.Failed) as e:
             d.run()
         self.assertEqual(e.exception.code, 'disk')
         self.assertIn(str(self.tmp / 'dl'), e.exception.message)

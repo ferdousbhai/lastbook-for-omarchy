@@ -35,6 +35,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from . import download
+from ..map_pois import _tile_xy, _varint
 
 BUILDS = 'https://build-metadata.protomaps.dev/builds.json'
 BUILD_BASE = 'https://build.protomaps.com/'
@@ -193,19 +194,6 @@ LEAVES_KEPT = 8                     # leaf directories held at once: tiles are r
 BAD_INDEX = 'The map server sent a map index Lastbook could not read. Try again later.'
 
 
-def _varint(buf, pos):
-    shift = result = 0
-    while True:
-        b = buf[pos]
-        pos += 1
-        result |= (b & 0x7F) << shift
-        if not b & 0x80:
-            return result, pos
-        shift += 7
-        if shift > 63:
-            raise ValueError('a number too long')
-
-
 def _directory(raw):
     """(ids, runs, lengths, offsets) of one PMTiles directory, each an array in tile id order. ValueError, IndexError or
     OverflowError when it is not one."""
@@ -268,13 +256,9 @@ def id_to_zxy(i):
 
 
 def tile_range(w, s, e, n, z):
-    def tx(lon):
-        return min((1 << z) - 1, max(0, int((lon + 180) / 360 * (1 << z))))
-
-    def ty(lat):
-        lat = math.radians(max(-85.0511, min(85.0511, lat)))
-        return min((1 << z) - 1, max(0, int((1 - math.log(math.tan(lat) + 1 / math.cos(lat)) / math.pi) / 2 * (1 << z))))
-    return tx(w), ty(n), tx(e), ty(s)
+    """(x0, y0, x1, y1): the tiles of zoom z that the box covers."""
+    (x0, y0), (x1, y1) = _tile_xy(n, w, z), _tile_xy(s, e, z)
+    return x0, y0, x1, y1
 
 
 def cover(x0, y0, x1, y1, z, most=4096):

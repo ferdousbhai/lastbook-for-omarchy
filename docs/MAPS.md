@@ -2,11 +2,11 @@
 
 A guide for anyone who wants to improve the map. It says which files the window draws, what makes them, and where place
 search and `lastbook place --nearby` find their answers. All of it is made on the person's computer; upstream Lastbook's
-US map files, where an old library still has them, are read by nothing.
+US map files are not used ([SETUP-API.md](SETUP-API.md#where-things-go)).
 
-The map follows the same rules as the rest of Lastbook (see [CONTRIBUTING.md](../CONTRIBUTING.md)). The window draws only
-from files on the computer and never asks the network for a tile or a place. Lastbook hosts no map: setup makes
-the files on the person's computer, when the person asks for them.
+The map follows the same network rules as the rest of Lastbook ([README](../README.md#privacy-and-network-use)): the
+window draws only from files on the computer and never asks the network for a tile or a place, and setup makes the files
+when the person asks for them.
 
 ## What the window draws
 
@@ -64,8 +64,7 @@ the files on the person's computer, when the person asks for them.
 `build.protomaps.com`. It reads the archive's directories over HTTPS range requests and fetches only the tiles wanted:
 all of them to zoom 8 for the world, and those inside a region's box for zoom 9 to 15. Place search is built from
 GeoNames' public files (`download.geonames.org`: `cities500.zip`, about 14 MB, with `countryInfo.txt` and
-`admin1CodesASCII.txt`). Every request goes through `engine/setup/download.py`, the one module
-that may open a connection, to allow-listed hosts with the pinned roots.
+`admin1CodesASCII.txt`). Every request goes through `engine/setup/download.py`.
 
 - A file is built beside its final name (`<name>.part`) and moved into place when complete. A paused cut, or one the
   network failed, keeps its part file and carries on from it while the same daily map build is still the newest; Cancel

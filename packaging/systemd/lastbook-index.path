@@ -7,6 +7,3 @@ Description=Lastbook: index when Recall for Omarchy starts
 [Path]
 PathChanged=%t/recall-for-omarchy.sock
 Unit=lastbook-index.service
-
-[Install]
-WantedBy=default.target

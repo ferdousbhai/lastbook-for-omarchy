@@ -53,17 +53,24 @@ JavaScript off and every address but `lastbook:` blocked (`native/src/web.rs`).
 
 ## Search
 
-- **Keyword search** is the library's own FTS5/BM25 index, `library-data/search.sqlite`, read only. It comes with the pack.
-- **Meaning-based search** (`retrieval.py`) asks Recall for Omarchy for EmbeddingGemma vectors over its local socket. The
-  index is `derived/index/semantic.sqlite` plus `vectors.f16` (append-only). It updates incrementally: the engine
-  re-checks the catalog every 5 minutes and embeds only new or changed documents and transcripts (one writer at a time,
-  by file lock). Without Recall, search is keyword search.
-- **The two together** (`server.hybrid`): keyword, meaning-based and encyclopedia (`encyclopedia.py`) results fused into
-  one list of passages, each with its document and page, video moment or article section. The window's Search shows
-  them, and `lastbook search` prints them.
+The window's Search and `lastbook search` both go through `server.hybrid()`, which fuses three ranked lists with
+reciprocal-rank fusion and gives the best passages with their provenance (document, PDF page, video moment or article section):
+
+1. **Keyword search**: the library's own SQLite FTS5 index of every page, `library-data/search.sqlite` (read only; it
+   comes with the pack), BM25-ranked, with everyday words mapped to the words manuals use (`server.SYN`).
+2. **Meaning-based search** (`retrieval.py`): the library cut into about 1,100-character passages, embedded by Recall for
+   Omarchy's EmbeddingGemma over its local socket and kept in `derived/index/` (`semantic.sqlite` for the passages,
+   `vectors.f16`, append-only, for the vectors). A question is embedded and scored against every passage. The index
+   updates incrementally: the engine re-checks the catalog every 5 minutes and embeds only new or changed documents and
+   transcripts (one writer at a time, by file lock). It records which model made it; another model empties and rebuilds
+   it. Without Recall this list is empty, and search is keyword search.
+3. **Encyclopedias** (`encyclopedia.py`): each ZIM file's own full-text and title indexes find candidate articles; with
+   Recall, their openings and a few passages are ranked by meaning and weak ones dropped. Nothing is embedded ahead of
+   time. The best article that clears the bar keeps the last place of a list of six or more, since library pages usually
+   win on both other lists.
 
 Lastbook runs no model of its own and has no assistant. An AI agent on the computer answers questions from the library through
-the command line (`app/cli.py`: `search`, `read`, `page`, `transcript`, `place`, `guides`) and the agent skill
+the command line (`app/cli.py`; `lastbook --help` lists the commands) and the agent skill
 (`skills/lastbook/SKILL.md`), which tells it to search, read the pages and cite document title and page.
 
 ## What stays correct as a library changes

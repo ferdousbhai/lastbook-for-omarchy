@@ -58,8 +58,7 @@ the Python engine as its own child process. Your library and settings stay in yo
   regions whose streets would and downloads one at a press, showing its progress, then the help around the place. The
   map opens on the street-level map made last. `lastbook place --nearby` finds the nearest
   help points from the same street-level maps, around a town or a point given as `LAT,LON`, so it answers for the regions
-  installed and says plainly when no installed map covers a place. Upstream's US map files are not unpacked, and are
-  removed from a library that still has them ([docs/MAPS.md](docs/MAPS.md)).
+  installed and says plainly when no installed map covers a place. More in [docs/MAPS.md](docs/MAPS.md).
 - **For AI agents too.** The same library from the command line, as JSON, with a skill that tells an agent how to
   search it, read the pages and cite them (below). The agent can be any on the computer, with a local model as well
   (through Omarchy's `omarchy-local-ai`, say).
@@ -149,8 +148,7 @@ reads the pages the results point at, and cites document title and page. `lastbo
 - **A working library is never broken.** New data is unpacked beside the old one, checked, and then switched in with a
   single rename. A failure at any step leaves the old library as it was.
 
-The setup contract is in [docs/SETUP-API.md](docs/SETUP-API.md); the engine side is described in
-[engine/setup/README.md](engine/setup/README.md).
+The setup contract, with what each file of `engine/setup/` does, is in [docs/SETUP-API.md](docs/SETUP-API.md).
 
 ## What's where
 
@@ -160,16 +158,16 @@ The setup contract is in [docs/SETUP-API.md](docs/SETUP-API.md); the engine side
 | `app/` | The engine's side of the app: the pipe the window talks to (`engine_pipe.py`), the command line (`cli.py`), library lookup and setup hooks (`main.py`), the no-port bridge (`bridge.py`), and tests (`app/tests/`). |
 | `engine/` | Paths, the request handler's base and file rules (`library.py`), saved pages, the help points of `place --nearby` read from the street-level maps (`map_pois.py`) and setup (`engine/setup/`, which also makes the map). |
 | `server.py`, `retrieval.py`, `encyclopedia.py` | The engine: request handler and the fused search (`server.hybrid`), meaning-based search (through Recall), and encyclopedia articles as passages. |
-| `skills/` | The agent skill (`lastbook/SKILL.md`), built into the program and shipped in the package. |
+| `skills/` | The agent skill (`lastbook/SKILL.md`), built into the program (`lastbook skill`). |
 | `content/` | The curated guides (`topics/*.json`) and what curators looked for and did not find (`gaps.json`). Format: `content/SCHEMA.md`. |
-| `packaging/` | The Arch package (`arch/`: PKGBUILD, the manifest and map region list it ships, the package scan), the desktop entry (`linux/`), the icon (`icon/`), release manifest and TLS roots tools. |
-| `tools/` | Curator helpers (`libq.py`, `validate_topics.py`), the map area list's maker (`make_region_list.py`), and the retrieval check (`eval/`). |
+| `packaging/` | The Arch package (`arch/`: PKGBUILD, the manifest and map region list it ships, the package scan), the desktop entry (`linux/`), the icon (`icon/`), the TLS roots tools. |
+| `tools/` | Curator helper (`validate_topics.py`), the map area list's maker (`make_region_list.py`), and the retrieval check (`eval/`). |
 | `docs/` | How the window and the engine talk (`ENGINE.md`), the setup contract (`SETUP-API.md`) and how the offline map is put together (`MAPS.md`). |
 
 ## Run from source
 
-You need Arch's Python 3.14 (the pinned libzim and pypdfium2 wheels are built for it), `python-numpy` and
-`python-beautifulsoup4` from pacman, Rust, the GTK 4, WebKitGTK 6 and Poppler development files (the Arch packages in the
+You need Arch's Python 3.14 (the pinned libzim and pypdfium2 wheels are built for it), `python-numpy` from
+pacman, Rust, the GTK 4, WebKitGTK 6 and Poppler development files (the Arch packages in the
 PKGBUILD's `depends`), and a **data folder**. A data folder holds `library-data/catalog.json` (the library) and gets a
 `derived/` folder for the map, indexes, caches and logs. Get one by running the app once and letting setup download a
 pack, or by unzipping a pack from lastbook.org.
@@ -186,22 +184,11 @@ The full order is in `app/main.py`.
 
 ## How search finds passages
 
-The window's Search and `lastbook search` both go through `server.hybrid()`, which fuses three ranked lists with
-reciprocal-rank fusion and gives the best passages with their provenance (document, PDF page, video moment or article section):
-
-1. **Keyword search**: the library's SQLite FTS5 index of every page (`search.sqlite`), BM25-ranked, with everyday words mapped
-   to the words manuals use (`server.SYN`).
-2. **Meaning-based search** (`retrieval.py`): the library cut into about 1,100-character passages, embedded once by Recall for
-   Omarchy's EmbeddingGemma over its Unix socket and kept in `derived/index/` (passages in SQLite, vectors in one float16 file).
-   A question is embedded and scored against every passage. The index records which model made it; another model empties and
-   rebuilds it. Without Recall this list is empty.
-3. **Encyclopedias** (`encyclopedia.py`): each ZIM file's own full-text and title indexes find candidate articles; with Recall,
-   their openings and a few passages are ranked by meaning and weak ones dropped. Nothing is embedded ahead of time. The best
-   article that clears the bar keeps the last place of a list of six or more, since library pages usually win on both
-   other lists.
-
-`tools/eval/run.py` measures
-hits@8, MRR and timing on `tools/eval/questions.json` against a real data folder.
+The window's Search and `lastbook search` both go through `server.hybrid()`, which fuses keyword search (the library's
+FTS5 index), meaning-based search (through Recall for Omarchy, when it runs) and the encyclopedias into one list of
+passages, each with its document and page, video moment or article section. How each part works is in
+[docs/ENGINE.md](docs/ENGINE.md#search); `tools/eval/run.py` measures hits@8, MRR and timing on `tools/eval/questions.json`
+against a real data folder.
 
 ## Build
 
@@ -214,15 +201,6 @@ Release day, in order: commit the release notes on main; publish this commit's `
 `https://ferdousbhai.com/lastbook/install.sh` (verification compares the two); run `bin/release <version>` (a run
 stopped part way is resumed by running it again); `verify-release.yml` then installs the release on both
 architectures.
-
-## Packs
-
-- **Packs** are data folders: a library plus its catalog and search index (and upstream's US map data, which setup leaves out). They come pre-built from
-  upstream Lastbook, on `downloads.lastbook.org`; nothing here builds them. Setup downloads the one the person picks and
-  checks it against `setup/manifest-v1.json` (`packaging/arch/manifest-v1.json`; a newer copy is fetched from
-  `downloads.lastbook.org` when setup opens and used only if it validates).
-- **Meaning-based search** uses EmbeddingGemma through Recall for Omarchy, over a local socket. Without Recall running,
-  search is keyword search.
 
 ## What is not in this repository, and why
 

@@ -8,6 +8,9 @@ from pathlib import Path
 
 from libzim.writer import Creator, Hint, Item, StringProvider
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'app' / 'tests'))
+from fixture import _field, _varint  # noqa: E402  the tests' vector tile encoding (fixture.map_tile has points only)
+
 PAGES = ['Boil the water for one minute to kill the germs. If the water is cloudy, let it settle and filter it through a '
          'clean cloth first, then boil it.',
          'Store the treated water in a clean container with a lid. Keep it in a cool place, away from the sun.']
@@ -48,18 +51,6 @@ HELP = [('hospital', 'RS Mapton', 0.004, 0.0), ('clinic', 'Klinik Sehat', -0.002
         ('pharmacy', 'Apotek Satu', 0.0, 0.002), ('police', 'Polsek Mapton', -0.004, 0.001),
         ('fire_station', 'Pemadam Kebakaran', 0.006, -0.005), ('drinking_water', 'Water refill', -0.001, 0.0),
         ('shelter', '', 0.002, -0.002), ('toilets', '', -0.003, 0.004), ('supermarket', 'Pasar Mapton', 0.003, 0.003)]
-
-
-def _varint(n):
-    out = bytearray()
-    while n > 0x7f:
-        out.append(n & 0x7f | 0x80)
-        n >>= 7
-    return bytes(out) + bytes([n])
-
-
-def _field(number, payload):
-    return _varint(number << 3) + _varint(payload) if isinstance(payload, int) else _varint(number << 3 | 2) + _varint(len(payload)) + payload
 
 
 def _layer(name, features):

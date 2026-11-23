@@ -3,6 +3,10 @@
 # in native/dev/qa over a made-up library, on a broadway display of their own) and the engine's (README, Tests).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# One version everywhere: native/Cargo.toml's is VERSION.
+version=$(cat VERSION)
+[[ $(sed -n '0,/^version = /s/^version = "\(.*\)"/\1/p' native/Cargo.toml) == "$version" ]] \
+  || { echo "native/Cargo.toml's version is not $version (VERSION)" >&2; exit 1; }
 command -v cargo >/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
 cargo test --locked --manifest-path native/Cargo.toml
 # Feature `qa` only here: release builds leave it off.
@@ -12,9 +16,7 @@ for script in native/dev/qa/*.jsonl; do
   out=$(native/dev/qa.sh "$script" 2>&1) || { printf '%s\n' "$out" >&2; exit 1; }
   printf '%s\n' "${out##*$'\n'}"
 done
-PYTHONPATH=$(bin/test-deps) python3 -B -m unittest app.tests.test_bridge app.tests.test_setup app.tests.test_data_folder \
-  app.tests.test_what_ships app.tests.test_validate_topics \
-  app.tests.test_libq app.tests.test_semantic app.tests.test_maps app.tests.test_map_near app.tests.test_cli \
-  app.tests.test_search_keyword app.tests.test_search_encyclopedia app.tests.test_encyclopedia_shelf \
-  app.tests.test_download_stall app.tests.test_mapcut_resume app.tests.test_index_build app.tests.test_job_notices \
-  app.tests.test_reading
+# Every app/tests/test_*.py, as the module app.tests.<name>.
+tests=(app/tests/test_*.py)
+tests=("${tests[@]%.py}")
+PYTHONPATH=$(bin/test-deps) python3 -B -m unittest "${tests[@]//\//.}"

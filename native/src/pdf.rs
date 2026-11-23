@@ -16,7 +16,7 @@ use std::{
     sync::{Condvar, Mutex, Once, OnceLock},
 };
 
-use gtk::{gdk, glib};
+use gtk::{cairo, gdk, glib};
 
 thread_local! {
     static DOCS: RefCell<HashMap<String, poppler::Document>> = RefCell::new(HashMap::new());
@@ -63,11 +63,8 @@ pub fn page_size(doc: &poppler::Document, index: i32) -> Option<(f64, f64)> {
 }
 
 fn draw(doc: &poppler::Document, index: i32, width: i32) -> Option<Drawn> {
+    let (pw, ph) = page_size(doc, index).filter(|_| width > 0)?;
     let page = doc.page(index)?;
-    let (pw, ph) = page.size();
-    if pw <= 0.0 || ph <= 0.0 || width <= 0 {
-        return None;
-    }
     let scale = f64::from(width) / pw;
     let height = (ph * scale).round().max(1.0) as i32;
     let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, width, height).ok()?;

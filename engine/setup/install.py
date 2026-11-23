@@ -13,7 +13,6 @@ Each step is written down first, so a switch cut short is finished at the next s
 library, the old one is put back, once (roll_back). Once the new one has opened, the old one is deleted (api.opened;
 is_old_of says which folders that may be).
 """
-import json
 import os
 import re
 import shutil
@@ -21,7 +20,7 @@ import stat
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
-from . import maps
+from . import download, maps
 
 DATA_NAME = 'LastbookData'
 CATALOG = Path('library-data') / 'catalog.json'
@@ -82,7 +81,7 @@ def dropped(rel):
 
 
 def drop_upstream_maps(lib):
-    """Removes DROPPED from a library: one just unpacked, or one an earlier version installed. Safe at every start: what is
+    """Removes DROPPED from a library an earlier version installed (app/engine_pipe.py, at every start). Safe: what is
     not there is skipped, a link is removed as a link (never followed), and what cannot be removed (a library on a disk that
     is read-only) is left as it is. Returns the bytes freed."""
     lib, freed = Path(lib), 0
@@ -212,13 +211,6 @@ def need_bytes(pack, have_files=()):
 
 
 # -------------------------------------------------------------------------------------------------------- switching --
-def _write_json(path, d):
-    path = Path(path)
-    tmp = path.with_suffix(path.suffix + '.tmp')
-    tmp.write_text(json.dumps(d, indent=1), encoding='utf-8')
-    os.replace(tmp, path)
-
-
 def old_name(target):
     base = target.with_name(f'{target.name}.old-{time.strftime("%Y%m%d")}')
     p, i = base, 2
@@ -243,7 +235,7 @@ def stage_switch(pend, new_lib, target):
     apply_pending. Nothing is renamed yet."""
     d = {'new': str(new_lib), 'target': str(target), 'written': time.time()}
     Path(pend).parent.mkdir(parents=True, exist_ok=True)
-    _write_json(pend, d)
+    download.write_json(pend, d)
     return d
 
 
@@ -350,9 +342,8 @@ def roll_back(pend, work, kept=None):
     kept: a list the failed library's folder is added to once everything of the person's has come back out of it, so
     the caller can list it for deletion (api.opened); one that still holds something of theirs is not added."""
     pend = Path(pend)
-    try:
-        d = json.loads(pend.read_text(encoding='utf-8'))
-    except (OSError, ValueError):
+    d = download.read_json(pend)
+    if d is None:
         return None
     if not _pending_ok(d, work) or not d.get('switched') or not d.get('old'):
         return None
@@ -403,9 +394,8 @@ def apply_pending(pend, work):
     pend: the pending switch in the app's own settings folder. If one was staged, do it; if the new library then does not
     open, put the old one back. A file that is not exactly what setup stages for this work folder is removed, not obeyed."""
     pend, work = Path(pend), Path(work)
-    try:
-        d = json.loads(pend.read_text(encoding='utf-8'))
-    except (OSError, ValueError):
+    d = download.read_json(pend)
+    if d is None:
         return None, None
     if not _pending_ok(d, work):
         print('setup: a pending switch that does not match its work folder was ignored', flush=True)
@@ -427,7 +417,7 @@ def apply_pending(pend, work):
         begun = bool(d.get('switching'))
         if not begun:
             d['switching'], d['old'] = True, str(old_name(target)) if target.exists() else None
-            _write_json(pend, d)
+            download.write_json(pend, d)
         try:
             old = switch(d['new'], target, d.get('old'), resume=begun)
         except Refused as e:
@@ -439,13 +429,13 @@ def apply_pending(pend, work):
                     # pending, as it was before this start, so "try again" has something to try with.
                     d.pop('switching', None)
                     d.pop('old', None)
-                    _write_json(pend, d)
+                    download.write_json(pend, d)
                 else:
                     pend.unlink()
                 return (target if is_library(target) else None), note
             old = None      # the old library still holds something of the person's: it is kept, never listed for deletion
         d['switched'], d['old'] = True, old and str(old)
-        _write_json(pend, d)
+        download.write_json(pend, d)
     note['old'] = d.get('old')
     if not is_library(target):      # cannot happen after switch(); the engine's own failure to open it is roll_back's, from api.rolled_back
         kept = []

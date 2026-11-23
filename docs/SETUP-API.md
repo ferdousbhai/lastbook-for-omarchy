@@ -6,40 +6,35 @@ map of the world and street-level areas, then downloads, checks, unpacks and swi
 download, no manual unzip. Setup also opens later from inside the app (*Library and downloads*, in the sidebar and under
 About) to upgrade, add map areas, or repair.
 
-The screens are `native/src/setup.rs`; the engine side is `engine/setup/` ([its README](../engine/setup/README.md)).
+The screens are `native/src/setup.rs`; the engine side is `engine/setup/`:
+
+| File | What it does |
+|---|---|
+| `download.py` | The only module in Lastbook that opens a network connection. It uses HTTPS on port 443 to `ALLOWED_HOSTS` and takes no proxy: it uses `http.client`, which never reads proxy settings. A redirect is followed only to an allowed address. A download resumes with Range. The ETag is compared here, because R2 ignores If-Range. The SHA-256 is computed while the file streams in. |
+| `roots.pem` | The only root certificates the downloader trusts: 6 roots from Mozilla's bundle, those the allowed hosts' chains end in, plus their siblings. The system's trust store is never used. Rebuild with `packaging/setup_roots.py <certifi cacert.pem>`. The package scan requires it. |
+| `manifest.py` | Loads the bundled `setup/manifest-v1.json`, plus one fetch of `https://downloads.lastbook.org/manifest-v1.json` when the person presses *Check for newer libraries*. Packs only. The fetched copy is used only if it validates and every URL is allowed. |
+| `hardware.py` | Reads the free space of the disks setup may install on, for the recommendation and the space checks. |
+| `install.py` | Checks a zip before writing anything: zip-slip, absolute paths, links, case clashes, encryption and the size against `installed_bytes`. Unpacks so that a stopped unpack can resume, leaving out upstream's US-only map data (`DROPPED`, below). Does the one-rename switch, keeps the old library, and rolls back if the new one does not open. |
+| `maps.py` | Makes the map on the person's computer: cuts `world.mbtiles` and `regions-<id>.mbtiles` out of Protomaps' newest daily OpenStreetMap build (PMTiles, range requests through `download.py`) and builds `world-places.sqlite` from GeoNames. The region list is the bundled `setup/map-regions.json`. |
+| `api.py` | Handles `/api/setup/*`, runs the job (`job.json`, pause, resume, cancel and retry), recognizes files already on the computer, makes the recommendation, and provides setup mode's `SetupServer` for the bridge. |
 
 ## Rules this follows
 
-- **The one way out.** Setup's downloader is the only code in Lastbook that may reach the internet, and only when the person
-  starts or resumes a download. It fetches over HTTPS only from hosts in `ALLOWED_HOSTS` (below), with no proxy taken from
-  the system, and follows a redirect only to another allowed host. Everything else stays as it is: the window blocks all web
-  loads, and nothing is sent anywhere (no telemetry, no update check: updates come from pacman). This route covers
-  library packs and the map, and nothing more.
+- **The one way out.** Setup's downloader is the only code in Lastbook that may reach the internet, as the README's
+  [Privacy and network use](../README.md#privacy-and-network-use) sets out. This route covers library packs and the map,
+  and nothing more.
 - **A working library is never broken.** New data is downloaded and unpacked beside the old one, checked, then switched
   in one rename. A failure at any step leaves the old library as it was.
 
 ## The manifest (`manifest-v1.json`)
 
-The package carries a copy (`packaging/arch/manifest-v1.json`, installed as `setup/manifest-v1.json`;
-`packaging/release_manifest.py` rewrites and checks it). The packs it lists are upstream Lastbook's, pre-built. Setup may
+The package carries a copy (`packaging/arch/manifest-v1.json`, installed as `setup/manifest-v1.json`; it is the example
+of the format, and `app/tests/test_setup.py` checks that it validates). The packs it lists are upstream Lastbook's, pre-built. Setup may
 also fetch `https://downloads.lastbook.org/manifest-v1.json` (one GET, only when the person presses *Check for newer libraries* in setup) to learn of
 packs published after the app was built. A fetched manifest is used only if it parses, its `version` is 1, and every URL is
 on an allowed host.
 
-```json
-{
-  "version": 1,
-  "published": "2026-11-12",
-  "packs": [
-    {"id": "small", "title": "Small", "summary": "…one plain sentence…", "records": 315,
-     "installed_bytes": 8236931672, "available": true,
-     "files": [{"name": "Lastbook-Small.zip", "url": "https://downloads.lastbook.org/1.0.0/Lastbook-Small.zip",
-                "size": 8236931672, "sha256": "…", "kind": "zip"}]}
-  ]
-}
-```
-
-`installed_bytes` is the unpacked size, measured (upstream's map data in it, below, is not unpacked). A pack with `"available": false` shows as *coming later* and can't be chosen.
+`installed_bytes` is the unpacked size, measured (less upstream's map data, below). A pack with `"available": false` shows as *coming later* and can't be chosen.
 Packs may be split into several files later; setup downloads all `files` of a pack, in order. Anything else in a
 manifest is ignored.
 
@@ -128,5 +123,4 @@ engine opens anything. An upgrade (for example Small to Medium) renames the old 
 `LastbookData.old-<date>` only once the new one is complete. If the new one does not open, the old one is put back. Once
 the new one has opened, the old one is deleted without asking (`api.opened`, in its own thread): only a real folder beside the
 open library, named `<library>.old-<8 digits>` (or with `-<n>` after it), that setup itself moved aside. Until it is gone it
-is listed under `old` in the app's `setup.json`, so a delete cut short carries on at the next start. There is no
-`delete-old` request and no `current.old` any more.
+is listed under `old` in the app's `setup.json`, so a delete cut short carries on at the next start.

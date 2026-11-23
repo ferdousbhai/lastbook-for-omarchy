@@ -51,6 +51,7 @@ _DIV = re.compile(rb'<div\b[^>]*>', re.I)
 _IS_GALLERY = re.compile(rb"""\bclass=["'][^"']*\bimage-gallery\b""", re.I)
 _BASE_URL = re.compile(rb"""\bdata-base-url=["']([^"']*)["']""", re.I)
 _HREF = re.compile(rb"""\bhref=["']([^"']+)["']""", re.I)
+_HREF_VALUE = re.compile(rb"""(?<![\w-])(href\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s>"']+))""", re.I)
 _TRACK = re.compile(rb'<track\b[^>]*>', re.I)
 _TRACK_SRC = re.compile(rb"""\bsrc=["']([^"'>]+\.vtt)["']""", re.I)
 _TAG = re.compile(r'<[^>]+>')
@@ -251,10 +252,27 @@ def article_look(data, look=None):
     return data[:at] + look + data[at:] if at >= 0 else data + look
 
 
-def _anchor(m):
+def _saved_copy(a, links):
+    """An anchor to a page the library saved ({its address: its library path}) leads to the saved copy instead."""
+    m = _HREF_VALUE.search(a)
+    if not m:
+        return a
+    value = next(v for v in m.group(2, 3, 4) if v is not None)
+    base, hash_, fragment = html.unescape(value.decode('utf-8', 'replace')).partition('#')
+    path = links.get(base)
+    if not path:
+        return a
+    return a[:m.start()] + m.group(1) + b'"' + html.escape('/' + path + (hash_ + fragment if fragment else '')).encode() + b'"' + a[m.end():]
+
+
+def _anchor(m, links=None):
     """A local link opens where it is. In a saved page target= and download= would only make it do nothing."""
     a = m.group(0)
-    return _DOWNLOAD.sub(b'', _TARGET.sub(b'', a)) if len(a) <= MAX_TAG and _LOCAL.search(a) else a
+    if len(a) > MAX_TAG:
+        return a
+    if links:
+        a = _saved_copy(a, links)
+    return _DOWNLOAD.sub(b'', _TARGET.sub(b'', a)) if _LOCAL.search(a) else a
 
 
 def _gallery_links(base, inner):
@@ -302,7 +320,7 @@ def _galleries(data):
 
 
 def _drawers(data):
-    """A slide-in drawer opens by a plain in-page link and the CSS's :target. Attributes in either order: engine/library.py's parser sorts them."""
+    """A slide-in drawer opens by a plain in-page link and the CSS's :target. Attributes in either order."""
     low = data.lower()
     out, pos, scan, end = [], 0, 0, _upto(data)
     while True:
@@ -337,8 +355,10 @@ def transcript_text(vtt):
     return ' '.join(out)
 
 
-def rewrite(data, read_local=None):
-    """data: a saved page's bytes. read_local(src) gives the bytes of a file the page names, or None. Nothing here adds a script or an address outside the library."""
+def rewrite(data, read_local=None, links=None):
+    """data: a saved page's bytes. read_local(src) gives the bytes of a file the page names, or None. links: {address on
+    the web: library path} of the pages the library saved, so that a link between two of them stays in the library.
+    Nothing here adds a script or an address outside the library."""
     if b'\0' in data[:512]:   # UTF-16: none of this would match, and the style block would break it
         return data
     data = no_hints(data)
@@ -347,7 +367,7 @@ def rewrite(data, read_local=None):
         if len(data) > MAX_PAGE:
             return data
     end = _upto(data)
-    data = _ANCHOR.sub(_anchor, data[:end]) + data[end:]
+    data = _ANCHOR.sub(lambda m: _anchor(m, links), data[:end]) + data[end:]
     data = _galleries(data)
     data = _drawers(data)
     track = None

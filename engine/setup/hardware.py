@@ -4,12 +4,17 @@ import shutil
 from pathlib import Path
 
 
-def disk_of(path):
-    """(free, total) on the disk that holds path, or the nearest folder above it that exists."""
+def existing(path):
+    """path, or the nearest folder above it that exists."""
     p = Path(path)
     while not p.exists() and p.parent != p:
         p = p.parent
-    u = shutil.disk_usage(p)
+    return p
+
+
+def disk_of(path):
+    """(free, total) on the disk that holds path, or the nearest folder above it that exists."""
+    u = shutil.disk_usage(existing(path))
     return u.free, u.total
 
 
@@ -19,9 +24,7 @@ def candidate_disks(extra=()):
     seen, out = set(), []
     for p in places:
         try:
-            q = p
-            while not q.exists() and q.parent != q:
-                q = q.parent
+            q = existing(p)
             dev = os.stat(q).st_dev
             if dev in seen:
                 continue

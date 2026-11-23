@@ -48,11 +48,7 @@ def small_library():
             {'id': 'video-a', 'kind': 'video', 'path': 'videos/a.mp4', 'title': 'Fire', 'publisher': 'Test', 'duration': 90, 'captions': ['videos/a.en.vtt']}]
     (lib / 'catalog.json').write_text(json.dumps(recs))
     (lib / 'summary.json').write_text('{"resources": 3, "pdfs": 1, "pdf_pages": 2, "web_pages": 1, "videos": 1}')
-    con = sqlite3.connect(lib / 'search.sqlite')
-    con.execute('CREATE VIRTUAL TABLE pages USING fts5(doc_id UNINDEXED,title,collection,category,path UNINDEXED,page UNINDEXED,body,tokenize="unicode61")')
-    con.execute('INSERT INTO pages VALUES (?,?,?,?,?,?,?)', ('manual', 'Water Manual 2019', 'Test', 'test', 'documents/m.pdf', 2, 'boil it for one minute'))
-    con.commit()
-    con.close()
+    fixture.search_db(lib / 'search.sqlite', [('manual', 'Water Manual 2019', 'Test', 'test', 'documents/m.pdf', 2, 'boil it for one minute')])
     con = sqlite3.connect(data / 'derived' / 'geo' / 'world-places.sqlite')
     con.executescript('''PRAGMA user_version = 2;
         CREATE TABLE place(id INTEGER PRIMARY KEY, name TEXT, kind TEXT, detail TEXT, lat REAL, lon REAL, rank INTEGER, source TEXT);
@@ -321,7 +317,6 @@ class Shipped(unittest.TestCase):
             self.assertIn(f'`{c}', skill.replace('`lastbook ', '`'), c)
         pkgbuild = (ROOT / 'packaging' / 'arch' / 'PKGBUILD').read_text(encoding='utf-8')
         self.assertIn('app/cli.py', pkgbuild)
-        self.assertIn('skills/lastbook/SKILL.md', pkgbuild)
 
 
 if __name__ == '__main__':

@@ -102,7 +102,8 @@ def catalog():
                         tx[r['video_path']] = r
                     if r['kind'] == 'metadata' and r.get('video_path') and r.get('thumbnail_path'):
                         thumbs[r['video_path']] = r['thumbnail_path']
-                _cat.update(loaded=True, mtime=m, by_id=by_id, by_path={r['path']: r for r in recs}, video_tx=tx, thumbs=thumbs)
+                links = {r[k]: r['path'] for r in recs for k in ('source_url', 'final_url') if r.get(k) and isinstance(r[k], str)}   # saved_pages.rewrite
+                _cat.update(loaded=True, mtime=m, by_id=by_id, by_path={r['path']: r for r in recs}, video_tx=tx, thumbs=thumbs, links=links)
     return _cat
 
 
@@ -186,11 +187,7 @@ def topics():
 
 
 def zim_names():
-    """The encyclopedia files this library really holds. Its folder decides, so one rule covers every size of pack."""
-    try:
-        return sorted(p.name for p in (LIB / 'collections').glob('*.zim'))
-    except OSError:
-        return []
+    return encyclopedia.zim_names(LIB)
 
 
 def item_here(i, zims):
@@ -297,7 +294,7 @@ def for_clinicians(r):
 
 
 GENERAL = re.compile(r'first aid|emergency|basic|household|home|beginner|guide|handbook|where there is no', re.I)
-KIND_FILTERS = {'read': ('pdf', 'html', 'pptx'), 'video': ('video', 'transcript'), 'all': None}
+KIND_FILTERS = {'read': retrieval.PAGED, 'video': ('video', 'transcript'), 'all': None}
 
 
 fts_expr = encyclopedia.match_expr
@@ -464,15 +461,14 @@ def record(doc_id):
 def _allowed(kind):
     cat = catalog()['by_id']
     # 'library': everything but the encyclopedias, which take a second longer (the window asks for them separately)
-    ok = {'any': None, 'library': None, 'manual': ('pdf', 'html', 'pptx'), 'video': ('video', 'transcript'), 'encyclopedia': ()}.get(kind or 'any')
+    ok = {'any': None, 'library': None, 'manual': KIND_FILTERS['read'], 'video': KIND_FILTERS['video'], 'encyclopedia': ()}.get(kind or 'any')
     return lambda d: d in cat and cat[d]['kind'] not in ('metadata', 'zim') and (ok is None or cat[d]['kind'] in ok)
 
 
-def hybrid(q, k=8, kind='any', doc=None):
+def hybrid(q, k=8, kind='any'):
     """Best passages for q from keyword and meaning-based search, fused, with provenance."""
     cat = catalog()
-    base = _allowed(kind)
-    allowed = (lambda d: d == doc and base(d)) if doc else base
+    allowed = _allowed(kind)
     qv = INDEX.query_vector(q)  # once: each embedding is a round trip to Recall
     moments = {}
 
@@ -505,7 +501,7 @@ def hybrid(q, k=8, kind='any', doc=None):
     sem_l = [(s['doc_id'], s['page'] if cat['by_id'][s['doc_id']]['kind'] == 'pdf' else None, s['t'], s['text'], s['sem']) for s in sem]
     content, groups = query_groups(q)
     only_articles = kind == 'encyclopedia'
-    enc = ENC.search(content, groups, qv, k if only_articles else encyclopedia.DEEP) if ENC and not doc and kind in ('any', 'encyclopedia') else []
+    enc = ENC.search(content, groups, qv, k if only_articles else encyclopedia.DEEP) if ENC and kind in ('any', 'encyclopedia') else []
     recs = {e['doc_id']: e['record'] for e in enc}
     rec = lambda d: cat['by_id'].get(d) or recs[d]
     key = lambda d, p, t: (d, p, None if t is None else int(t // 45))
@@ -745,15 +741,9 @@ def render_page(r, n, width):
 
 
 def vtt_cues(path):
-    # auto captions repeat lines across cues; drop repeats and merge into ~sentence chunks
-    out, last = [], ''
-    for at, text in retrieval.cues(LIB / path):
-        t = text
-        if last and t.startswith(last):  # a rolling caption: the line before, then the new one
-            t = t[len(last):].strip()
-        if not t:
-            continue
-        last = t  # what was just said, which is what the next cue starts with (retrieval.vtt_windows does the same)
+    """A caption file's cues without their repeats, merged into ~sentence chunks."""
+    out = []
+    for at, t in retrieval.said(LIB / path):
         if out and at - out[-1]['t'] < 12 and len(out[-1]['text']) < 220:
             out[-1]['text'] += ' ' + t
         else:
@@ -767,13 +757,9 @@ def transcript(video_id):
     if not v:
         return None
     tx = cat['video_tx'].get(v['path'])
-    vtts = []
-    if tx and tx.get('vtt_path'):
-        vtts.append(tx['vtt_path'])
-    vtts += [c for c in v.get('captions', []) if c.endswith('.vtt')]
-    for p in vtts:
-        if (LIB / p).is_file():
-            return {'source': (tx or {}).get('caption_type') or 'captions', 'cues': vtt_cues(p)}
+    vtt = retrieval.vtt_for(v, cat)
+    if vtt:
+        return {'source': (tx or {}).get('caption_type') or 'captions', 'cues': vtt_cues(vtt)}
     if tx and (LIB / tx['path']).is_file():
         return {'source': tx.get('caption_type') or 'transcript',
                 'cues': [{'t': None, 'text': x} for x in (LIB / tx['path']).read_text(encoding='utf-8', errors='replace').split('\n\n') if x.strip()]}
@@ -1019,18 +1005,9 @@ SOURCES_PAGE = 'documents/lastbook/sources-and-permissions.html'   # every pack'
 
 # --------------------------------------------------------------- handler ----
 class Handler(library.Handler):
-    def send_json(self, obj, status=200):
-        data = json.dumps(obj, separators=(',', ':')).encode()
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
     # The only parts of the library the window gets: no worker state, logs, tools, sign-in settings or reports.
-    SERVED_PREFIXES = ('/api/', '/zim/', '/documents/', '/pages/', '/videos/', '/videos-external/', '/transcripts/', '/metadata/videos/', '/courses/', '/collections/', '/assets/')
-    SERVED_ONLY = True  # engine/library.py: a file must really sit in one of these folders, whatever links lead there
-    LIBRARY_PREFIXES = tuple(p for p in SERVED_PREFIXES if p not in ('/api/', '/zim/'))
+    LIBRARY_PREFIXES = tuple(f'/{f}/' for f in library.SERVED_FOLDERS)
+    SERVED_PREFIXES = ('/api/', '/zim/', *LIBRARY_PREFIXES)
 
     def path_ok(self, path):
         if '\0' in path:
@@ -1053,14 +1030,17 @@ class Handler(library.Handler):
         self.send_error(404)
 
     def send_head(self):
-        """Only files get here. /api/ and /zim/ are addresses, never folders, whatever the library folder holds."""
-        if urllib.parse.unquote(urllib.parse.urlsplit(self.path).path).startswith(('/api/', '/zim/')):
-            self.send_error(404)
-            return None
+        """Only files get here: do_GET answers every /api/ and /zim/ address itself, whatever the library folder holds."""
         page = self.saved_page_file()
         if not page:
             return super().send_head()
-        data = saved_pages.rewrite(Path(page).read_bytes(), self.saved_page_part)
+        try:
+            links = catalog()['links']
+        except (LibraryError, OSError):     # the page still opens; its links to other saved pages lead to the web
+            links = {}
+        data = saved_pages.rewrite(Path(page).read_bytes(), self.saved_page_part, links)
+        if '/documents/lastbook/' in urllib.parse.unquote(urllib.parse.urlsplit(self.path).path):
+            data = saved_pages.own_look(data)
         self.send_response(200)
         self.send_header('Content-Type', self.guess_type(page))
         self.send_header('Content-Length', str(len(data)))
@@ -1090,12 +1070,8 @@ class Handler(library.Handler):
         return Path(real).read_bytes()
 
     def send_data(self, data, mime='application/json', status=200):
-        """engine/library.py sends some saved pages from memory, and every encyclopedia page, through here."""
-        if status == 200 and 'html' in mime and len(data) <= saved_pages.MAX_PAGE and urllib.parse.unquote(urllib.parse.urlsplit(self.path).path).startswith(self.LIBRARY_PREFIXES):
-            data = saved_pages.rewrite(data, self.saved_page_part)
-            if '/documents/lastbook/' in urllib.parse.unquote(urllib.parse.urlsplit(self.path).path):
-                data = saved_pages.own_look(data)
-        elif status == 200 and ('html' in mime or 'svg' in mime) and urllib.parse.urlsplit(self.path).path.startswith('/zim/'):
+        """engine/library.py sends every encyclopedia page through here."""
+        if status == 200 and ('html' in mime or 'svg' in mime) and urllib.parse.urlsplit(self.path).path.startswith('/zim/'):
             data = saved_pages.article(data)
             if 'html' in mime:
                 data = saved_pages.article_look(data)
@@ -1145,7 +1121,7 @@ class Handler(library.Handler):
                 return self.send_json({'results': related(qs.get('doc', ''), qs.get('path', ''))})
             if path.startswith('/api/text/'):
                 r = catalog()['by_id'].get(path[10:])
-                texts = page_texts(r) if r and r['kind'] in ('pdf', 'html', 'pptx') else None
+                texts = page_texts(r) if r and r['kind'] in retrieval.PAGED else None
                 return self.send_json({'pages': texts} if texts is not None else {'error': 'This item is not in the library catalog.'}, 200 if texts is not None else 404)
             if path == '/api/search-status':
                 import cli   # app/cli.py: what `lastbook status` says of meaning search, said the same way here
@@ -1191,7 +1167,7 @@ def init(no_index=False):
     global INDEX, ENC
     catalog()
     # Without the indexer this process only reads the index (the command line, beside a window that may be indexing).
-    INDEX = retrieval.Index(catalog, trust, library.DB, excluded_fn=excluded_videos, truncate=not no_index)
+    INDEX = retrieval.Index(catalog, trust, library.DB, excluded_fn=excluded_videos)
     ENC = encyclopedia.Encyclopedias(LIB, catalog, library.open_zim, INDEX)
     if not no_index:
         threading.Thread(target=INDEX.run_forever, daemon=True).start()

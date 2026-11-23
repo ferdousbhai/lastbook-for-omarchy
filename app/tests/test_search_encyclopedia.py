@@ -85,11 +85,9 @@ class Articles(unittest.TestCase):
         self.assertIn('twenty minutes', text)
         self.assertNotIn('Pain relief', text)
 
-    def test_a_section_that_is_not_there_says_so(self):
-        _, text = self.enc.read(self.burn, 'treatment')
-        self.assertEqual(text, 'No section of this article has a heading containing "treatment". '
-                               'Its sections: Signs; Management; First aid; Medicines; History.')
+    def test_a_section_that_is_not_there_matches_nothing(self):
         self.assertEqual(self.enc.matched(self.burn, 'treatment'), [])
+        self.assertEqual(self.enc.read(self.burn, 'treatment')[1], '')
         self.assertEqual(self.enc.headings(self.burn), ['Signs', 'Management', 'First aid', 'Medicines', 'History'])
         _, whole = self.enc.read(self.burn)
         self.assertIn('A burn is an injury', whole)

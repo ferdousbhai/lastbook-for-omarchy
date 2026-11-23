@@ -19,13 +19,6 @@ use crate::{
     ui::{App, Route},
 };
 
-fn title(text: &str, sub: &str, into: &gtk::Box) {
-    into.append(&label(text, "page-title"));
-    if !sub.is_empty() {
-        into.append(&label(sub, "dim-label"));
-    }
-}
-
 fn doc_card(app: &Weak<App>, d: &Value) -> gtk::Widget {
     let mut meta = vec![cards::kind_label(d["kind"].as_str().unwrap_or_default()), d["publisher"].as_str().unwrap_or_default().to_owned()];
     if let Some(y) = d["year"].as_str() {
@@ -35,9 +28,7 @@ fn doc_card(app: &Weak<App>, d: &Value) -> gtk::Widget {
         meta.push(omui::trn!("{n} pages", p));
     }
     let c = card(d["title"].as_str().unwrap_or_default(), "", &meta.into_iter().filter(|m| !m.is_empty()).collect::<Vec<_>>().join(" · "), d["trust"].as_str());
-    if let Some(r) = route_of(d) {
-        activate(&c, app.clone(), r);
-    }
+    activate(&c, app.clone(), route_of(d));
     c.upcast()
 }
 
@@ -85,7 +76,7 @@ pub struct Browse {
 }
 
 impl Browse {
-    pub fn build(app: &Rc<App>) -> Rc<Self> {
+    pub fn build(app: &Weak<App>) -> Rc<Self> {
         let (ls, library) = column(12);
         let (ss, shelf) = column(12);
         let (sv, saved) = column(12);
@@ -95,7 +86,7 @@ impl Browse {
             shelf_root: ss.upcast(),
             saved_root: sv.upcast(),
             about_root: ab.upcast(),
-            app: Rc::downgrade(app),
+            app: app.clone(),
             library,
             shelf,
             saved,
@@ -115,7 +106,7 @@ impl Browse {
             return;
         }
         clear(&self.library);
-        title(&tr("Library"), "", &self.library);
+        self.library.append(&label(&tr("Library"), "page-title"));
         let Some(app) = self.app.upgrade() else { return };
         let (engine, me) = (app.engine.clone(), Rc::downgrade(self));
         glib::spawn_future_local(async move {
@@ -125,12 +116,7 @@ impl Browse {
                 Ok(shelves) => shelves,
                 Err(e) => {
                     me.library_failed.set(true);
-                    let again = Rc::downgrade(&me);
-                    me.library.append(&cards::problem(&tr("Lastbook could not read the library's shelves."), &e.to_string(), move || {
-                        if let Some(me) = again.upgrade() {
-                            me.show_library();
-                        }
-                    }));
+                    me.library.append(&cards::problem(&tr("Lastbook could not read the library's shelves."), &e.to_string(), &me, |me| me.show_library()));
                     return;
                 }
             };
@@ -147,7 +133,7 @@ impl Browse {
                     .join(" · ");
                 let c = card(s["title"].as_str().unwrap_or_default(), "", &counts, None);
                 c.add_css_class("guide-card");
-                activate(&c, me.app.clone(), Route::Shelf(s["id"].as_str().unwrap_or_default().to_owned()));
+                activate(&c, me.app.clone(), Some(Route::Shelf(s["id"].as_str().unwrap_or_default().to_owned())));
                 grid.insert(&c, -1);
             }
             me.library.append(&grid);
@@ -156,7 +142,7 @@ impl Browse {
 
     pub fn show_shelf(self: &Rc<Self>, id: &str, name: &str) {
         clear(&self.shelf);
-        title(name, "", &self.shelf);
+        self.shelf.append(&label(name, "page-title"));
         let Some(app) = self.app.upgrade() else { return };
         let (engine, me, id, shown) = (app.engine.clone(), Rc::downgrade(self), id.to_owned(), name.to_owned());
         glib::spawn_future_local(async move {
@@ -169,18 +155,14 @@ impl Browse {
             let s = match shelf {
                 Ok(s) => s,
                 Err(e) => {
-                    let (again, id) = (Rc::downgrade(&me), id.clone());
-                    me.shelf.append(&cards::problem(&tr("Lastbook could not read this shelf."), &e.to_string(), move || {
-                        if let Some(me) = again.upgrade() {
-                            me.show_shelf(&id, &shown);
-                        }
-                    }));
+                    let id = id.clone();
+                    me.shelf.append(&cards::problem(&tr("Lastbook could not read this shelf."), &e.to_string(), &me, move |me| me.show_shelf(&id, &shown)));
                     return;
                 }
             };
             if let Some(name) = name {
                 clear(&me.shelf);
-                title(&name, "", &me.shelf);
+                me.shelf.append(&label(&name, "page-title"));
                 if let Some(app) = me.app.upgrade() {
                     app.report_title("shelf", &name);
                 }
@@ -199,39 +181,36 @@ impl Browse {
 
     pub fn show_saved(self: &Rc<Self>) {
         clear(&self.saved);
-        title(&tr("Saved"), "", &self.saved);
+        self.saved.append(&label(&tr("Saved"), "page-title"));
         let items = load_saved();
         if items.is_empty() {
-            let l = gtk::Label::new(Some(&tr("Nothing saved yet. Star a page, video or guide to keep it here (Ctrl+D).")));
-            l.add_css_class("status-line");
-            l.set_xalign(0.0);
-            l.set_wrap(true);
-            self.saved.append(&l);
+            self.saved.append(&label(&tr("Nothing saved yet. Star a page, video or guide to keep it here (Ctrl+D)."), "status-line"));
         }
         let mut items = items;
         items.sort_by_key(|s| std::cmp::Reverse(s.at));
         for s in items {
             let c = card(&s.title, "", &crate::ui::saved_sub(&s.key, &s.sub), None);
-            if let Some(mut r) = Route::from_key(&s.key) {
+            let route = Route::from_key(&s.key).map(|mut r| {
                 if let Route::Web { meta, .. } = &mut r {
                     *meta = s.sub.clone();
                 }
-                activate(&c, self.app.clone(), r);
-            }
+                r
+            });
+            activate(&c, self.app.clone(), route);
             self.saved.append(&c);
         }
     }
 
     pub fn show_about(self: &Rc<Self>) {
         clear(&self.about);
-        title(&tr("About this library"), "", &self.about);
+        self.about.append(&label(&tr("About this library"), "page-title"));
         let Some(app) = self.app.upgrade() else { return };
         let (engine, me) = (app.engine.clone(), Rc::downgrade(self));
         glib::spawn_future_local(async move {
             let lib = engine.get("/api/library").await.unwrap_or_default();
             let Some(me) = me.upgrade() else { return };
             clear(&me.about);   // opened twice before the answers came: one set of cards
-            title(&tr("About this library"), "", &me.about);
+            me.about.append(&label(&tr("About this library"), "page-title"));
             let (n, gb) = (|k: &str| lib[k].as_i64().unwrap_or(0), lib["document_bytes"].as_f64().unwrap_or(0.0) / 1e9);
             // One sentence a count each would glue fragments, which no language but English can take: each count is
             // a line of its own.
@@ -266,11 +245,11 @@ impl Browse {
                 &tr!("Lastbook for Omarchy {}", app_version(&me.app)),
             ));
             let m = card(&tr("Library and downloads"), "", "", None);
-            activate(&m, me.app.clone(), Route::Manage);
+            activate(&m, me.app.clone(), Some(Route::Section("manage")));
             me.about.append(&m);
             if let Some(src) = lib["sources"].as_str() {
                 let c = card(&tr("Sources and permissions"), "", &tr("Where every document came from, and its licence"), None);
-                activate(&c, me.app.clone(), Route::Read { doc: src.to_owned(), page: 1 });
+                activate(&c, me.app.clone(), Some(Route::Read { doc: src.to_owned(), page: 1 }));
                 me.about.append(&c);
             }
         });

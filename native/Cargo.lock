@@ -588,7 +588,6 @@ version = "1.4.0"
 dependencies = [
  "async-channel",
  "base64",
- "cairo-rs",
  "flate2",
  "gtk4",
  "omui",

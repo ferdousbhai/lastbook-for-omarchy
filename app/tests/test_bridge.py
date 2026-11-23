@@ -444,6 +444,27 @@ class Both:
             self.assertNotIn(b'<script', b)
         self.assertEqual(self.get('/pages/s.html').status, 200)
 
+    def test_a_link_to_another_saved_page_leads_to_the_saved_copy(self):
+        """A saved page's link to the address another saved page came from (its source_url or final_url in the catalog)
+        opens that page in the library, an index.html page's as well. Other links to the web are left as they are."""
+        cat = fixture.LIB / 'catalog.json'
+        before = cat.read_bytes()
+        self.addCleanup(cat.write_bytes, before)
+        cat.write_text(json.dumps(json.loads(before) + [{'id': 'saved-b', 'kind': 'html', 'path': 'pages/kinds/b.html', 'title': 'B', 'category': 'test',
+                                                         'collection': 'Test', 'publisher': 'Test', 'source_url': 'https://e.example/b?x=1&y=2', 'final_url': 'https://e.example/b/'}]))
+        d = fixture.LIB / 'pages' / 'kinds' / 'cross'
+        d.mkdir(parents=True, exist_ok=True)
+        page = (b'<!doctype html><html><head><title>a</title></head><body><a target="_blank" href="https://e.example/b?x=1&amp;y=2#part">one</a>'
+                b"<a href='https://e.example/b/'>two</a><a href=https://e.example/c>three</a></body></html>")
+        (d / 'a.html').write_bytes(page)
+        (d / 'index.html').write_bytes(page)
+        for t in ('/pages/kinds/cross/a.html', '/pages/kinds/cross/'):
+            r = self.get(t)
+            self.assertEqual(r.status, 200, t)
+            self.assertRegex(r.body, rb'<a\s+href="/pages/kinds/b.html#part">one</a>', t)    # and opens where it is
+            self.assertIn(b'<a href="/pages/kinds/b.html">two</a>', r.body, t)
+            self.assertIn(b'<a href=https://e.example/c>three</a>', r.body, t)
+
     def test_saved_page_transcript_stays_in_the_library(self):
         self.assertIsNone(self.part('/pages/kinds/ocw.html', '../../../canary-root.txt'))
         self.assertIsNone(self.part('/pages/kinds/ocw.html', 'https://evil.example/a.vtt'))

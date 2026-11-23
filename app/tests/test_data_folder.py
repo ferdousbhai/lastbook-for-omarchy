@@ -46,7 +46,7 @@ class Lookup(unittest.TestCase):
         self.assertIsNone(main.data_folder(None))
 
     def test_order(self):
-        app_data = library(main.default_parent() / 'LastbookData')
+        app_data = library(main.app_folders()[1] / 'LastbookData')
         chosen = library(self.home / 'Documents' / 'Mine')
         main.remember(chosen)
         self.assertEqual(main.data_folder(None), chosen)
@@ -110,7 +110,7 @@ class Lookup(unittest.TestCase):
         locked.chmod(stat.S_IRUSR | stat.S_IXUSR)
         if os.access(locked, os.W_OK):
             self.skipTest('running as a user who can write anywhere')
-        found = library(main.default_parent() / 'LastbookData')
+        found = library(main.app_folders()[1] / 'LastbookData')
         self.assertEqual(main.data_folder(None), found)
         self.assertIn('cannot save', main.check(locked)[1])
 
@@ -128,7 +128,7 @@ class Lookup(unittest.TestCase):
         main.remember(gone)
         self.assertEqual(json.loads(self.settings().read_text())['library'], str(gone))
         shutil.rmtree(gone)
-        found = library(main.default_parent() / 'LastbookData')
+        found = library(main.app_folders()[1] / 'LastbookData')
         self.assertEqual(main.data_folder(None), found)
         shutil.rmtree(found)
         self.assertIsNone(main.data_folder(None))
@@ -136,14 +136,13 @@ class Lookup(unittest.TestCase):
     def test_bad_settings_ignored(self):
         self.settings().parent.mkdir(parents=True)
         self.settings().write_text('not json')
-        found = library(main.default_parent() / 'LastbookData')
+        found = library(main.app_folders()[1] / 'LastbookData')
         self.assertEqual(main.data_folder(None), found)
 
     def test_xdg_places(self):
         with mock.patch.dict(os.environ, {'XDG_CONFIG_HOME': str(self.tmp / 'config'), 'XDG_DATA_HOME': str(self.tmp / 'data')}):
             self.assertEqual(main.app_folders(), (self.tmp / 'config' / 'Lastbook', self.tmp / 'data' / 'Lastbook'))
-            self.assertEqual(main.default_parent(), self.tmp / 'data' / 'Lastbook')
-            local = library(main.default_parent() / 'LastbookData')
+            local = library(main.app_folders()[1] / 'LastbookData')
             self.assertEqual(main.data_folder(None), local)
             chosen = library(self.tmp / 'D' / 'LastbookData')
             main.remember(chosen)

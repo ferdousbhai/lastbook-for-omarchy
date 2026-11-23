@@ -27,7 +27,7 @@ use omui::{icon_button, icons::name, tr};
 use serde_json::Value;
 
 use crate::{
-    cards::{route_of, source_meta},
+    cards::{on_click, route_of, source_meta, weak},
     pdf,
     ui::App,
 };
@@ -148,9 +148,8 @@ pub(crate) struct Related {
 }
 
 impl Related {
-    pub fn new(app: &Rc<App>) -> Rc<Self> {
+    pub fn new(app: &Weak<App>) -> Rc<Self> {
         let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        list.add_css_class("related");
         let popover = gtk::Popover::new();
         popover.set_child(Some(&list));
         let button = gtk::MenuButton::builder().popover(&popover).build();
@@ -158,7 +157,7 @@ impl Related {
         omui::i18n::bind_tooltip(&button, "Other documents on the same subject");
         button.add_css_class("flat");
         button.set_visible(false);
-        Rc::new(Self { button, list, app: Rc::downgrade(app), asked: RefCell::new(String::new()) })
+        Rc::new(Self { button, list, app: app.clone(), asked: RefCell::new(String::new()) })
     }
 
     /// Lists what is related to the document the query names (`doc=<id>`, or `path=<address>` for a page of the web
@@ -189,14 +188,9 @@ impl Related {
 
     fn add(&self, r: &Value) {
         let Some(route) = route_of(r) else { return };
-        let title = gtk::Label::new(r["title"].as_str());
-        title.set_xalign(0.0);
-        title.set_wrap(true);
+        let title = omui::label(r["title"].as_str().unwrap_or_default(), "");
         title.set_max_width_chars(44);
-        let meta = gtk::Label::new(Some(&source_meta(r)));
-        meta.add_css_class("meta");
-        meta.set_xalign(0.0);
-        meta.set_wrap(true);
+        let meta = omui::label(&source_meta(r), "meta");
         meta.set_max_width_chars(44);
         let both = gtk::Box::new(gtk::Orientation::Vertical, 2);
         both.append(&title);
@@ -214,6 +208,25 @@ impl Related {
         });
         self.list.append(&row);
     }
+}
+
+/// The line at the start of a reading screen's bar, which says whose the document is: one line, cut short.
+pub(crate) fn bar_meta() -> gtk::Label {
+    let meta = gtk::Label::new(None);
+    meta.add_css_class("meta");
+    meta.set_xalign(0.0);
+    meta.set_hexpand(true);
+    meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    meta
+}
+
+/// A reading screen's note above what it shows (why there is nothing, or why a link went nowhere), hidden until said.
+pub(crate) fn status_note() -> gtk::Label {
+    let note = gtk::Label::new(None);
+    note.add_css_class("status-line");
+    note.set_wrap(true);
+    note.set_visible(false);
+    note
 }
 
 /// The find bar of a reading screen: the field, which match is on show, the way to the one before and after.
@@ -238,7 +251,6 @@ impl FindBar {
         let next = icon_button(name::DOWN, "");
         omui::i18n::bind_tooltip(&next, "Next match (Enter)");
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        row.add_css_class("find-bar");
         for w in [entry.upcast_ref::<gtk::Widget>(), found.upcast_ref(), prev.upcast_ref(), next.upcast_ref()] {
             row.append(w);
         }
@@ -375,15 +387,11 @@ pub struct Reader {
 }
 
 impl Reader {
-    pub fn build(app: &Rc<App>) -> Rc<Self> {
+    pub fn build(app: &Weak<App>) -> Rc<Self> {
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         bar.add_css_class("reader-bar");
         // The header bar names the document; this bar says whose it is.
-        let meta = gtk::Label::new(None);
-        meta.add_css_class("meta");
-        meta.set_xalign(0.0);
-        meta.set_hexpand(true);
-        meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let meta = bar_meta();
         let prev = icon_button(name::BACK, "");
         omui::i18n::bind_tooltip(&prev, "Previous page (Left, Page Up)");
         let entry = gtk::Entry::new();
@@ -439,10 +447,7 @@ impl Reader {
         sheet.add_overlay(&marks);
         sheet.set_margin_top(18);
         sheet.set_margin_bottom(18);
-        let note = gtk::Label::new(None);
-        note.add_css_class("status-line");
-        note.set_wrap(true);
-        note.set_visible(false);
+        let note = status_note();
         let canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);
         canvas.add_css_class("reader-canvas");
         canvas.append(&note);
@@ -458,7 +463,7 @@ impl Reader {
 
         let reader = Rc::new(Self {
             root: root.upcast(),
-            app: Rc::downgrade(app),
+            app: app.clone(),
             picture,
             scroll,
             meta,
@@ -483,12 +488,12 @@ impl Reader {
             marks,
             marked: RefCell::new((Vec::new(), None)),
         });
-        let r = Rc::downgrade(&reader);
-        find_button.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.find(); });
-        let r = Rc::downgrade(&reader);
-        copy.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.copy_page() });
-        let r = Rc::downgrade(&reader);
-        reader.find.entry.connect_search_changed(move |_| if let Some(r) = r.upgrade() { r.look() });
+        on_click(&find_button, &reader, |r| {
+            r.find();
+        });
+        on_click(&copy, &reader, |r| r.copy_page());
+        let look = weak(&reader, |r| r.look());
+        reader.find.entry.connect_search_changed(move |_| look());
         let r = Rc::downgrade(&reader);
         reader.find.on_step(move |way| if let Some(r) = r.upgrade() { r.step(way) });
         // Closed (Escape, its button): the marks go, and the keyboard is the page's again.
@@ -507,16 +512,11 @@ impl Reader {
                 r.draw_marks(area, cr, width);
             }
         });
-        let r = Rc::downgrade(&reader);
-        reader.prev.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.turn(-1) });
-        let r = Rc::downgrade(&reader);
-        reader.next.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.turn(1) });
-        let r = Rc::downgrade(&reader);
-        out.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.set_zoom(r.zoom.get() / 1.2) });
-        let r = Rc::downgrade(&reader);
-        inn.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.set_zoom(r.zoom.get() * 1.2) });
-        let r = Rc::downgrade(&reader);
-        fit.connect_clicked(move |_| if let Some(r) = r.upgrade() { r.set_zoom(1.0) });
+        on_click(&reader.prev, &reader, |r| r.turn(-1));
+        on_click(&reader.next, &reader, |r| r.turn(1));
+        on_click(&out, &reader, |r| r.set_zoom(r.zoom.get() / 1.2));
+        on_click(&inn, &reader, |r| r.set_zoom(r.zoom.get() * 1.2));
+        on_click(&fit, &reader, |r| r.set_zoom(1.0));
         let r = Rc::downgrade(&reader);
         reader.entry.connect_activate(move |e| {
             if let (Some(r), Ok(n)) = (r.upgrade(), e.text().trim().parse::<i32>()) {

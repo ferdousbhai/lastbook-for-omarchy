@@ -5,7 +5,6 @@ INSTALLED  true in the installed package, which alone has a lib/ folder (its Pyt
 DATA  the writable data folder holding library-data/ and derived/. Set with LASTBOOK_DATA (app/engine_pipe.py does, from --data or the library it finds).
 With LASTBOOK_DATA unset, DATA == APP.
 """
-import fcntl
 import os
 from pathlib import Path
 
@@ -18,12 +17,3 @@ LIB = (DATA / 'library-data').resolve()
 def ro_uri(path):
     """Read-only SQLite URI. A plain f'file:{path}' breaks on '#', '%' and '?' in a folder name."""
     return Path(path).resolve().as_uri() + '?mode=ro'
-
-
-def try_lock(f):
-    """Non-blocking exclusive lock on an open file; raises OSError if another handle holds it."""
-    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-
-def unlock(f):
-    fcntl.flock(f, fcntl.LOCK_UN)

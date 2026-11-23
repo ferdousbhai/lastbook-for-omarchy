@@ -24,7 +24,7 @@ use gtk::{glib, prelude::*};
 use omui::{clear, label, tr};
 use serde_json::{Value, json};
 
-use crate::engine::Engine;
+use crate::{cards::on_click, engine::Engine};
 
 pub struct SetupPage {
     pub root: gtk::Widget,
@@ -32,10 +32,8 @@ pub struct SetupPage {
     window: RefCell<Option<gtk::Window>>,
     body: gtk::Box,
     job_box: gtk::Box,
-    /// The job's buttons, kept across each redraw of its progress (a keyboard user's focus stays on them) and made again
-    /// only when what they offer changes (`job_buttons_for`).
-    job_buttons: gtk::Box,
-    job_buttons_for: RefCell<String>,
+    /// The job's buttons, kept across each redraw of its progress (a keyboard user's focus stays on them).
+    job_buttons: KeptButtons,
     status: gtk::Label,
     state: RefCell<Value>,
     /// The library size to download; None keeps the library there is.
@@ -53,8 +51,8 @@ pub struct SetupPage {
     progress: RefCell<Option<glib::SourceId>>,
     /// Keeps the application running while a download finishes with the window put away (`ask_close`).
     held: RefCell<Option<omui::Hold>>,
-    /// The desktop's folder dialog (the portal), or a test's.
-    picker: Rc<dyn omui::FilePicker>,
+    /// The desktop's folder dialog (the portal).
+    picker: omui::PortalFilePicker,
     /// The line under the buttons: what it says, in English or the engine's words (translated as it is shown, and
     /// again after a language switch), and whether it is an error.
     said: RefCell<(String, bool)>,
@@ -197,6 +195,67 @@ pub fn item_row(it: &Value, regions: &[Value]) -> gtk::Box {
     row
 }
 
+/// The rows of a download, as this page and the Map's panel show them: each item (`item_row`), the job's own reason
+/// where no item gave it, and a note when another window runs it.
+pub fn job_rows(into: &gtk::Box, job: &Value, regions: &[Value]) {
+    let mut said = Vec::new();   // an item's reason is not repeated as the job's
+    for it in job["items"].as_array().into_iter().flatten() {
+        said.extend(it["error"]["message"].as_str());
+        into.append(&item_row(it, regions));
+    }
+    if let Some(e) = job["error"]["message"].as_str().filter(|e| !said.contains(e)) {
+        into.append(&error_label(e));
+    }
+    if job["elsewhere"] == true {
+        let note = label(&tr("This download is running in another Lastbook window. Use that window to pause or cancel it."), "meta");
+        note.set_max_width_chars(30);
+        into.append(&note);
+    }
+}
+
+/// A job's buttons, kept across each redraw of what is around them, so the keyboard's focus can stay on them, and
+/// made again only when what they offer (`key`) changes.
+pub struct KeptButtons {
+    pub row: gtk::Box,
+    key: RefCell<String>,
+}
+
+impl KeptButtons {
+    pub fn new(spacing: i32) -> Self {
+        Self { row: gtk::Box::new(gtk::Orientation::Horizontal, spacing), key: RefCell::new(String::new()) }
+    }
+
+    /// Takes the row out of the box it is in, to be put back once that is drawn again.
+    pub fn detach(&self) {
+        if let Some(parent) = self.row.parent().and_downcast::<gtk::Box>() {
+            parent.remove(&self.row);
+        }
+    }
+
+    /// Has `build` make the buttons again, into the emptied row, if they are to offer something else than they do.
+    pub fn update(&self, key: &str, build: impl FnOnce(&gtk::Box)) {
+        if *self.key.borrow() != key {
+            clear(&self.row);
+            self.key.replace(key.to_owned());
+            build(&self.row);
+        }
+    }
+
+    /// The next `update` makes the buttons whatever it is given.
+    pub fn forget(&self) {
+        self.key.replace(String::new());
+    }
+}
+
+/// Runs `tick` on `me` once a second, until it says to stop or `me` is gone: how a running job's progress is read.
+pub fn every_second<T: 'static>(me: &Rc<T>, tick: impl Fn(&Rc<T>) -> glib::ControlFlow + 'static) -> glib::SourceId {
+    let me = Rc::downgrade(me);
+    glib::timeout_add_local(Duration::from_secs(1), move || match me.upgrade() {
+        Some(me) => tick(&me),
+        None => glib::ControlFlow::Break,
+    })
+}
+
 /// A sentence of the engine's, shown as an error.
 pub fn error_label(text: &str) -> gtk::Label {
     let l = label(&engine_says(text), "meta");
@@ -225,10 +284,6 @@ fn pick_folder(picker: &dyn omui::FilePicker, title: &str, chosen: impl FnOnce(S
 
 impl SetupPage {
     pub fn build(engine: Arc<Engine>) -> Rc<Self> {
-        Self::with_picker(engine, Rc::new(omui::PortalFilePicker::new()))
-    }
-
-    pub fn with_picker(engine: Arc<Engine>, picker: Rc<dyn omui::FilePicker>) -> Rc<Self> {
         let (scroll, body) = crate::cards::column(12);
         let status = label("", "meta");
         let job_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -238,8 +293,7 @@ impl SetupPage {
             window: RefCell::new(None),
             body,
             job_box,
-            job_buttons: gtk::Box::new(gtk::Orientation::Horizontal, 8),
-            job_buttons_for: RefCell::new(String::new()),
+            job_buttons: KeptButtons::new(8),
             status,
             state: RefCell::new(Value::Null),
             pack: RefCell::new(None),
@@ -250,7 +304,7 @@ impl SetupPage {
             job: RefCell::new(Value::Null),
             progress: RefCell::new(None),
             held: RefCell::new(None),
-            picker,
+            picker: omui::PortalFilePicker::new(),
             said: RefCell::new((String::new(), false)),
             returned: RefCell::new(None),
         })
@@ -260,11 +314,7 @@ impl SetupPage {
     fn say(&self, text: &str, error: bool) {
         self.said.replace((text.to_owned(), error));
         self.status.set_text(&engine_says(text));
-        if error {
-            self.status.add_css_class("error");
-        } else {
-            self.status.remove_css_class("error");
-        }
+        omui::set_class(&self.status, "error", error);
     }
 
     /// After a language switch: the page is drawn again from the state last read, and the line under the buttons
@@ -313,12 +363,7 @@ impl SetupPage {
                 Ok(st) => me.draw(st),
                 Err(e) => {
                     clear(&me.body);
-                    let again = Rc::downgrade(&me);
-                    me.body.append(&crate::cards::problem(&tr("Lastbook could not read what there is to download."), &e.to_string(), move || {
-                        if let Some(me) = again.upgrade() {
-                            me.refresh();
-                        }
-                    }));
+                    me.body.append(&crate::cards::problem(&tr("Lastbook could not read what there is to download."), &e.to_string(), &me, |me| me.refresh()));
                 }
             }
         });
@@ -364,15 +409,11 @@ impl SetupPage {
             self.body.append(&l);
         }
         let need = &rec["need_bytes"];
-        let mut group: Option<gtk::CheckButton> = None;
+        // Each pack, then (managing a library) keeping it as it is: one choice of them.
+        let mut choices: Vec<(Option<String>, gtk::CheckButton)> = Vec::new();
         for p in st["manifest"]["packs"].as_array().into_iter().flatten() {
             let id = p["id"].as_str().unwrap_or_default().to_owned();
             let row = gtk::CheckButton::new();
-            if let Some(g) = &group {
-                row.set_group(Some(g));
-            } else {
-                group = Some(row.clone());
-            }
             let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
             let (title, size) = (engine_says(p["title"].as_str().unwrap_or(&id)), gb(p["installed_bytes"].as_f64().unwrap_or(0.0)));
             let head = if rec["pack"] == id.as_str() { tr!("{} · {} (recommended)", title, size) } else { tr!("{} · {}", title, size) };
@@ -382,37 +423,32 @@ impl SetupPage {
                 text.append(&label(&tr!("Needs {} free while it downloads and unpacks", gb(n)), "meta"));
             }
             row.set_child(Some(&text));
-            row.add_css_class("choice-row");
             row.set_sensitive(p["available"].as_bool().unwrap_or(true));
-            row.set_active(self.pack.borrow().as_deref() == Some(&id));
+            choices.push((Some(id), row));
+        }
+        if !first {
+            let none = gtk::CheckButton::with_label(&tr("Keep the library as it is"));
+            crate::cards::wrap_check(&none);
+            choices.push((None, none));
+        }
+        let mut group: Option<gtk::CheckButton> = None;
+        for (choice, row) in choices {
+            match &group {
+                Some(g) => row.set_group(Some(g)),
+                None => group = Some(row.clone()),
+            }
+            row.add_css_class("choice-row");
+            let on = *self.pack.borrow() == choice;   // read first: ticking it writes the choice
             let me = Rc::downgrade(self);
             row.connect_toggled(move |b| {
                 if b.is_active()
                     && let Some(me) = me.upgrade()
                 {
-                    me.pack.replace(Some(id.clone()));
+                    me.pack.replace(choice.clone());
                 }
             });
+            row.set_active(on);
             self.body.append(&row);
-        }
-        if !first {
-            let none = gtk::CheckButton::with_label(&tr("Keep the library as it is"));
-            if let Some(g) = &group {
-                none.set_group(Some(g));
-            }
-            none.add_css_class("choice-row");
-            crate::cards::wrap_check(&none);
-            let me = Rc::downgrade(self);
-            none.connect_toggled(move |b| {
-                if b.is_active()
-                    && let Some(me) = me.upgrade()
-                {
-                    me.pack.replace(None);
-                }
-            });
-            let keep = self.pack.borrow().is_none();   // read first: ticking it writes the choice
-            none.set_active(keep);
-            self.body.append(&none);
         }
 
         self.draw_maps(&st);
@@ -426,37 +462,29 @@ impl SetupPage {
             path.set_hexpand(true);
             let choose = gtk::Button::with_label(&tr("Choose folder…"));
             choose.add_css_class("chip");
-            let me = Rc::downgrade(self);
-            let pl = path.clone();
-            choose.connect_clicked(move |_| {
-                if let Some(me) = me.upgrade() {
-                    me.choose_folder(pl.clone());
-                }
+            let shown = path.clone();
+            on_click(&choose, self, move |me| {
+                let shown = shown.clone();
+                me.pick(&tr("Where should the library go?"), move |me, p| {
+                    shown.set_text(&p);
+                    me.folder.replace(Some(p));
+                });
             });
             row.append(&path);
             row.append(&choose);
             self.body.append(&row);
-            let use_existing = crate::cards::wrap_button(&tr("Use a library or pack already on this computer…"));
-            use_existing.add_css_class("chip");
+            let use_existing = crate::cards::wrap_button(&tr("Use a library or pack already on this computer…"), "chip");
             use_existing.set_halign(gtk::Align::Start);
-            let me = Rc::downgrade(self);
-            use_existing.connect_clicked(move |_| {
-                if let Some(me) = me.upgrade() {
-                    me.use_existing();
-                }
+            on_click(&use_existing, self, |me| {
+                me.pick(&tr("Choose a LastbookData folder, or the folder that holds a pack zip"), |me, p| me.post("/api/setup/use", json!({"path": p})));
             });
             self.body.append(&use_existing);
             for f in st["found"].as_array().into_iter().flatten() {
                 let path = f["path"].as_str().unwrap_or_default();
-                let b = crate::cards::wrap_button(&if f["kind"] == "pack" { tr!("Use the pack found at {}", path) } else { tr!("Use the library found at {}", path) });
-                b.add_css_class("chip");
+                let b = crate::cards::wrap_button(&if f["kind"] == "pack" { tr!("Use the pack found at {}", path) } else { tr!("Use the library found at {}", path) }, "chip");
                 b.set_halign(gtk::Align::Start);
-                let (me, p) = (Rc::downgrade(self), f["path"].as_str().unwrap_or_default().to_owned());
-                b.connect_clicked(move |_| {
-                    if let Some(me) = me.upgrade() {
-                        me.post("/api/setup/use", json!({"path": p}));
-                    }
-                });
+                let p = f["path"].as_str().unwrap_or_default().to_owned();
+                on_click(&b, self, move |me| me.post("/api/setup/use", json!({"path": p})));
                 self.body.append(&b);
             }
         }
@@ -465,22 +493,12 @@ impl SetupPage {
         actions.set_margin_top(12);
         let start = gtk::Button::with_label(&if first { tr("Download and set up") } else { tr("Download") });
         start.add_css_class("suggested-action");
-        let me = Rc::downgrade(self);
-        start.connect_clicked(move |_| {
-            if let Some(me) = me.upgrade() {
-                me.start();
-            }
-        });
+        on_click(&start, self, |me| me.start());
         actions.append(&start);
         if !first {
             let repair = gtk::Button::with_label(&tr("Check every file"));
             repair.add_css_class("chip");
-            let me = Rc::downgrade(self);
-            repair.connect_clicked(move |_| {
-                if let Some(me) = me.upgrade() {
-                    me.post("/api/setup/start", json!({"repair": true}));
-                }
-            });
+            on_click(&repair, self, |me| me.post("/api/setup/start", json!({"repair": true})));
             actions.append(&repair);
         }
         // The only request setup makes unasked for a download: whether newer libraries have been published since this
@@ -510,33 +528,16 @@ impl SetupPage {
         self.draw_job(&st["job"]);
     }
 
-    fn choose_folder(self: &Rc<Self>, shown: gtk::Label) {
+    /// Asks for a folder (`pick_folder`), titled `title`, and hands the one picked to `chosen`; why the desktop could
+    /// not ask is said on the line under the buttons.
+    fn pick(self: &Rc<Self>, title: &str, chosen: impl FnOnce(&Rc<Self>, String) + 'static) {
         let (me, failed) = (Rc::downgrade(self), Rc::downgrade(self));
         pick_folder(
-            &*self.picker,
-            &tr("Where should the library go?"),
+            &self.picker,
+            title,
             move |p| {
                 if let Some(me) = me.upgrade() {
-                    shown.set_text(&p);
-                    me.folder.replace(Some(p));
-                }
-            },
-            move |why| {
-                if let Some(me) = failed.upgrade() {
-                    me.say(&why, true);
-                }
-            },
-        );
-    }
-
-    fn use_existing(self: &Rc<Self>) {
-        let (me, failed) = (Rc::downgrade(self), Rc::downgrade(self));
-        pick_folder(
-            &*self.picker,
-            &tr("Choose a LastbookData folder, or the folder that holds a pack zip"),
-            move |p| {
-                if let Some(me) = me.upgrade() {
-                    me.post("/api/setup/use", json!({"path": p}));
+                    chosen(&me, p);
                 }
             },
             move |why| {
@@ -623,16 +624,12 @@ impl SetupPage {
         });
         self.body.append(&dd);
         for id in self.regions.borrow().iter() {
-            let b = crate::cards::wrap_button(&format!("{} ✕", name_of(id)));
-            b.add_css_class("chip");
+            let b = crate::cards::wrap_button(&format!("{} ✕", name_of(id)), "chip");
             omui::i18n::bind_tooltip(&b, "Remove");
-            let me = Rc::downgrade(self);
             let id = id.clone();
-            b.connect_clicked(move |_| {
-                if let Some(me) = me.upgrade() {
-                    me.regions.borrow_mut().retain(|x| *x != id);
-                    me.redraw();
-                }
+            on_click(&b, self, move |me| {
+                me.regions.borrow_mut().retain(|x| *x != id);
+                me.redraw();
             });
             chips.insert(&b, -1);
         }
@@ -704,9 +701,7 @@ impl SetupPage {
         let seen = self.root.is_mapped() && self.window.borrow().as_ref().is_some_and(|w| w.is_active());
         let wanted = seen && moves(&self.job.borrow());
         if wanted && self.progress.borrow().is_none() {
-            let me = Rc::downgrade(self);
-            let timer = glib::timeout_add_local(Duration::from_secs(1), move || {
-                let Some(me) = me.upgrade() else { return glib::ControlFlow::Break };
+            let timer = every_second(self, |me| {
                 me.read_job();
                 glib::ControlFlow::Continue
             });
@@ -845,20 +840,14 @@ impl SetupPage {
             self.come_back();
         }
         // Everything but the buttons is drawn again; the buttons stay (detached, then put back) unless they change.
-        if self.job_buttons.parent().is_some() {
-            self.job_box.remove(&self.job_buttons);
-        }
+        self.job_buttons.detach();
         clear(&self.job_box);
-        let Some(items) = job["items"].as_array().filter(|i| !i.is_empty()) else { return };
+        if job["items"].as_array().is_none_or(|i| i.is_empty()) {
+            return;
+        }
         self.job_box.append(&crate::cards::section(&tr("Progress")));
         let regions = self.state.borrow()["map_regions"].as_array().cloned().unwrap_or_default();
-        let mut said: Vec<String> = Vec::new();   // an item's reason is not repeated as the job's
-        for it in items {
-            if let Some(e) = it["error"]["message"].as_str() {
-                said.push(e.to_owned());
-            }
-            self.job_box.append(&item_row(it, &regions));
-        }
+        job_rows(&self.job_box, job, &regions);
         let state = job["state"].as_str().unwrap_or_default();
         // What the buttons offer, not the job's every phase (downloading, verifying, unpacking… all offer Pause/Cancel).
         let elsewhere = job["elsewhere"] == true;   // another window's engine runs it: its buttons would act on that one's files
@@ -868,53 +857,38 @@ impl SetupPage {
             "failed" => format!("failed/{}", job["error"]["code"].as_str().unwrap_or_default() == "cancelled"),
             _ => "active".to_owned(),
         };
-        let fresh = *self.job_buttons_for.borrow() != offer;
-        if fresh {
-            clear(&self.job_buttons);
-            self.job_buttons_for.replace(offer);
-        }
-        let buttons = self.job_buttons.clone();
-        let add = |text: String, path: &'static str, primary: bool| {
-            if !fresh {
-                return;
-            }
-            let b = gtk::Button::with_label(&text);
-            b.add_css_class(if primary { "suggested-action" } else { "chip" });
-            let me = Rc::downgrade(self);
-            b.connect_clicked(move |_| {
-                let Some(me) = me.upgrade() else { return };
-                if path == "/api/setup/cancel" {
-                    me.ask_cancel();
-                } else {
-                    me.post(path, json!({}));
+        self.job_buttons.update(&offer, |row| {
+            let add = |text: String, path: &'static str, primary: bool| {
+                let b = gtk::Button::with_label(&text);
+                b.add_css_class(if primary { "suggested-action" } else { "chip" });
+                on_click(&b, self, move |me| {
+                    if path == "/api/setup/cancel" {
+                        me.ask_cancel();
+                    } else {
+                        me.post(path, json!({}));
+                    }
+                });
+                row.append(&b);
+            };
+            match state {
+                "done" => add(tr("Open the library"), "/api/setup/finish", true),
+                "failed" if job["error"]["code"] == "cancelled" => {}   // the person's own cancel: nothing to try again
+                "failed" => {
+                    add(tr("Try again"), "/api/setup/retry", true);
+                    add(tr("Cancel"), "/api/setup/cancel", false);
                 }
-            });
-            buttons.append(&b);
-        };
-        match state {
-            "done" => add(tr("Open the library"), "/api/setup/finish", true),
-            "failed" if job["error"]["code"] == "cancelled" => {}   // the person's own cancel: nothing to try again
-            "failed" => {
-                add(tr("Try again"), "/api/setup/retry", true);
-                add(tr("Cancel"), "/api/setup/cancel", false);
+                _ if elsewhere => {}
+                "paused" => {
+                    add(tr("Resume"), "/api/setup/resume", true);
+                    add(tr("Cancel"), "/api/setup/cancel", false);
+                }
+                _ => {
+                    add(tr("Pause"), "/api/setup/pause", false);
+                    add(tr("Cancel"), "/api/setup/cancel", false);
+                }
             }
-            _ if elsewhere => {}
-            "paused" => {
-                add(tr("Resume"), "/api/setup/resume", true);
-                add(tr("Cancel"), "/api/setup/cancel", false);
-            }
-            _ => {
-                add(tr("Pause"), "/api/setup/pause", false);
-                add(tr("Cancel"), "/api/setup/cancel", false);
-            }
-        }
-        if let Some(e) = job["error"]["message"].as_str().filter(|e| !said.iter().any(|s| s == e)) {
-            self.job_box.append(&error_label(e));
-        }
-        if elsewhere {
-            self.job_box.append(&label(&tr("This download is running in another Lastbook window. Use that window to pause or cancel it."), "meta"));
-        }
-        self.job_box.append(&buttons);
+        });
+        self.job_box.append(&self.job_buttons.row);
     }
 }
 

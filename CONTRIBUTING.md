@@ -6,7 +6,7 @@ stays correct, and never sends anything anywhere.
 ## Set up
 
 1. Clone the repository on Omarchy, install Rust, and use the system's Python 3 (`/usr/bin/python3`, which the window starts),
-   with `python-numpy` and `python-beautifulsoup4` from pacman.
+   with `python-numpy` from pacman.
 2. Build the window with `cargo build --manifest-path native/Cargo.toml`. `bin/test-deps` fetches the two Python packages
    Arch does not carry (README, "Run from source").
 3. Get a data folder: run the window (README, "Run from source") and let setup download the Small pack, or unzip a pack
@@ -35,14 +35,13 @@ PYTHONPATH=$(bin/test-deps) python3 tools/validate_topics.py --data /path/to/Las
 encyclopedias that only the larger packs hold, and the app leaves those out of a smaller pack; `--allow-absent` lists
 them under "NOT IN THIS LIBRARY" without counting them, so on Small the run ends `ERRORS 0` and a new error is yours. A
 mistyped id is listed there too, so read that list for anything you added. Leave out `--allow-absent` on the All pack.
-It reads the library's files directly and needs no server. `tools/libq.py` takes the same `--data` and finds and reads
-the page you mean to cite: `python3 tools/libq.py --data /path/to/LastbookData search "boil water"`.
+It reads the library's files directly and needs no server. `lastbook search` takes the same `--data` and finds the page
+you mean to cite, and `lastbook read --pages` reads it: `lastbook --data /path/to/LastbookData search "boil water"`.
 
 ## Rules that keep Lastbook what it is
 
-**No network.** The app opens no port and makes no connection, with one exception, started by the person and made
-through `engine/setup/download.py` to the hosts in `ALLOWED_HOSTS` only: setup's downloads. Updates to the app itself come
-from pacman, never from the app.
+**No network.** The app opens no port and makes no connection but setup's downloads, as the README's
+[Privacy and network use](README.md#privacy-and-network-use) sets out. Keep it so:
 
 - No telemetry, analytics, crash reporting, fonts or scripts from the web, update checks, or "phone home" of any kind.
 - A new dependency must work fully offline, and must not open a socket or start a server. Say in the pull request what

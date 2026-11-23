@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Validate the package for both architectures before copying it for signing.
-# Usage: bin/collect-packages <artifact-root> <source-commit> <output> [<pkgver-pkgrel>]
+# Usage: bin/collect-packages <artifact-root> <source-commit> <output> <pkgver-pkgrel>
 set -euo pipefail
-root=${1:?artifact root required} commit=${2:?source commit required} output=${3:?output required}
+root=${1:?artifact root required} commit=${2:?source commit required} output=${3:?output required} version=${4:?pkgver-pkgrel required}
 [[ $commit =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid source commit' >&2; exit 1; }
 source "$(dirname "$0")/../packaging/arch/PKGBUILD"
 files=()
-version=${4:-}
 shopt -s nullglob
 for architecture in "${arch[@]}"; do
   directory=$root/$pkgname-$architecture
@@ -17,7 +16,6 @@ for architecture in "${arch[@]}"; do
   grep -qxF "pkgname = $pkgname" <<< "$metadata" || { echo "The $architecture package is not $pkgname" >&2; exit 1; }
   grep -qxF "arch = $architecture" <<< "$metadata" || { echo "The $architecture package was built for another architecture" >&2; exit 1; }
   actual_version=$(sed -n 's/^pkgver = //p' <<< "$metadata")
-  version=${version:-$actual_version}
   [[ $actual_version == "$version" ]] || { echo "Versions differ: $actual_version, expected $version" >&2; exit 1; }
   [[ $(basename "${found[0]}") == "$pkgname-$version-$architecture.pkg.tar.zst" ]] \
     || { echo "Unexpected $architecture package name: $(basename "${found[0]}")" >&2; exit 1; }

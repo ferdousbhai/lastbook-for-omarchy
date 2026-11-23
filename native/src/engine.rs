@@ -32,13 +32,11 @@ pub struct Ready {
     /// True when there is no library yet and the engine runs first-run setup.
     #[serde(default)]
     pub setup: bool,
-    #[serde(default)]
     pub data: Option<PathBuf>,
     #[serde(default)]
     pub library: PathBuf,
     pub version: Option<String>,
     /// A sentence for the person, when a library switch failed or was undone at this start.
-    #[serde(default)]
     pub notice: Option<String>,
 }
 
@@ -105,17 +103,21 @@ pub fn load_json<T: serde::de::DeserializeOwned + Default>(path: &std::path::Pat
     std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
-/// Writes such a file whole or not at all: to a file beside it, sent to the disk, then renamed over it. What stopped
-/// it is the caller's to show the person: something they saved that is not on the disk must not look saved.
+/// Writes such a file whole or not at all (`write_atomic`), making its folder first. What stopped it is the caller's
+/// to show the person: something they saved that is not on the disk must not look saved.
 pub fn store_json<T: serde::Serialize + ?Sized>(path: &std::path::Path, value: &T) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let bytes = serde_json::to_vec(value)?;
+    write_atomic(path, &serde_json::to_vec(value)?)
+}
+
+/// Writes `bytes` to `path` whole or not at all: to a file beside it, sent to the disk, then renamed over it.
+pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     let written = (|| {
         let mut file = std::fs::File::create(&tmp)?;
-        file.write_all(&bytes)?;
+        file.write_all(bytes)?;
         file.sync_all()?;
         std::fs::rename(&tmp, path)
     })();

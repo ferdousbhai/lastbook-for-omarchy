@@ -7,13 +7,14 @@ library and a stand-in Recall; no window, no port, no network.
 
 The engine reads its data folder when it is first imported, so the routes are asked in a process of their own, over a
 library made here, as test_search_keyword does."""
-import json, os, sqlite3, subprocess, sys, tempfile, unittest
+import json, os, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path[:0] = [str(ROOT), str(HERE)]
+from fixture import search_db  # noqa: E402
 
 TMP = Path(tempfile.mkdtemp(prefix='lastbook-reading-'))
 ENV = {**os.environ, 'HOME': str(TMP / 'home'), 'XDG_CONFIG_HOME': str(TMP / 'home/config'), 'XDG_DATA_HOME': str(TMP / 'home/data'),
@@ -21,7 +22,6 @@ ENV = {**os.environ, 'HOME': str(TMP / 'home'), 'XDG_CONFIG_HOME': str(TMP / 'ho
        'PYTHONPATH': os.pathsep.join([str(ROOT), str(ROOT / 'app'), os.environ.get('PYTHONPATH', '')])}
 for k in ('LASTBOOK_DATA', 'LASTBOOK_DEV', 'LASTBOOK_OPEN'):
     ENV.pop(k, None)
-TABLE = 'CREATE VIRTUAL TABLE pages USING fts5(doc_id UNINDEXED,title,collection,category,path UNINDEXED,page UNINDEXED,body,tokenize="unicode61")'
 PAGES = ['Boil the water for one minute.', 'Store the treated water in a clean container.']
 
 
@@ -41,16 +41,12 @@ def library():
         (lib / r['path']).write_bytes(b'x')
     (lib / 'catalog.json').write_text(json.dumps(recs))
     (lib / 'summary.json').write_text('{"resources": 4}')
-    con = sqlite3.connect(lib / 'search.sqlite')
-    con.execute(TABLE)
-    con.executemany('INSERT INTO pages VALUES (?,?,?,?,?,?,?)', [
+    search_db(lib / 'search.sqlite', [
         ('water', 'Safe water', 'Test', 'test', 'documents/water.pdf', 1, PAGES[0]),
         ('water', 'Safe water', 'Test', 'test', 'documents/water.pdf', 2, PAGES[1]),
         ('wells', 'Wells', 'Test', 'test', 'documents/wells.pdf', 1, 'Dig the well uphill from latrines to keep the water safe.'),
         ('fire', 'Fire', 'Test', 'test', 'documents/fire.pdf', 1, 'Gather dry tinder first.'),
         ('rope', 'Rope', 'Test', 'test', 'pages/rope.html', 1, 'A bowline makes a fixed loop.')])
-    con.commit()
-    con.close()
     return data
 
 
@@ -131,7 +127,6 @@ class Centroid(unittest.TestCase):
         cat, db = make_library()
         sock = TMP / 'recall.sock'
         fake = FakeRecall(sock)
-        fake.start()
         ix = retrieval.Index(lambda: cat, lambda r: ('Reference', 1.0), db, retrieval.Recall(sock))
         try:
             self.assertEqual(ix.update(), 3)

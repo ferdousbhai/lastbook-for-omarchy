@@ -3,8 +3,9 @@
 # stubbed, inside a user and mount namespace where /etc/pacman.conf,
 # /etc/pacman.d and /root are scratch copies: nothing on this machine
 # changes. Covers both architectures, plain Arch, re-running and options.
-# First, outside the namespace, checks the add_signed_repo hash; only the
-# installer runs are skipped where unprivileged namespaces are off.
+# First, outside the namespace, checks that every shell script parses
+# (`bash -n`) and the add_signed_repo hash; only the installer runs are
+# skipped where unprivileged namespaces are off.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$PWD"
@@ -20,6 +21,7 @@ check() { # check <description> <command...>
 not() { ! "$@"; }
 
 if [[ ${LASTBOOK_INSTALL_TEST_INNER:-} != 1 ]]; then
+  git ls-files bin '*.sh' packaging/arch/PKGBUILD | xargs -n1 bash -n   # every shell script parses
   hash_of() { sed -n '/^# --- add_signed_repo (shared) ---$/,/^# --- end add_signed_repo ---$/p' "$1" | sed '1d;$d' | sha256sum | cut -d' ' -f1; }
   check "add_signed_repo hash in install.sh" [ "$(hash_of install.sh)" = "$(cat tests/add_signed_repo.sha256)" ]
   if ((fail)); then

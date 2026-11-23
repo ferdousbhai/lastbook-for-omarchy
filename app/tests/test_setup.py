@@ -7,7 +7,7 @@ The test server lives only in this file: it serves a small fake pack and a large
 for the run, and can cut the connection mid-file, send wrong bytes, change the file's ETag, ignore Range, or redirect anywhere.
 The product's allowlist is not touched: tests pass their own `allowed` and TLS context to the downloader. Never packaged.
 """
-import hashlib, http.server, io, json, os, shutil, signal, socketserver, sqlite3, ssl, subprocess, sys, tempfile, threading, time, unittest, zipfile
+import hashlib, http.server, io, json, os, shutil, sqlite3, ssl, subprocess, sys, tempfile, threading, time, unittest, zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -16,6 +16,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path[:0] = [str(HERE.parent), str(ROOT)]
 from engine.setup import api, download, hardware, install, manifest, maps  # noqa: E402
+from app.tests import fixture  # noqa: E402
 
 ALLOWED = {'127.0.0.1'}     # an address, not 'localhost': the system may try ::1 first, which the test server does not listen on
 MiB = 1024 * 1024
@@ -126,38 +127,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
 
-class TLSServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-    daemon_threads = True
-    allow_reuse_address = True
-
-    def handle_error(self, request, client_address):
-        """A client that pauses, cancels or is killed drops its connection, which is what these tests ask for. The server's
-        next read can then raise ConnectionResetError, and the default handler would print a traceback into a passing run.
-        Anything else is still printed."""
-        if not isinstance(sys.exception(), ConnectionError):
-            super().handle_error(request, client_address)
-
-
-def certificate(folder):
-    key, crt = folder / 'key.pem', folder / 'cert.pem'
-    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=localhost',
-                    '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1', '-keyout', str(key), '-out', str(crt)],
-                   check=True, capture_output=True)
-    return key, crt
-
-
-def start_server(folder, files):
-    key, crt = certificate(folder)
-    srv = TLSServer(('127.0.0.1', 0), Handler)
-    sctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    sctx.load_cert_chain(crt, key)
-    srv.socket = sctx.wrap_socket(srv.socket, server_side=True)
-    srv.files = files
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    cctx = ssl.create_default_context(cafile=str(crt))
-    return srv, cctx, f'https://127.0.0.1:{srv.server_address[1]}'
-
-
 class Control:
     def __init__(self):
         self.ev = threading.Event()
@@ -172,7 +141,7 @@ class Base(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp_class = Path(tempfile.mkdtemp(prefix='lastbook-setup-srv-')).resolve()
         cls.files = Files()
-        cls.srv, cls.ctx, cls.base = start_server(cls.tmp_class, cls.files)
+        cls.srv, cls.ctx, cls.base = fixture.start_server(cls.tmp_class, cls.files, Handler)
 
     @classmethod
     def tearDownClass(cls):
@@ -211,7 +180,7 @@ class Base(unittest.TestCase):
 
     def setup(self, mode='first-run', current=None, **kw):
         kw.setdefault('manifest', self.manifest())
-        return api.Setup(mode, self.settings, self.parent, current=current, allowed=ALLOWED, context=self.ctx, home=self.home, **kw)
+        return api.Setup(mode, self.settings, self.parent, current=current, allowed=ALLOWED, context=self.ctx, **kw)
 
     def wait(self, s, states=('done', 'failed', 'paused'), timeout=60):
         t0 = time.time()
@@ -354,7 +323,7 @@ class Downloads(Base):
             Path(p).write_bytes(bytes(len(self.blob)))         # other bytes behind a record that now names another time
             self.assertEqual(Path(self.dl('blob.bin').run()).read_bytes(), self.blob)
         self.assertEqual(len(self.files.log), 2)
-        download.remove(p)
+        os.unlink(p)
         self.assertEqual(list(Path(p).parent.iterdir()), [])
 
     def test_a_busy_server_is_asked_again(self):
@@ -1488,7 +1457,7 @@ def child(cfg):
             prog = a[4]
             return real(*a[:4], lambda d, t: (time.sleep(0.002), prog(d, t)))
         install.unpack = slow
-    s = api.Setup('first-run', cfg['settings'], cfg['parent'], manifest=m, allowed=ALLOWED, context=ctx, home=cfg['home'])
+    s = api.Setup('first-run', cfg['settings'], cfg['parent'], manifest=m, allowed=ALLOWED, context=ctx)
     print(s.start('small'), flush=True)
     time.sleep(600)
 

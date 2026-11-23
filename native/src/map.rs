@@ -17,15 +17,16 @@ use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, VecDeque},
     f64::consts::PI,
-    path::{Path, PathBuf},
+    path::Path,
     rc::{Rc, Weak},
 };
 
-use gtk::{gdk, glib, pango, prelude::*};
+use gtk::{cairo, gdk, glib, pango, prelude::*};
 use omui::{Theme, Tokens, blend};
 use serde_json::{Value, json};
 
 use crate::{
+    cards::on_click,
     engine::query,
     mvt::{self, Feature, Geom, Layer},
     setup,
@@ -84,33 +85,25 @@ impl Source {
     }
 }
 
-/// Every map file of the library: regions first (finer), then the world.
-fn open_sources(geo: &Path) -> Vec<Source> {
-    let mut regions: Vec<PathBuf> = std::fs::read_dir(geo)
+/// The map files in `geo`, by name, with their sizes: a download that adds or finishes one changes them.
+fn map_files(geo: &Path) -> Vec<(String, u64)> {
+    let mut files: Vec<(String, u64)> = std::fs::read_dir(geo)
         .into_iter()
         .flatten()
         .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("regions-") && n.ends_with(".mbtiles")))
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.metadata().map(|m| m.len()).unwrap_or(0)))
+        .filter(|(n, _)| n.ends_with(".mbtiles"))
         .collect();
-    regions.sort();
-    let mut out: Vec<Source> = regions.iter().filter_map(|p| Source::open(p)).collect();
-    out.extend(Source::open(&geo.join("world.mbtiles")));
-    out
+    files.sort();
+    files
 }
 
-fn files_seen(geo: &Path) -> String {
-    let mut v: Vec<String> = std::fs::read_dir(geo)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| {
-            let n = e.file_name().to_string_lossy().into_owned();
-            n.ends_with(".mbtiles").then(|| format!("{n}:{}", e.metadata().map(|m| m.len()).unwrap_or(0)))
-        })
-        .collect();
-    v.sort();
-    v.join("|")
+/// Every map file of the library (`files`, in `geo`): regions first (finer), then the world.
+fn open_sources(geo: &Path, files: &[(String, u64)]) -> Vec<Source> {
+    let regions = files.iter().filter(|(n, _)| n.starts_with("regions-"));
+    let mut out: Vec<Source> = regions.filter_map(|(n, _)| Source::open(&geo.join(n))).collect();
+    out.extend(Source::open(&geo.join("world.mbtiles")));
+    out
 }
 
 // ---------------------------------------------------------------------------------------------------------- colours --
@@ -138,7 +131,8 @@ struct Style {
 impl Style {
     /// The map in the theme's colours: its green for what grows, its text colour for what is built.
     fn from(theme: &Theme) -> Self {
-        Self::of(&theme.tokens(), &theme.color("green").unwrap_or_else(|| theme.tokens().success))
+        let t = theme.tokens();
+        Self::of(&t, &theme.color("green").unwrap_or_else(|| t.success.clone()))
     }
 
     fn of(t: &Tokens, green: &str) -> Self {
@@ -199,9 +193,21 @@ type Layers = Rc<Vec<Layer>>;
 
 struct Cached {
     image: Option<cairo::ImageSurface>,
-    layers: Rc<Vec<Layer>>,
+    layers: Layers,
     /// The tile the data came from (it is scaled up when coarser than the tile drawn).
     from: (u32, u32, u32),
+}
+
+impl Cached {
+    /// Where tile `key` lies in the data it is drawn from: how many times finer it is (k), its place in tiles of its
+    /// own size from the data's corner (ox, oy), and the data's extent (its units across).
+    fn transform(&self, (z, x, y): (u32, u32, u32)) -> (f64, f64, f64, f64) {
+        let dz = z - self.from.0;
+        let k = f64::from(1u32 << dz);
+        let (ox, oy) = (f64::from(x - (self.from.1 << dz)), f64::from(y - (self.from.2 << dz)));
+        let extent = self.layers.first().map(|l| f64::from(l.extent)).unwrap_or(4096.0);
+        (k, ox, oy, extent)
+    }
 }
 
 pub struct MapPage {
@@ -242,12 +248,11 @@ pub struct MapPage {
     /// The regions the engine named for the place, not yet installed ({id, name}).
     near_regions: RefCell<Vec<Value>>,
     /// The setup job as last read, whether the panel is showing it, the timer that reads its progress, and the buttons
-    /// that act on it (made again only when what they offer changes, so the keyboard's focus stays on them).
+    /// that act on it.
     job: RefCell<Value>,
     following: Cell<bool>,
     job_timer: RefCell<Option<glib::SourceId>>,
-    job_buttons: gtk::Box,
-    job_buttons_for: RefCell<String>,
+    job_buttons: setup::KeptButtons,
     help_list: gtk::ListBox,
     /// What the list's rows go to, by index: a point ({lat, lon}) or a street-level map ({bounds}); None for a heading.
     help_rows: RefCell<Vec<Option<Value>>>,
@@ -261,7 +266,7 @@ pub struct MapPage {
 }
 
 impl MapPage {
-    pub fn build(app: &Rc<App>) -> Rc<Self> {
+    pub fn build(app: &Weak<App>, theme: &Rc<Theme>) -> Rc<Self> {
         let area = gtk::DrawingArea::new();
         area.set_hexpand(true);
         area.set_vexpand(true);
@@ -312,13 +317,10 @@ impl MapPage {
         info.set_autohide(false);   // the map keeps the keyboard and the pointer; moving it closes this
         // On the overlay, where the map's place is (0, 0): GTK closes a popover of the drawing area as soon as it opens.
         info.set_parent(&overlay);
-        let info_text = (gtk::Label::new(None), gtk::Label::new(None), gtk::Label::new(None));
+        let info_text = (omui::label("", "result-title"), omui::label("", "meta"), omui::label("", "meta"));
         let info_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        for (l, class) in [(&info_text.0, "result-title"), (&info_text.1, "meta"), (&info_text.2, "meta")] {
-            l.set_xalign(0.0);
-            l.set_wrap(true);
+        for l in [&info_text.0, &info_text.1, &info_text.2] {
             l.set_max_width_chars(36);
-            l.add_css_class(class);
             info_box.append(l);
         }
         info.set_child(Some(&info_box));
@@ -353,10 +355,8 @@ impl MapPage {
         head.append(&titles);
         head.append(&here);
         head.append(&close);
-        let panel_note = gtk::Label::new(None);
-        panel_note.set_wrap(true);
+        let panel_note = omui::label("", "");
         panel_note.set_max_width_chars(30);
-        panel_note.set_xalign(0.0);
         let panel_manage = gtk::Button::new();
         omui::i18n::bind_label(&panel_manage, "Library and downloads");
         panel_manage.set_halign(gtk::Align::Start);
@@ -364,12 +364,8 @@ impl MapPage {
         let offer = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let help_list = gtk::ListBox::new();
         help_list.add_css_class("map-results");
-        let foot = gtk::Label::new(None);
+        let foot = meta("");
         omui::i18n::bind_label(&foot, "Offline map data: it may be out of date and shows no closures or damage. Distances are straight lines.");
-        foot.set_wrap(true);
-        foot.set_max_width_chars(30);
-        foot.set_xalign(0.0);
-        foot.add_css_class("meta");
         panel.append(&head);
         panel.append(&panel_note);
         panel.append(&offer);
@@ -380,10 +376,10 @@ impl MapPage {
 
         let page = Rc::new(Self {
             root: overlay.upcast(),
-            app: Rc::downgrade(app),
+            app: app.clone(),
             area,
             sources: RefCell::new(Vec::new()),
-            style: RefCell::new(Style::from(&app.theme)),
+            style: RefCell::new(Style::from(theme)),
             cx: Cell::new(0.5),
             cy: Cell::new(0.42),
             zoom: Cell::new(2.0),
@@ -411,8 +407,7 @@ impl MapPage {
             job: RefCell::new(Value::Null),
             following: Cell::new(false),
             job_timer: RefCell::new(None),
-            job_buttons: gtk::Box::new(gtk::Orientation::Horizontal, 6),
-            job_buttons_for: RefCell::new(String::new()),
+            job_buttons: setup::KeptButtons::new(6),
             help_list,
             help_rows: RefCell::new(Vec::new()),
             loaded: RefCell::new(String::new()),
@@ -425,11 +420,10 @@ impl MapPage {
                 me.draw(cr, f64::from(w), f64::from(h));
             }
         });
-        let me = Rc::downgrade(&page);
-        let theme = app.theme.clone();
-        app.theme.on_change(&page.area, move |_| {
+        let (me, changed) = (Rc::downgrade(&page), theme.clone());
+        theme.on_change(&page.area, move |_| {
             if let Some(me) = me.upgrade() {
-                me.style.replace(Style::from(&theme));
+                me.style.replace(Style::from(&changed));
                 me.tiles.borrow_mut().clear();
                 me.order.borrow_mut().clear();
                 me.area.queue_draw();
@@ -460,12 +454,9 @@ impl MapPage {
             grid.attach(&swatch, 0, row as i32, 1, 1);
             grid.attach(&text, 1, row as i32, 1, 1);
         }
-        let note = gtk::Label::new(None);
+        let note = omui::label("", "meta");
         omui::i18n::bind_label(&note, "Help points show once you zoom in to street level, where a street map of the area is installed. Click one for its name and distance.");
-        note.set_wrap(true);
         note.set_max_width_chars(34);
-        note.set_xalign(0.0);
-        note.add_css_class("meta");
         grid.attach(&note, 0, HELP.len() as i32, 2, 1);
         let pop = gtk::Popover::new();
         pop.set_child(Some(&grid));
@@ -473,36 +464,26 @@ impl MapPage {
     }
 
     fn help_controls(self: &Rc<Self>, help: &gtk::Button, here: &gtk::Button, close: &gtk::Button) {
-        let me = Rc::downgrade(self);
-        help.connect_clicked(move |_| {
-            if let Some(m) = me.upgrade() {
-                if m.panel.is_visible() {
-                    m.panel.set_visible(false);
-                } else {
-                    let unpinned = m.pin.borrow().is_none();
-                    if m.nearest(unpinned) {
-                        m.help_list.grab_focus();
-                    }
+        on_click(help, self, |m| {
+            if m.panel.is_visible() {
+                m.panel.set_visible(false);
+            } else {
+                let unpinned = m.pin.borrow().is_none();
+                if m.nearest(unpinned) {
+                    m.help_list.grab_focus();
                 }
             }
         });
-        let me = Rc::downgrade(self);
-        here.connect_clicked(move |_| {
-            if let Some(m) = me.upgrade() {
-                m.nearest(true);
-            }
+        on_click(here, self, |m| {
+            m.nearest(true);
         });
-        let me = Rc::downgrade(self);
-        close.connect_clicked(move |_| {
-            if let Some(m) = me.upgrade() {
-                m.panel.set_visible(false);
-                m.area.grab_focus();
-            }
+        on_click(close, self, |m| {
+            m.panel.set_visible(false);
+            m.area.grab_focus();
         });
-        let me = Rc::downgrade(self);
-        self.panel_manage.connect_clicked(move |_| {
-            if let Some(app) = me.upgrade().and_then(|m| m.app.upgrade()) {
-                app.navigate(Route::Manage);
+        on_click(&self.panel_manage, self, |m| {
+            if let Some(app) = m.app.upgrade() {
+                app.navigate(Route::Section("manage"));
             }
         });
         let me = Rc::downgrade(self);
@@ -556,8 +537,12 @@ impl MapPage {
     /// How far (in world units) the middle of what can be seen is left of the map's centre: half the panel, where it is
     /// beside the map.
     fn shift(&self) -> f64 {
-        let beside = self.panel.is_visible() && self.panel.halign() == gtk::Align::End;
-        if beside { f64::from(self.panel.width().max(300) + 12) / 2.0 / (TILE * 2f64.powf(self.zoom.get())) } else { 0.0 }
+        self.beside() / 2.0 / (TILE * 2f64.powf(self.zoom.get()))
+    }
+
+    /// How much of the map's width, in pixels, the panel takes where it is beside the map.
+    fn beside(&self) -> f64 {
+        if self.panel.is_visible() && self.panel.halign() == gtk::Align::End { f64::from(self.panel.width().max(300) + 12) } else { 0.0 }
     }
 
     /// The map centre as the person sees it: the middle of the map left of the panel.
@@ -657,27 +642,15 @@ impl MapPage {
     }
 
     fn add_heading(&self, text: &str) {
-        let h = gtk::Label::new(Some(text));
-        h.set_wrap(true);
+        let h = omui::label(text, "heading");
         h.set_max_width_chars(30);
-        h.add_css_class("heading");
-        h.set_xalign(0.0);
         h.set_margin_top(6);
         let row = gtk::ListBoxRow::builder().child(&h).activatable(false).selectable(false).focusable(false).build();
         self.help_list.append(&row);
     }
 
     fn add_row(&self, title: &str, meta: &str) {
-        let b = gtk::Box::new(gtk::Orientation::Vertical, 1);
-        for (text, class) in [(title, "result-title"), (meta, "meta")] {
-            let l = gtk::Label::new(Some(text));
-            l.set_xalign(0.0);
-            l.set_ellipsize(pango::EllipsizeMode::End);
-            l.set_max_width_chars(30);
-            l.add_css_class(class);
-            b.append(&l);
-        }
-        self.help_list.append(&b);
+        self.help_list.append(&two_lines(title, meta, true));
     }
 
     fn fill_help(self: &Rc<Self>, r: Option<Value>) {
@@ -734,17 +707,13 @@ impl MapPage {
         omui::clear(&self.offer);
         self.offer.set_sensitive(true);
         for g in self.near_regions.borrow().iter() {
-            let b = crate::cards::wrap_button(&omui::tr!("Download streets for {}", g["name"].as_str().unwrap_or_default()));
+            let class = if self.offer.first_child().is_none() { "suggested-action" } else { "chip" };
+            let b = crate::cards::wrap_button(&omui::tr!("Download streets for {}", g["name"].as_str().unwrap_or_default()), class);
             if let Some(l) = b.child().and_downcast::<gtk::Label>() {
                 l.set_max_width_chars(30);
             }
-            b.add_css_class(if self.offer.first_child().is_none() { "suggested-action" } else { "chip" });
-            let (me, id) = (Rc::downgrade(self), g["id"].clone());
-            b.connect_clicked(move |_| {
-                if let Some(me) = me.upgrade() {
-                    me.start_download(id.clone());
-                }
-            });
+            let id = g["id"].clone();
+            on_click(&b, self, move |me| me.start_download(id.clone()));
             self.offer.append(&b);
         }
         self.offer.append(&meta(&omui::tr("Its size is known once the download starts: a small country is about 0.1–0.5 GB, a large one several GB.")));
@@ -808,24 +777,12 @@ impl MapPage {
             _ => {}
         }
         self.following.set(true);
-        let focused = self.job_buttons.focus_child().is_some();   // kept on the button through each redraw, and to Resume after Pause
-        if self.job_buttons.parent().is_some() {
-            self.offer.remove(&self.job_buttons);
-        }
+        let focused = self.job_buttons.row.focus_child().is_some();   // kept on the button through each redraw, and to Resume after Pause
+        self.job_buttons.detach();
         omui::clear(&self.offer);
         self.offer.set_sensitive(true);
         let regions = self.near_regions.borrow().clone();
-        let mut said = Vec::new();   // an item's reason is not repeated as the job's
-        for it in job["items"].as_array().into_iter().flatten() {
-            said.extend(it["error"]["message"].as_str());
-            self.offer.append(&setup::item_row(it, &regions));
-        }
-        if let Some(e) = job["error"]["message"].as_str().filter(|e| !said.contains(e)) {
-            self.offer.append(&setup::error_label(e));
-        }
-        if elsewhere {
-            self.offer.append(&meta(&omui::tr("This download is running in another Lastbook window. Use that window to pause or cancel it.")));
-        }
+        setup::job_rows(&self.offer, job, &regions);
         // Stopping keeps what has arrived (Resume carries on from it); cancelling, which deletes it, is Library and
         // downloads' to ask about.
         let (text, path) = match state {
@@ -834,23 +791,16 @@ impl MapPage {
             "failed" => (omui::tr("Try again"), "/api/setup/retry"),
             _ => (omui::tr("Pause"), "/api/setup/pause"),
         };
-        if *self.job_buttons_for.borrow() != path {
-            omui::clear(&self.job_buttons);
-            self.job_buttons_for.replace(path.to_owned());
+        self.job_buttons.update(path, |row| {
             if !path.is_empty() {
                 let b = gtk::Button::with_label(&text);
                 b.add_css_class(if path == "/api/setup/pause" { "chip" } else { "suggested-action" });
-                let me = Rc::downgrade(self);
-                b.connect_clicked(move |_| {
-                    if let Some(me) = me.upgrade() {
-                        me.act(path);
-                    }
-                });
-                self.job_buttons.append(&b);
+                on_click(&b, self, move |me| me.act(path));
+                row.append(&b);
             }
-        }
-        self.offer.append(&self.job_buttons);
-        if focused && let Some(b) = self.job_buttons.first_child() {
+        });
+        self.offer.append(&self.job_buttons.row);
+        if focused && let Some(b) = self.job_buttons.row.first_child() {
             b.grab_focus();
         }
         self.watch_job();
@@ -880,9 +830,7 @@ impl MapPage {
         if self.job_timer.borrow().is_some() {
             return;
         }
-        let me = Rc::downgrade(self);
-        let timer = glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
-            let Some(m) = me.upgrade() else { return glib::ControlFlow::Break };
+        let timer = setup::every_second(self, |m| {
             if !m.panel.is_visible() || !m.root.is_mapped() {
                 m.job_timer.take();   // `show` reads it again when the map is back
                 return glib::ControlFlow::Break;
@@ -908,14 +856,12 @@ impl MapPage {
         self.near_regions.borrow_mut().clear();
         self.following.set(false);
         self.stop_job_timer();
-        self.job_buttons_for.replace(String::new());
+        self.job_buttons.forget();
     }
 
     fn controls(self: &Rc<Self>, zoom_in: &gtk::Button, zoom_out: &gtk::Button) {
-        let me = Rc::downgrade(self);
-        zoom_in.connect_clicked(move |_| if let Some(m) = me.upgrade() { m.zoom_by(1.0, None) });
-        let me = Rc::downgrade(self);
-        zoom_out.connect_clicked(move |_| if let Some(m) = me.upgrade() { m.zoom_by(-1.0, None) });
+        on_click(zoom_in, self, |m| m.zoom_by(1.0, None));
+        on_click(zoom_out, self, |m| m.zoom_by(-1.0, None));
         let drag = gtk::GestureDrag::new();
         let me = Rc::downgrade(self);
         drag.connect_drag_begin(move |_, _, _| {
@@ -1007,9 +953,19 @@ impl MapPage {
         });
     }
 
-    /// After a language switch: the line in the corner is written again as ui.rs shows the map again.
+    /// After a language switch: the line in the corner is written again.
     pub fn retranslate(&self) {
-        self.loaded.replace(String::new());
+        self.write_status();
+    }
+
+    /// The line in the corner: whose the map is, and which files it is drawn from.
+    fn write_status(&self) {
+        let names: Vec<String> = self.sources.borrow().iter().map(|s| s.name.clone()).collect();
+        self.status.set_text(&if names.is_empty() {
+            omui::tr("No map in this library yet: add one in Library and downloads")
+        } else {
+            omui::tr!("© OpenStreetMap contributors · {}", names.join(", "))
+        });
     }
 
     /// Opens the map files when the map is shown, and again whenever they have changed (setup adds maps while Lastbook runs).
@@ -1022,24 +978,20 @@ impl MapPage {
         if let Some(app) = self.app.upgrade()
             && let Some(data) = app.engine.ready.data.as_ref()
             && let geo = data.join("derived").join("geo")
-            && let seen = files_seen(&geo)
+            && let files = map_files(&geo)
+            && let seen = files.iter().map(|(n, len)| format!("{n}:{len}")).collect::<Vec<_>>().join("|")
             && *self.loaded.borrow() != seen
         {
             self.loaded.replace(seen);
             self.tiles.borrow_mut().clear();
             self.order.borrow_mut().clear();
             self.decoded.borrow_mut().clear();
-            let srcs = open_sources(&geo);
-            let names: Vec<String> = srcs.iter().map(|s| s.name.clone()).collect();
-            self.status.set_text(&if srcs.is_empty() {
-                omui::tr("No map in this library yet: add one in Library and downloads")
-            } else {
-                omui::tr!("© OpenStreetMap contributors · {}", names.join(", "))
-            });
+            let srcs = open_sources(&geo, &files);
             if !self.placed.replace(true) {
                 self.frame_to.set(srcs.iter().filter_map(|s| s.region).max_by_key(|r| r.1).map(|r| r.0));
             }
             self.sources.replace(srcs);
+            self.write_status();
         }
         self.area.queue_draw();
     }
@@ -1078,8 +1030,7 @@ impl MapPage {
     fn fit(&self, [west, south, east, north]: [f64; 4], w: f64, h: f64) {
         let east = if east < west { east + 360.0 } else { east };   // across the antimeridian
         let ((x0, y0), (x1, y1)) = (lonlat_to_world(west, north), lonlat_to_world(east, south));
-        let beside = if self.panel.is_visible() && self.panel.halign() == gtk::Align::End { f64::from(self.panel.width().max(300) + 12) } else { 0.0 };
-        let scale = ((w - beside).max(100.0) / (x1 - x0).max(1e-9)).min(h / (y1 - y0).max(1e-9));
+        let scale = ((w - self.beside()).max(100.0) / (x1 - x0).max(1e-9)).min(h / (y1 - y0).max(1e-9));
         let (lon, lat) = world_to_lonlat((x0 + x1) / 2.0, (y0 + y1) / 2.0);
         self.center(lat, lon, ((scale / TILE).log2() - 0.2).clamp(1.0, 16.0), None);
     }
@@ -1115,17 +1066,9 @@ impl MapPage {
             let list: Vec<Value> = r.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
             omui::clear(&me.results);
             for p in &list {
-                let row = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                let row = two_lines(p["name"].as_str().unwrap_or_default(), &format!("{} · {}", p["kind"].as_str().unwrap_or_default(), p["detail"].as_str().unwrap_or_default()), false);
                 row.set_margin_top(4);
                 row.set_margin_bottom(4);
-                let t = gtk::Label::new(p["name"].as_str());
-                t.set_xalign(0.0);
-                t.add_css_class("result-title");
-                let d = gtk::Label::new(Some(&format!("{} · {}", p["kind"].as_str().unwrap_or_default(), p["detail"].as_str().unwrap_or_default())));
-                d.set_xalign(0.0);
-                d.add_css_class("meta");
-                row.append(&t);
-                row.append(&d);
                 me.results.append(&row);
             }
             if list.is_empty() {
@@ -1162,6 +1105,7 @@ impl MapPage {
 
     fn render_tile(&self, z: u32, x: u32, y: u32, px: i32) -> Option<Cached> {
         let (layers, from) = self.data(z, x, y)?;
+        let mut tile = Cached { image: None, layers, from };
         let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, px, px).ok()?;
         let st = self.style.borrow().clone();
         {
@@ -1169,18 +1113,16 @@ impl MapPage {
             rgb(&cr, &st.water, 1.0);
             cr.paint().ok()?;
             // Scale the source tile so that tile (z, x, y) fills the image.
-            let dz = z - from.0;
-            let k = f64::from(1u32 << dz);
-            let (ox, oy) = (f64::from(x - (from.1 << dz)), f64::from(y - (from.2 << dz)));
-            let extent = layers.first().map(|l| f64::from(l.extent)).unwrap_or(4096.0);
+            let (k, ox, oy, extent) = tile.transform((z, x, y));
             let s = f64::from(px) / extent * k;
             cr.translate(-ox * f64::from(px), -oy * f64::from(px));
             cr.scale(s, s);
             let zf = f64::from(z);
             let lw = 1.0 / s;   // one pixel in tile units
-            draw_layers(&cr, &layers, &st, zf, lw);
+            draw_layers(&cr, &tile.layers, &st, zf, lw);
         }
-        Some(Cached { image: Some(surface), layers, from })
+        tile.image = Some(surface);
+        Some(tile)
     }
 
     fn draw(&self, cr: &cairo::Context, w: f64, h: f64) {
@@ -1415,9 +1357,25 @@ fn meta(text: &str) -> gtk::Label {
     l
 }
 
-/// A help point's mark and colour (HELP), by its kind on the map or in the engine's answer.
-fn help_kind(kind: &str) -> Option<(&'static str, bool)> {
-    HELP.iter().find(|h| h.0.contains(&kind)).map(|h| (h.1, h.2))
+/// Two lines, a name over small print: a place found, or (`panel`) a row of the panel, each line cut short at its width.
+fn two_lines(title: &str, meta: &str, panel: bool) -> gtk::Box {
+    let b = gtk::Box::new(gtk::Orientation::Vertical, if panel { 1 } else { 2 });
+    for (text, class) in [(title, "result-title"), (meta, "meta")] {
+        let l = gtk::Label::new(Some(text));
+        l.set_xalign(0.0);
+        if panel {
+            l.set_ellipsize(pango::EllipsizeMode::End);
+            l.set_max_width_chars(30);
+        }
+        l.add_css_class(class);
+        b.append(&l);
+    }
+    b
+}
+
+/// A help point's row of HELP, by its kind on the map or in the engine's answer.
+fn help(kind: &str) -> Option<&'static (&'static [&'static str], &'static str, bool, &'static str)> {
+    HELP.iter().find(|h| h.0.contains(&kind))
 }
 
 /// What a help point is, in words: its own kind where the legend's heading covers several.
@@ -1429,7 +1387,7 @@ fn kind_name(kind: &str) -> String {
         "water_point" => omui::tr("Water point"),
         "supermarket" => omui::tr("Supermarket"),
         "marketplace" => omui::tr("Market"),
-        _ => HELP.iter().find(|h| h.0.contains(&kind)).map(|h| omui::i18n::translate(h.3)).unwrap_or_default(),
+        _ => help(kind).map(|h| omui::i18n::translate(h.3)).unwrap_or_default(),
     }
 }
 
@@ -1478,11 +1436,7 @@ fn draw_mark(cr: &cairo::Context, layout: &pango::Layout, mark: &str, danger: bo
 
 #[allow(clippy::too_many_arguments)]
 fn labels(cr: &cairo::Context, layout: &pango::Layout, c: &Cached, key: (u32, u32, u32), (sx, sy): (f64, f64), size: f64, zoom: f64, st: &Style, taken: &mut Vec<(f64, f64, f64, f64)>, pass: u32, marks: &mut Vec<Mark>) {
-    let (z, x, y) = key;
-    let dz = z - c.from.0;
-    let k = f64::from(1u32 << dz);
-    let (ox, oy) = (f64::from(x - (c.from.1 << dz)), f64::from(y - (c.from.2 << dz)));
-    let extent = c.layers.first().map(|l| f64::from(l.extent)).unwrap_or(4096.0);
+    let (k, ox, oy, extent) = c.transform(key);
     let to_screen = |px: f32, py: f32| -> (f64, f64) { (sx + (f64::from(px) / extent * k - ox) * size, sy + (f64::from(py) / extent * k - oy) * size) };
     let inside = |(a, b): (f64, f64)| a >= sx && a < sx + size && b >= sy && b < sy + size;
     if pass == 0 {
@@ -1515,7 +1469,7 @@ fn labels(cr: &cairo::Context, layout: &pango::Layout, c: &Cached, key: (u32, u3
         // Help points: hospitals, pharmacies, police, fire stations, water, shelters.
         for f in layer(&c.layers, "pois").filter(|f| f.geom == Geom::Point) {
             let kind = f.str("kind").unwrap_or_default();
-            let Some((mark, danger)) = help_kind(kind) else { continue };
+            let Some(&(_, mark, danger, _)) = help(kind) else { continue };
             let Some(&(px, py)) = f.parts.first().and_then(|p| p.first()) else { continue };
             let pos = to_screen(px, py);
             if !inside(pos) || taken.iter().any(|r| overlaps(r, &(pos.0 - 8.0, pos.1 - 8.0, 16.0, 16.0))) {

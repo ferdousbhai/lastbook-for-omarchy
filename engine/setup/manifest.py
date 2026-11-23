@@ -1,4 +1,4 @@
-"""What can be installed: manifest-v1.json, bundled with the app at build time (packaging/release_manifest.py), or fetched once
+"""What can be installed: manifest-v1.json, bundled with the app (packaging/arch/manifest-v1.json), or fetched once
 from the download site when the person asks (Setup.check). It lists upstream Lastbook's packs only. A fetched one is used only if it parses, says version 1 and every address in it is
 allowed (download.url_allowed)."""
 import json
@@ -95,19 +95,14 @@ class Manifest:
         self.remote, self.allowed, self.context = remote, allowed, context
         self.fetching = None
 
-    def fetch_once(self):
-        if self.fetching or not self.remote:
-            return
-        self.fetching = threading.Thread(target=self._fetch, daemon=True, name='setup-manifest')
-        self.fetching.start()
-
     def fetch_now(self, wait=10):
         """Fetch (again, if an earlier try has ended) and wait up to `wait` seconds for the answer."""
-        if self.fetching and not self.fetching.is_alive():
-            self.fetching = None
-        self.fetch_once()
-        if self.fetching:
-            self.fetching.join(wait)
+        if not self.remote:
+            return
+        if not (self.fetching and self.fetching.is_alive()):
+            self.fetching = threading.Thread(target=self._fetch, daemon=True, name='setup-manifest')
+            self.fetching.start()
+        self.fetching.join(wait)
 
     def _fetch(self):
         data = download.fetch_small(self.remote, allowed=self.allowed, context=self.context)

@@ -11,6 +11,7 @@
 use std::{
     cell::RefCell,
     rc::{Rc, Weak},
+    sync::Arc,
 };
 
 use gtk::{glib, prelude::*};
@@ -19,6 +20,7 @@ use serde_json::Value;
 
 use crate::{
     cards::{self, activate, card, clock, column, route_of, section},
+    engine::Engine,
     ui::{App, Route},
 };
 
@@ -35,20 +37,19 @@ pub struct Guides {
 }
 
 impl Guides {
-    pub fn build(app: &Rc<App>) -> Rc<Self> {
+    pub fn build(app: &Weak<App>, engine: Arc<Engine>) -> Rc<Self> {
         let (list_scroll, list) = column(12);
         let (page_scroll, page) = column(12);
         let g = Rc::new(Self {
             list_root: list_scroll.upcast(),
             page_root: page_scroll.clone().upcast(),
-            app: Rc::downgrade(app),
+            app: app.clone(),
             list,
             page,
             page_scroll,
             topics: RefCell::new(Vec::new()),
             waiting: RefCell::new(None),
         });
-        let engine = app.engine.clone();
         let me = Rc::downgrade(&g);
         glib::spawn_future_local(async move {
             let topics = engine.get("/api/topics").await.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
@@ -89,7 +90,7 @@ impl Guides {
             for t in topics {
                 let c = card(t["title"].as_str().unwrap_or_default(), &glib::markup_escape_text(t["short"].as_str().unwrap_or_default()), "", None);
                 c.add_css_class("guide-card");
-                activate(&c, self.app.clone(), Route::Guide(t["id"].as_str().unwrap_or_default().to_owned()));
+                activate(&c, self.app.clone(), Some(Route::Guide(t["id"].as_str().unwrap_or_default().to_owned())));
                 grid.insert(&c, -1);
             }
             self.list.append(&grid);
@@ -127,8 +128,7 @@ impl Guides {
                 if let Some(to) = c["goto"].as_str().map(|g| g.split('/').next().unwrap_or(g).to_owned())
                     && let Some(name) = self.topics.borrow().iter().find(|t| t["id"] == to.as_str()).and_then(|t| t["title"].as_str().map(str::to_owned))
                 {
-                    let go = crate::cards::wrap_button(&tr!("Open the guide: {}", name));
-                    go.add_css_class("chip");
+                    let go = crate::cards::wrap_button(&tr!("Open the guide: {}", name), "chip");
                     go.set_halign(gtk::Align::Start);
                     let app = self.app.clone();
                     go.connect_clicked(move |_| {
@@ -152,9 +152,7 @@ impl Guides {
                 let icon = omui::icon(omui::icons::name::WARNING);
                 icon.add_css_class("error");
                 icon.set_valign(gtk::Align::Start);
-                let text = gtk::Label::new(l["text"].as_str());
-                text.set_wrap(true);
-                text.set_xalign(0.0);
+                let text = label(l["text"].as_str().unwrap_or_default(), "");
                 text.set_hexpand(true);
                 row.append(&icon);
                 row.append(&text);
@@ -169,9 +167,7 @@ impl Guides {
                     s.set_wrap(true);
                     s.set_max_width_chars(28);
                     row.append(&s);
-                    if let Some(r) = route_of(&merge(l)) {
-                        activate(&row, self.app.clone(), r);
-                    }
+                    activate(&row, self.app.clone(), route_of(&merge(l)));
                 }
                 b.append(&row);
             }
@@ -207,8 +203,7 @@ impl Guides {
             for r in related.iter().filter_map(Value::as_str) {
                 let name = self.topics.borrow().iter().find(|t| t["id"] == r).and_then(|t| t["title"].as_str().map(str::to_owned));
                 let Some(name) = name else { continue };
-                let b = crate::cards::wrap_button(&name);
-                b.add_css_class("chip");
+                let b = crate::cards::wrap_button(&name, "chip");
                 let (app, id) = (self.app.clone(), r.to_owned());
                 b.connect_clicked(move |_| {
                     if let Some(app) = app.upgrade() {
@@ -232,11 +227,7 @@ impl Guides {
                     b.append(&label(&heading, "result-title"));
                 }
                 for l in lines.iter().filter_map(Value::as_str) {
-                    let text = gtk::Label::new(Some(l));
-                    text.set_wrap(true);
-                    text.set_xalign(0.0);
-                    text.add_css_class("dim-label");
-                    b.append(&text);
+                    b.append(&label(l, "dim-label"));
                 }
             }
             exp.set_child(Some(&b));
@@ -264,9 +255,7 @@ impl Guides {
         }
         let title = r["label"].as_str().or_else(|| r["title"].as_str()).unwrap_or_default();
         let c = card(title, &glib::markup_escape_text(r["note"].as_str().unwrap_or_default()), &meta.join(" · "), src["trust"].as_str());
-        if let Some(route) = route_of(&merge(r)) {
-            activate(&c, self.app.clone(), route);
-        }
+        activate(&c, self.app.clone(), route_of(&merge(r)));
         c.upcast()
     }
 }

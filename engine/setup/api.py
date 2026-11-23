@@ -5,7 +5,6 @@ Two ways in, one module, both set up by app/engine_pipe.py (configure(...)) and 
   - normal mode: server.py hands /api/setup/ to handle().
 """
 import fcntl
-import hashlib
 import json
 import os
 import shutil
@@ -50,46 +49,22 @@ def _gb(n):
     return f'{n / 1e9:.0f} GB' if n >= 10e9 else f'{n / 1e9:.1f} GB'
 
 
-def _sha256(path, control, progress):
-    h, done = hashlib.sha256(), 0
-    total = os.path.getsize(path)
-    with open(path, 'rb') as f:
-        while True:
-            control.check()
-            b = f.read(8 * 1024 * 1024)
-            if not b:
-                break
-            h.update(b)
-            done += len(b)
-            progress(done, total)
-    return h.hexdigest()
-
-
 def _staging(folder, files):
     """An unpack folder for exactly these files (their SHA-256s). What an earlier job left there for other files is removed
     first, since unpacking over it keeps any file that happens to have the right size; the same files carry on where
     they stopped."""
     key, mark = [f['sha256'] for f in files], folder.with_name(folder.name + '.json')
-    try:
-        same = json.loads(mark.read_text(encoding='utf-8')) == key
-    except (OSError, ValueError):
-        same = False
-    if not same:
+    if download.read_json(mark) != key:
         shutil.rmtree(folder, ignore_errors=True)
         if folder.exists():
             raise install.Refused('unpack', 'Lastbook could not clear what an earlier download left behind.')
         folder.parent.mkdir(parents=True, exist_ok=True)
-        install._write_json(mark, key)
+        download.write_json(mark, key)
 
 
 def _same_disk(a, b):
     try:
-        pa, pb = Path(a), Path(b)
-        while not pa.exists():
-            pa = pa.parent
-        while not pb.exists():
-            pb = pb.parent
-        return os.stat(pa).st_dev == os.stat(pb).st_dev
+        return os.stat(hardware.existing(a)).st_dev == os.stat(hardware.existing(b)).st_dev
     except OSError:
         return False
 
@@ -118,7 +93,7 @@ class _Item:
 
 class Setup:
     def __init__(self, mode, settings_dir, default_parent, current=None, manifest=None, allowed=None, context=None,
-                 on_finish=None, look_for_libraries=None, home=None, on_job=None):
+                 on_finish=None, look_for_libraries=None, on_job=None):
         """mode: 'first-run' or 'manage'. current: the open library (manage). on_finish(folder): the app opens that library
         (it relaunches). look_for_libraries(): LastbookData folders found. on_job(state): called each time the job is saved,
         which is each time its state changes, so the window need not ask on a timer whether it has."""
@@ -136,15 +111,12 @@ class Setup:
 
     # ------------------------------------------------------------------------------------------------- saved state --
     def _settings(self):
-        try:
-            return json.loads((self.settings_dir / 'setup.json').read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            return {}
+        return download.read_json(self.settings_dir / 'setup.json', {})
 
     def _save_settings(self, d):
         try:
             self.settings_dir.mkdir(parents=True, exist_ok=True)
-            install._write_json(self.settings_dir / 'setup.json', d)
+            download.write_json(self.settings_dir / 'setup.json', d)
         except OSError as e:
             print('setup: could not save setup.json:', e, flush=True)
 
@@ -217,7 +189,7 @@ class Setup:
             return 0, it['bytes_total']        # a map cut carries on from its part file when it runs (maps.Cut.run); until then nothing is claimed
         if was == 'unpacking' and plan.get('pack'):
             total = plan['pack']['installed_bytes']
-            return min(_tree_size(Path(plan['work']) / 'unpack'), total), total
+            return min(install._tree_bytes(Path(plan['work']) / 'unpack'), total), total
         if it.get('source') == 'found':
             return it['bytes_total'], it['bytes_total']     # nothing to download: the file is already on this computer
         return self._on_disk(plan, it), it['bytes_total']
@@ -241,7 +213,7 @@ class Setup:
             return
         f = _job_file(self.settings_dir)
         f.parent.mkdir(parents=True, exist_ok=True)
-        install._write_json(f, job)
+        download.write_json(f, job)
         if self.on_job:
             try:
                 self.on_job(job['state'])
@@ -532,7 +504,7 @@ class Setup:
                 tracker.progress(done, total, 'verifying')
                 continue
             base = done
-            if _sha256(p, control, lambda d, t: tracker.progress(base + d, total, 'verifying')) != digest:
+            if download._sha256(p, control, lambda d: tracker.progress(base + d, total, 'verifying')) != digest:
                 bad.append(rel)
             done = base + size
         return bad
@@ -778,7 +750,7 @@ class Setup:
         explicit_use = bool(plan.get('explicit'))
         if src and os.path.isfile(src):
             self._set(it, 'verifying')
-            digest = _sha256(src, control, lambda d, t: tracker.progress(offset + d, it['bytes_total'], 'verifying'))
+            digest = download._sha256(src, control, lambda d: tracker.progress(offset + d, it['bytes_total'], 'verifying'))
             if digest == f['sha256']:
                 plan['verified'].append(name)
                 return src, False
@@ -847,21 +819,20 @@ class Setup:
         _staging(staged, pack['files'])
         # Every member checked before any is written; what is DROPPED is neither written nor counted.
         total = sum(install.check_zip(path, pack['installed_bytes'])[1] for path, _ in got)
-        still = max(total - _tree_size(staged), 0)
+        still = max(total - install._tree_bytes(staged), 0)
         free, _ = hardware.disk_of(work)
         if free < still + 512 * 2 ** 20:
             raise download.Failed('no_space', f'Unpacking needs {_gb(still)} free, and the disk has {_gb(free)}. Free some space, then try again.')
         for path, _ in got:
             lib = install.unpack(path, staged, pack['installed_bytes'], control, lambda d, t: tracker.progress(d, t, 'unpacking'))
-        install.drop_upstream_maps(lib)      # what an earlier version unpacked here before DROPPED was left out
         if pack.get('revision'):
             metadata = json.loads((lib / 'pack.json').read_text(encoding='utf-8'))
             if metadata.get('content_revision') != pack['revision']:
                 raise install.Refused('unpack', 'The library content version does not match this download.')
-        install._write_json(lib / 'setup-pack.json', {'pack': pack['id'], 'installed': _now(), 'files': [f['name'] for f in pack['files']]})
+        download.write_json(lib / 'setup-pack.json', {'pack': pack['id'], 'installed': _now(), 'files': [f['name'] for f in pack['files']]})
         for path, ours in got:
             if ours:
-                download.remove(path)
+                os.unlink(path)
 
     def _do_osm(self, it, plan, work, control):
         """The world map, place search, or one street-level region, made here from OpenStreetMap (engine/setup/maps.py).
@@ -921,17 +892,6 @@ def _margin(total):
     return max(RECOMMEND_MARGIN, min(int((total or 0) * 0.05), RECOMMEND_MARGIN_MAX))
 
 
-def _tree_size(p):
-    n = 0
-    for root, _, files in os.walk(p):
-        for f in files:
-            try:
-                n += os.path.getsize(os.path.join(root, f))
-            except OSError:
-                pass
-    return n
-
-
 # ------------------------------------------------------------------------------------------------ startup and the app --
 def _work_for(target):
     """Setup's work folder for a library: <its name>.setup beside it (LastbookData.setup for every library setup installs)."""
@@ -952,9 +912,8 @@ def startup(settings_dir, only=None):
     """app/engine_pipe.py calls this first: a staged switch is made now, before the engine opens anything. Returns the library to open
     (or None to look as usual) and a note: {target, old, error}."""
     settings_dir = Path(settings_dir)
-    try:
-        s = json.loads((settings_dir / 'setup.json').read_text(encoding='utf-8'))
-    except (OSError, ValueError):
+    s = download.read_json(settings_dir / 'setup.json')
+    if s is None:
         return None, None
     work = s.get('work')
     if not work or not isinstance(work, str):
@@ -998,7 +957,7 @@ def _record_failed(settings_dir, paths):
         s['failed'] = _listed(s, 'failed') + [p for p in paths if p not in _listed(s, 'failed')]
         try:
             Path(settings_dir).mkdir(parents=True, exist_ok=True)
-            install._write_json(Path(settings_dir) / 'setup.json', s)
+            download.write_json(Path(settings_dir) / 'setup.json', s)
         except OSError as e:
             print('setup: could not save setup.json:', e, flush=True)
 
@@ -1007,11 +966,8 @@ _SETTINGS = threading.Lock()      # around a read-change-write of setup.json
 
 
 def _read_settings(settings_dir):
-    try:
-        s = json.loads((Path(settings_dir) / 'setup.json').read_text(encoding='utf-8'))
-        return s if isinstance(s, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    s = download.read_json(Path(settings_dir) / 'setup.json')
+    return s if isinstance(s, dict) else {}
 
 
 def _listed(s, key):
@@ -1042,7 +998,7 @@ def _delete_old(settings_dir, data, olds, failed=()):
         if 'failed' in s:
             s['failed'] = _listed(s, 'failed')
         try:
-            install._write_json(Path(settings_dir) / 'setup.json', s)
+            download.write_json(Path(settings_dir) / 'setup.json', s)
         except OSError:
             pass
 
@@ -1076,10 +1032,7 @@ def _opened(settings_dir, note):
                                                                                and not note.get('old')))
     if work and not waiting:
         install.confirm(_pending_file(settings_dir))
-        try:
-            job = json.loads(_job_file(settings_dir).read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            job = None
+        job = download.read_json(_job_file(settings_dir))
         if note or (isinstance(job, dict) and job.get('state') == 'done'):
             shutil.rmtree(work, ignore_errors=True)
             s.pop('work', None)
@@ -1090,7 +1043,7 @@ def _opened(settings_dir, note):
     s['old'] = _old_listed({'old': olds})
     try:
         settings_dir.mkdir(parents=True, exist_ok=True)
-        install._write_json(settings_dir / 'setup.json', s)
+        download.write_json(settings_dir / 'setup.json', s)
     except OSError:
         pass
     return s['old']

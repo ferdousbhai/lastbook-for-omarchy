@@ -6,14 +6,14 @@ of state is told as the real engine tells it.
 
 Never packaged."""
 import os
-import runpy
 import sys
 import threading
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[4]
-sys.path[:0] = [str(REPO / 'app'), str(REPO), str(REPO / 'native' / 'dev')]
-os.environ['LASTBOOK_DATA'] = sys.argv[sys.argv.index('--data') + 1]   # engine/paths.py reads it when first imported
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import standin  # noqa: E402
+
+standin.use_real_engine(standin.REPO / 'native' / 'dev')
 import seed  # noqa: E402
 from engine.setup import api  # noqa: E402
 
@@ -65,5 +65,4 @@ def retry(s, body):
 
 api.ROUTES.update({('POST', 'start'): start, ('GET', 'job'): lambda s, b: job, ('POST', 'pause'): lambda s, b: become(s, 'paused'),
                    ('POST', 'resume'): resume, ('POST', 'retry'): retry})
-sys.argv[0] = str(REPO / 'app' / 'engine_pipe.py')
-runpy.run_path(sys.argv[0], run_name='__main__')
+standin.run_real_engine()

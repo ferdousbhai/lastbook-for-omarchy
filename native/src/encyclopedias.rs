@@ -13,7 +13,7 @@ use omui::{clear, icons::name, label, tr};
 use serde_json::Value;
 
 use crate::{
-    cards::{self, activate, card, column, encyclopedia_name, plain_markup, section},
+    cards::{self, activate, card, column, encyclopedia_name, on_click, plain_markup, section},
     ui::{App, Route},
 };
 
@@ -28,10 +28,10 @@ pub struct Encyclopedias {
 }
 
 impl Encyclopedias {
-    pub fn build(app: &Rc<App>) -> Rc<Self> {
+    pub fn build(app: &Weak<App>) -> Rc<Self> {
         let (scroll, list) = column(12);
         let pick = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        Rc::new(Self { root: scroll.upcast(), app: Rc::downgrade(app), list, pick, loaded: Cell::new(false) })
+        Rc::new(Self { root: scroll.upcast(), app: app.clone(), list, pick, loaded: Cell::new(false) })
     }
 
     /// After a language switch: drawn again when next shown (the screen on show at once, by ui.rs).
@@ -54,12 +54,7 @@ impl Encyclopedias {
                 Ok(v) => me.draw(v.as_array().map(Vec::as_slice).unwrap_or_default()),
                 Err(e) => {
                     me.loaded.set(false);
-                    let again = Rc::downgrade(&me);
-                    me.list.append(&cards::problem(&tr("Lastbook could not read the list of encyclopedias."), &e.to_string(), move || {
-                        if let Some(me) = again.upgrade() {
-                            me.show();
-                        }
-                    }));
+                    me.list.append(&cards::problem(&tr("Lastbook could not read the list of encyclopedias."), &e.to_string(), &me, |me| me.show()));
                 }
             }
         });
@@ -83,7 +78,7 @@ impl Encyclopedias {
             let app = self.app.clone();
             go.connect_clicked(move |_| {
                 if let Some(app) = app.upgrade() {
-                    app.navigate(Route::Manage);
+                    app.navigate(Route::Section("manage"));
                 }
             });
             state.set_child(Some(go.upcast_ref()));
@@ -93,15 +88,12 @@ impl Encyclopedias {
         // An article picked at random opens at once; "Something to read" shows one first, to choose by its opening.
         let random = gtk::Button::with_label(&tr("Random article"));
         random.set_valign(gtk::Align::Center);
-        let me = Rc::downgrade(self);
-        random.connect_clicked(move |_| {
-            if let Some(me) = me.upgrade() {
-                me.random(|me, a| {
-                    if let (Some(app), Some(path)) = (me.app.upgrade(), a["wiki"].as_str()) {
-                        app.navigate(Route::Wiki { path: path.to_owned() });
-                    }
-                });
-            }
+        on_click(&random, self, |me| {
+            me.random(|me, a| {
+                if let (Some(app), Some(path)) = (me.app.upgrade(), a["wiki"].as_str()) {
+                    app.navigate(Route::Wiki { path: path.to_owned() });
+                }
+            });
         });
         head.append(&random);
 
@@ -112,12 +104,7 @@ impl Encyclopedias {
         let another = gtk::Button::with_label(&tr("Another article"));
         another.add_css_class("flat");
         another.set_valign(gtk::Align::End);
-        let me = Rc::downgrade(self);
-        another.connect_clicked(move |_| {
-            if let Some(me) = me.upgrade() {
-                me.fill_pick();
-            }
-        });
+        on_click(&another, self, |me| me.fill_pick());
         row.append(&another);
         self.list.append(&row);
         clear(&self.pick);
@@ -133,9 +120,7 @@ impl Encyclopedias {
             let articles = e["articles"].as_i64().map(|n| omui::trn!("{n} articles", n)).unwrap_or_default();
             let c = card(&name, &glib::markup_escape_text(e["description"].as_str().unwrap_or_default()), &articles, None);
             c.add_css_class("guide-card");
-            if let Some(main) = e["main"].as_str() {
-                activate(&c, self.app.clone(), Route::Wiki { path: main.to_owned() });
-            }
+            activate(&c, self.app.clone(), e["main"].as_str().map(|main| Route::Wiki { path: main.to_owned() }));
             grid.insert(&c, -1);
         }
         self.list.append(&grid);
@@ -148,9 +133,7 @@ impl Encyclopedias {
             clear(&me.pick);
             let file = a["file"].as_str().unwrap_or_default();
             let c = card(a["title"].as_str().unwrap_or_default(), &plain_markup(a["snippet"].as_str().unwrap_or_default(), 400), &encyclopedia_name(file), None);
-            if let Some(path) = a["wiki"].as_str() {
-                activate(&c, me.app.clone(), Route::Wiki { path: path.to_owned() });
-            }
+            activate(&c, me.app.clone(), a["wiki"].as_str().map(|path| Route::Wiki { path: path.to_owned() }));
             me.pick.append(&c);
         });
     }

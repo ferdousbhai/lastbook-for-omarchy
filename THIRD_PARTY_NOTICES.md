@@ -74,7 +74,7 @@ their licences allow.
 
 ## Used from the system, not bundled
 
-Python 3, NumPy, Beautiful Soup 4 and soupsieve, GTK 4, WebKitGTK 6, Poppler, GStreamer and its plugins, SQLite, glib2 and
+Python 3, NumPy, GTK 4, WebKitGTK 6, Poppler, GStreamer and its plugins, SQLite, glib2 and
 the GCC runtime come from Arch's own packages under their own licences (the PKGBUILD's `depends`).
 
 ## Downloaded by setup, never bundled
@@ -92,7 +92,6 @@ installed and licensed separately; Lastbook neither bundles nor downloads them.
 
 ## Library content
 
-The manuals, videos, encyclopedias and map data in the library packs are not part of this repository. Each pack has a
-Sources and permissions page with the publisher and terms of every item. The US map files inside upstream's packs and state
-maps use OpenStreetMap data (ODbL, © OpenStreetMap contributors), Microsoft building footprints (ODbL), Overture Maps
-addresses and US government data such as USGS, NOAA, USDA and USACE.
+The manuals, videos and encyclopedias in the library packs are not part of this repository. Each pack has a
+Sources and permissions page with the publisher and terms of every item. Upstream's packs also carry US map data, which
+this fork neither unpacks nor reads (`install.DROPPED` in `engine/setup/install.py`).

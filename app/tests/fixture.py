@@ -1,6 +1,7 @@
 """A small made-up library for the bridge tests. Built once under derived/app-build/testdata. And a made-up street map
-(region_file) for the tests of the help points read from one."""
-import gzip, hashlib, json, math, os, sqlite3, sys
+(region_file) for the tests of the help points read from one, the keyword index's table (search_db), the local HTTPS
+server the setup and download tests run against (start_server), and a stand-in Recall (FakeRecall)."""
+import gzip, hashlib, http.server, json, math, os, re, socket, socketserver, sqlite3, ssl, subprocess, sys, threading, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -8,6 +9,17 @@ DATA = ROOT / 'derived' / 'app-build' / 'testdata'
 LIB = DATA / 'library-data'
 CANARY = b'CANARY-MUST-NEVER-BE-SERVED'
 MiB = 1024 * 1024
+PAGES = 'CREATE VIRTUAL TABLE pages USING fts5(doc_id UNINDEXED,title,collection,category,path UNINDEXED,page UNINDEXED,body,tokenize="unicode61")'
+
+
+def search_db(path, rows):
+    """A keyword index (search.sqlite) as the library keeps it, holding these pages: (doc_id, title, collection, category, path, page, body)."""
+    con = sqlite3.connect(path)
+    con.execute(PAGES)
+    con.executemany('INSERT INTO pages VALUES (?,?,?,?,?,?,?)', rows)
+    con.commit()
+    con.close()
+    return path
 
 
 def pattern(offset, n):
@@ -73,11 +85,7 @@ def ensure():
         recs.append({'id': rid, 'kind': kind, 'path': path, 'title': rid, 'category': 'test', 'collection': 'Test', 'publisher': 'Test', 'bytes': (LIB / path).stat().st_size})
     (LIB / 'catalog.json').write_text(json.dumps(recs))
     (LIB / 'summary.json').write_text('{"resources": 5}')
-    con = sqlite3.connect(LIB / 'search.sqlite')
-    con.execute('CREATE VIRTUAL TABLE pages USING fts5(doc_id UNINDEXED,title,collection,category,path UNINDEXED,page UNINDEXED,body,tokenize="unicode61")')
-    con.execute('INSERT INTO pages VALUES (?,?,?,?,?,?,?)', ('pdfsmall', 'pdfsmall', 'Test', 'test', 'documents/s.pdf', 1, 'boil water for one minute'))
-    con.commit()
-    con.close()
+    search_db(LIB / 'search.sqlite', [('pdfsmall', 'pdfsmall', 'Test', 'test', 'documents/s.pdf', 1, 'boil water for one minute')])
     (DATA / 'ready').write_text('1')
     return DATA
 
@@ -144,6 +152,106 @@ def region_file(path, points, tiles=None, minzoom=9, maxzoom=15):
     db.commit()
     db.close()
     return path
+
+
+# ------------------------------------------------------------------------------------- a local HTTPS test server --
+class TLSServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def handle_error(self, request, client_address):
+        """A client that pauses, cancels, hangs up or is killed drops its connection, which is what these tests ask for.
+        The server's next read can then raise, and the default handler would print a traceback into a passing run.
+        Anything else is still printed."""
+        if not isinstance(sys.exception(), OSError):
+            super().handle_error(request, client_address)
+
+
+def start_server(folder, files, handler):
+    """(server, the client's TLS context, base address) on 127.0.0.1 with a certificate made for the run (folder/cert.pem),
+    serving `files` (the handler's self.server.files) with this request handler."""
+    key, crt = folder / 'key.pem', folder / 'cert.pem'
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=localhost',
+                    '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1', '-keyout', str(key), '-out', str(crt)],
+                   check=True, capture_output=True)
+    srv = TLSServer(('127.0.0.1', 0), handler)
+    sctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    sctx.load_cert_chain(crt, key)
+    srv.socket = sctx.wrap_socket(srv.socket, server_side=True)
+    srv.files = files
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, ssl.create_default_context(cafile=str(crt)), f'https://127.0.0.1:{srv.server_address[1]}'
+
+
+# ------------------------------------------------------------------------------------------- a stand-in Recall --
+def vector(text, dim):
+    """Embeds by hashing words, so similar wording gives similar vectors."""
+    import numpy as np
+    v = np.zeros(dim, dtype=np.float32)
+    for w in re.findall(r'[a-z0-9]+', text.lower().split('|', 1)[-1]):
+        v[int(hashlib.md5(w.encode()).hexdigest(), 16) % dim] += 1
+    n = np.linalg.norm(v)
+    return (v / n if n else v).tolist()
+
+
+class FakeRecall(threading.Thread):
+    """Recall's api 1 (capabilities, embed) on a Unix socket, answering from the moment it is made. calls: requests of
+    any kind. requests: requests for passages ('title:...' inputs) answered. embeds: passages embedded so far.
+    fail: an error to answer everything with. stop_after: requests for passages answered before it refuses to embed
+    anything (None: never). reject: some words; a request holding them is refused, the others answered. biggest: the
+    most inputs one request held. delay: seconds to wait before answering for passages."""
+
+    def __init__(self, path, dim=64, operations=('embed',)):
+        super().__init__(daemon=True)
+        self.path, self.dim, self.operations, self.source = path, dim, list(operations), 'fake-model@1'
+        self.fail, self.calls, self.embeds, self.requests, self.stop_after, self.reject, self.biggest, self.delay = None, 0, [], 0, None, None, 0, 0
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.bind(str(path))
+        self.sock.listen(16)
+        self.start()
+
+    def run(self):
+        while True:
+            try:
+                c, _ = self.sock.accept()
+            except OSError:
+                return
+            with c:
+                buf = b''
+                while not buf.endswith(b'\n'):
+                    piece = c.recv(65536)
+                    if not piece:
+                        break
+                    buf += piece
+                if not buf:
+                    continue
+                req = json.loads(buf)
+                self.calls += 1
+                if self.fail:
+                    reply = {'api': 1, 'error': self.fail}
+                elif req.get('op') == 'capabilities':
+                    reply = {'api': 1, 'operations': self.operations, 'source': self.source}
+                elif req.get('op') == 'embed':
+                    assert req['kind'] == 'text' and 0 < len(req['inputs']) <= 32
+                    passages = [t for t in req['inputs'] if t.startswith('title:')]   # not the probes, not questions
+                    self.biggest = max(self.biggest, len(req['inputs']))
+                    if self.stop_after is not None and self.requests >= self.stop_after:
+                        reply = {'api': 1, 'error': 'Recall is busy'}
+                    elif self.reject and any(self.reject in t for t in req['inputs']):
+                        reply = {'api': 1, 'error': 'cannot embed this'}
+                    else:
+                        if passages:
+                            time.sleep(self.delay)
+                            self.requests += 1
+                            self.embeds += passages
+                        reply = {'api': 1, 'source': self.source, 'embeddings': [{'vector': vector(t, self.dim)} for t in req['inputs']]}
+                else:
+                    reply = {'api': 1, 'error': 'unknown op'}
+                c.sendall(json.dumps(reply).encode() + b'\n')
+
+    def close(self):
+        self.sock.close()
+        Path(self.path).unlink(missing_ok=True)
 
 
 if __name__ == '__main__':

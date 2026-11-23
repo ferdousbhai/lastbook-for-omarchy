@@ -3,14 +3,13 @@ made up, since that library has too little in it to give them: Related lists thr
 Recall for Omarchy is not installed, whatever this computer has.
 
 Never packaged."""
-import os
-import runpy
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[4]
-sys.path[:0] = [str(REPO / 'app'), str(REPO)]
-os.environ['LASTBOOK_DATA'] = sys.argv[sys.argv.index('--data') + 1]   # engine/paths.py reads it when first imported
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import standin  # noqa: E402
+
+standin.use_real_engine()
 import retrieval  # noqa: E402
 import server  # noqa: E402
 
@@ -25,5 +24,4 @@ def related(doc_id='', path='', k=5):
 
 
 server.related = related
-sys.argv[0] = str(REPO / 'app' / 'engine_pipe.py')
-runpy.run_path(sys.argv[0], run_name='__main__')
+standin.run_real_engine()

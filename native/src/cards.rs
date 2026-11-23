@@ -1,20 +1,38 @@
 // SPDX-License-Identifier: MIT
 //! Pieces every screen shares: the result card, section headings, and where a source opens.
 
+use std::rc::{Rc, Weak};
+
 use gtk::{gio, glib, prelude::*};
-use omui::tr;
+use omui::{label, tr};
 use serde_json::Value;
 
 use crate::ui::Route;
 
+/// `f` on `me`, for a signal or a timer: `me` is held weakly, and once it is gone this does nothing.
+pub fn weak<T: 'static>(me: &Rc<T>, f: impl Fn(&Rc<T>) + 'static) -> impl Fn() + 'static {
+    let me: Weak<T> = Rc::downgrade(me);
+    move || {
+        if let Some(me) = me.upgrade() {
+            f(&me);
+        }
+    }
+}
+
+/// Runs `f` on `me` when `b` is clicked, holding `me` weakly (`weak`).
+pub fn on_click<T: 'static>(b: &impl IsA<gtk::Button>, me: &Rc<T>, f: impl Fn(&Rc<T>) + 'static) {
+    let f = weak(me, f);
+    b.connect_clicked(move |_| f());
+}
+
 /// What a screen shows in place of what it could not load: `what` went wrong in a sentence (translated by the
-/// caller), `why` in the engine's own words under it, and a button that runs `again`. A screen that asked and got
-/// nothing must never stay blank. A screen draws it anew after a language switch, as it draws all it shows.
-pub fn problem(what: &str, why: &str, again: impl Fn() + 'static) -> gtk::Widget {
+/// caller), `why` in the engine's own words under it, and a button that runs `again` on `me`. A screen that asked and
+/// got nothing must never stay blank. A screen draws it anew after a language switch, as it draws all it shows.
+pub fn problem<T: 'static>(what: &str, why: &str, me: &Rc<T>, again: impl Fn(&Rc<T>) + 'static) -> gtk::Widget {
     let state = omui::EmptyState::new(Some(omui::icons::name::WARNING), what, Some(&omui::i18n::translate(why))).compact();
     let retry = gtk::Button::with_label(&tr("Try again"));
     retry.add_css_class("chip");
-    retry.connect_clicked(move |_| again());
+    on_click(&retry, me, again);
     state.set_child(Some(retry.upcast_ref()));
     state.widget.upcast()
 }
@@ -40,27 +58,16 @@ pub fn card(title: &str, snippet_markup: &str, meta: &str, trust: Option<&str>) 
     card.add_css_class("result");
     let text = gtk::Box::new(gtk::Orientation::Vertical, 4);
     text.set_hexpand(true);
-    let t = gtk::Label::new(Some(title));
-    t.add_css_class("result-title");
-    t.set_xalign(0.0);
-    t.set_wrap(true);
-    text.append(&t);
+    text.append(&label(title, "result-title"));
     if !snippet_markup.is_empty() {
-        let s = gtk::Label::new(None);
+        let s = label("", "snippet");
         s.set_markup(snippet_markup);
-        s.add_css_class("snippet");
-        s.set_xalign(0.0);
-        s.set_wrap(true);
         s.set_lines(4);
         s.set_ellipsize(gtk::pango::EllipsizeMode::End);
         text.append(&s);
     }
     if !meta.is_empty() {
-        let m = gtk::Label::new(Some(meta));
-        m.add_css_class("meta");
-        m.set_xalign(0.0);
-        m.set_wrap(true);
-        text.append(&m);
+        text.append(&label(meta, "meta"));
     }
     if let Some(trust) = trust.filter(|t| !t.is_empty()) {
         let l = gtk::Label::new(Some(trust));
@@ -133,14 +140,14 @@ pub fn kind_label(kind: &str) -> String {
     }
 }
 
-/// A button whose label wraps: a long one must not set the window's minimum width (a half-screen tile is ~840 px).
-pub fn wrap_button(text: &str) -> gtk::Button {
-    let l = gtk::Label::new(Some(text));
-    l.set_wrap(true);
+/// A button whose label wraps, with the style class `class`: a long one must not set the window's minimum width (a
+/// half-screen tile is ~840 px).
+pub fn wrap_button(text: &str, class: &str) -> gtk::Button {
+    let l = label(text, "");
     l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-    l.set_xalign(0.0);
     let b = gtk::Button::new();
     b.set_child(Some(&l));
+    b.add_css_class(class);
     b
 }
 
@@ -153,9 +160,7 @@ pub fn wrap_check(b: &gtk::CheckButton) {
 }
 
 pub fn section(text: &str) -> gtk::Label {
-    let l = gtk::Label::new(Some(text));
-    l.add_css_class("section-title");
-    l.set_xalign(0.0);
+    let l = label(text, "section-title");
     l.set_margin_top(10);
     l
 }
@@ -237,8 +242,10 @@ pub fn source_meta(s: &Value) -> String {
     meta.join(" · ")
 }
 
-/// Makes `w` open `target` on click, Enter or Space, and as its action `card.open` (what a grid's cell activates).
-pub fn activate(w: &impl IsA<gtk::Widget>, app: std::rc::Weak<crate::ui::App>, target: Route) {
+/// Makes `w` open `target` on click, Enter or Space, and as its action `card.open` (what a grid's cell activates). No
+/// target: `w` stays as it is, opening nothing.
+pub fn activate(w: &impl IsA<gtk::Widget>, app: Weak<crate::ui::App>, target: Option<Route>) {
+    let Some(target) = target else { return };
     let w = w.as_ref();
     w.set_cursor_from_name(Some("pointer"));
     w.set_focusable(true);

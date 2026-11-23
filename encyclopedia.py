@@ -128,11 +128,12 @@ def opening(text, most=320):
     return text[:ends[-1]] if ends else text[:most].rsplit(' ', 1)[0] + '\u2026'
 
 
-def article_sections(html, lead_only=False):
-    p = _Text(lead_only)
-    p.feed(html)
-    p.close()
-    return p.result()
+def zim_names(lib):
+    """The encyclopedia files library-data folder `lib` really holds. Its folder decides, so one rule covers every size of pack."""
+    try:
+        return sorted(p.name for p in (lib / 'collections').glob('*.zim'))
+    except OSError:
+        return []
 
 
 class Encyclopedias:
@@ -195,14 +196,14 @@ class Encyclopedias:
         file in collections/. The folder decides, as it does for the /zim/ addresses the window opens, whether or not
         the catalog lists the file. `main` is the front page as a wiki path (see wiki_path), or None."""
         out = []
-        for path in sorted((self.lib / 'collections').glob('*.zim')):
+        for name in zim_names(self.lib):
             try:
-                arc = self.archive(path.name)
+                arc = self.archive(name)
             except Exception:  # one damaged file must not hide the others
                 continue
             meta = lambda k: arc.get_metadata(k).decode('utf-8', 'replace') if k in arc.metadata_keys else ''
-            main = self.wiki_path(path.name, follow(arc.main_entry).path) if arc.has_main_entry else None
-            out.append({'file': path.name, 'title': meta('Title') or path.stem, 'description': meta('Description'),
+            main = self.wiki_path(name, follow(arc.main_entry).path) if arc.has_main_entry else None
+            out.append({'file': name, 'title': meta('Title') or name.removesuffix('.zim'), 'description': meta('Description'),
                         'articles': arc.article_count, 'main': main})
         return out
 
@@ -211,7 +212,7 @@ class Encyclopedias:
         or None. A random entry can be a redirect, a page with no text of its own (Appropedia's translations are
         mostly empty shells) or no article at all, so a few are drawn until one has an opening to show."""
         if name is None:
-            names = [p.name for p in (self.lib / 'collections').glob('*.zim')]
+            names = zim_names(self.lib)
         elif os.path.basename(name) == name and name.endswith('.zim') and (self.lib / 'collections' / name).is_file():
             names = [name]
         else:
@@ -420,10 +421,7 @@ class Encyclopedias:
             return []
         db = sqlite3.connect(':memory:')
         try:
-            try:
-                db.execute("CREATE VIRTUAL TABLE t USING fts5(x, tokenize='porter unicode61')")
-            except sqlite3.OperationalError:   # an SQLite without the stemmer: whole words as they are
-                db.execute('CREATE VIRTUAL TABLE t USING fts5(x)')
+            db.execute("CREATE VIRTUAL TABLE t USING fts5(x, tokenize='porter unicode61')")
             anyidea = ' OR '.join('(' + match_expr([g]) + ')' for g in groups)
 
             def ideas(rowids):
@@ -473,20 +471,15 @@ class Encyclopedias:
 
     def read(self, doc_id, section=None, limit=6000):
         """(record, text) of an article, or of the sections whose heading contains `section`, each with the sections
-        under it; None if unknown. When no heading contains `section` the text says so and lists the headings there
-        are, and is never the whole article passed off as that section: see also matched()."""
+        under it; None if unknown. The caller asks matched() first: when no heading contains `section` the text is empty,
+        never the whole article passed off as that section."""
         parts = self.split_id(doc_id)
         art = parts and self.article(*parts)
         if not art:
             return None
         secs = art['sections']
         if section:
-            picked = self.matched(doc_id, section)
-            if not picked:
-                heads = self.headings(doc_id)
-                return self.record(doc_id), (f'No section of this article has a heading containing "{section}". '
-                                             + ('Its sections: ' + '; '.join(heads) + '.' if heads else 'It has no section headings.'))
-            secs = [secs[i] for i in picked]
+            secs = [secs[i] for i in self.matched(doc_id, section)]
         text = '\n\n'.join((f'## {h}\n' if h else '') + t for h, t in secs)
         return self.record(doc_id), text[:limit] + ('\n[…the article continues]' if len(text) > limit else '')
 

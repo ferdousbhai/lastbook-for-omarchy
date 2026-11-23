@@ -399,22 +399,24 @@ def fetch_small(url, limit=1 << 20, allowed=None, context=None, timeout=10, cont
         return None
 
 
-def _load_meta(path):
+def read_json(path, default=None):
+    """What a JSON file holds, or default when it cannot be read or is not JSON."""
     try:
-        with open(path, encoding='utf-8') as f:
-            return json.load(f)
+        return json.loads(Path(path).read_text(encoding='utf-8'))
     except (OSError, ValueError):
-        return {}
+        return default
 
 
-def _save_meta(path, d):
-    tmp = path + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(d, f)
+def write_json(path, d):
+    """Written to a file beside it, then renamed over it: never left half written."""
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + '.tmp')
+    tmp.write_text(json.dumps(d, indent=1), encoding='utf-8')
     os.replace(tmp, path)
 
 
 def _sha256(path, control, progress):
+    """progress(bytes read so far) as it goes; control.check() can stop it."""
     h = hashlib.sha256()
     with open(path, 'rb') as f:
         while b := f.read(8 * CHUNK):
@@ -432,11 +434,6 @@ def _content_range(v):
         return int(span.split('-')[0]), int(total)
     except ValueError:
         return None
-
-
-def remove(path):
-    """Deletes a finished download."""
-    os.unlink(path)
 
 
 # Files this process has matched against their published SHA-256: (device, inode, size, mtime, ctime) -> sha256.
@@ -516,7 +513,7 @@ class Download:
                 print(f'setup: {os.path.basename(self.dest)} is here at the right size but is not the published file; downloading it again', flush=True)
                 os.unlink(self.dest)
             os.makedirs(os.path.dirname(self.dest) or '.', exist_ok=True)
-            meta = _load_meta(self.meta)
+            meta = read_json(self.meta, {})
             if meta and (meta.get('sha256') != self.sha256 or meta.get('size') != self.size):
                 self.discard()       # left by another version of this file
                 meta = {}
@@ -556,7 +553,7 @@ class Download:
                 now = self.done_bytes()     # h already holds every byte written: it is updated just after each write
                 tries = 0 if now > start else tries + 1
                 start = now
-                etag = _load_meta(self.meta).get('etag') or etag
+                etag = read_json(self.meta, {}).get('etag') or etag
                 if tries >= NETWORK_TRIES:
                     raise Failed('network', f'The connection kept breaking ({type(e).__name__}). Check the internet connection, then try again.')
                 print(f'setup: download broke at {start} of {self.size}: {type(e).__name__}: {e}; trying again', flush=True)
@@ -602,7 +599,7 @@ class Download:
             etag = new_etag or etag
             meta = {'url': self.url, 'size': self.size, 'sha256': self.sha256, 'etag': etag, 'bytes_done': start}
             with _local():
-                _save_meta(self.meta, meta)
+                write_json(self.meta, meta)
                 f = open(self.part, 'r+b')
             saved = time.time()
             try:
@@ -618,7 +615,7 @@ class Download:
                         with _local():
                             f.flush()
                             meta['bytes_done'] = start
-                            _save_meta(self.meta, meta)
+                            write_json(self.meta, meta)
                         saved = time.time()
                 with _local():
                     f.flush()
@@ -630,7 +627,7 @@ class Download:
                     raise _Local(e) from e
             with _local():
                 meta['bytes_done'] = start
-                _save_meta(self.meta, meta)
+                write_json(self.meta, meta)
             return start, etag
         finally:
             _close(self.control, conn)
