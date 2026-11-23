@@ -167,9 +167,15 @@ def clean_title(r):
 
 
 # ------------------------------------------------------------------ topics ----
+# The guides in the order they are listed: the most urgent first, then those to read ahead. One not named here goes last.
+TOPIC_ORDER = ('hurt', 'disaster', 'water', 'shelter', 'food', 'power', 'sanitation', 'comms',
+               'health', 'grow', 'preserve', 'repair', 'energy', 'land')
+
+
 def topics():
     out = []
-    for f in sorted((APP / 'content' / 'topics').glob('*.json')):
+    rank = {name: i for i, name in enumerate(TOPIC_ORDER)}
+    for f in sorted((APP / 'content' / 'topics').glob('*.json'), key=lambda f: (rank.get(f.stem, len(rank)), f.stem)):
         try:
             t = json.loads(f.read_text(encoding='utf-8'))
         except ValueError as e:
