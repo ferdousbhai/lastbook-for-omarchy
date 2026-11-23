@@ -126,8 +126,8 @@ const MANIFEST_TEXT: &[&str] = &[
     n_!("Medium"),
     n_!("All"),
     n_!("Essential first aid, water, food, shelter and repair knowledge."),
-    n_!("Small, plus the core how-to videos, all documents, Wikibooks and a detailed map of California."),
-    n_!("Everything in the library: every video, document and encyclopedia, Wikipedia included, with detailed maps for the whole US."),
+    n_!("Small, plus the core how-to videos, all documents and Wikibooks."),
+    n_!("Everything in the library: every video, document and encyclopedia, Wikipedia included."),
 ];
 
 /// A sentence of the engine's, in the person's language when it is one the catalogs know (`ENGINE_TEXT`,

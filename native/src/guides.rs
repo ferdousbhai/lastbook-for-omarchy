@@ -79,7 +79,7 @@ impl Guides {
         t.add_css_class("page-title");
         t.set_xalign(0.0);
         self.list.append(&t);
-        for (mode, heading) in [("now", tr("Right now")), ("learn", tr("Learn and prepare"))] {
+        for (mode, heading) in [("now", tr("In an emergency")), ("learn", tr("Learn and prepare"))] {
             let topics: Vec<Value> = self.topics.borrow().iter().filter(|t| t["mode"].as_str().unwrap_or("now") == mode).cloned().collect();
             if topics.is_empty() {
                 continue;

@@ -23,7 +23,7 @@
     {
       "id": "medium",
       "title": "Medium",
-      "summary": "Small, plus the core how-to videos, all documents, Wikibooks and a detailed map of California.",
+      "summary": "Small, plus the core how-to videos, all documents and Wikibooks.",
       "records": 9696,
       "installed_bytes": 67476559546,
       "available": true,
@@ -40,7 +40,7 @@
     {
       "id": "all",
       "title": "All",
-      "summary": "Everything in the library: every video, document and encyclopedia, Wikipedia included, with detailed maps for the whole US.",
+      "summary": "Everything in the library: every video, document and encyclopedia, Wikipedia included.",
       "records": 12864,
       "installed_bytes": 387861708053,
       "available": true,
