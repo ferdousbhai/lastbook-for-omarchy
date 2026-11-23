@@ -120,7 +120,7 @@ pub fn shortcuts(library: bool) -> Vec<ShortcutSection> {
             ("? / F1", &tr("Show or hide the shortcuts")),
             ("Ctrl+W", &tr("Close the window; while a download runs, ask first")),
             ("Ctrl+Q", &tr("Quit; while a download runs, ask first")),
-            ("Escape", &tr("Answer a question with the choice that loses nothing")),
+            ("Escape", &tr("Close a question without changing anything")),
         ],
     );
     if !library {

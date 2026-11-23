@@ -50,7 +50,7 @@ const HELP: &[(&[&str], &str, bool, &str)] = &[
     (&["fire_station"], "F", true, n_!("Fire station")),
     (&["police"], "P", false, n_!("Police")),
     (&["drinking_water", "water_point"], "W", false, n_!("Drinking water")),
-    (&["shelter"], "S", false, n_!("Shelter: a roof, not an emergency shelter")),
+    (&["shelter"], "S", false, n_!("Shelter (a covered spot, not an emergency shelter)")),
     (&["toilets", "toilet"], "T", false, n_!("Public toilet")),
     (&["supermarket", "marketplace"], "M", false, n_!("Food shop or market")),
 ];
@@ -285,7 +285,7 @@ impl MapPage {
         omui::i18n::bind_tooltip(&help, "Nearest help");
         let legend = gtk::MenuButton::builder().icon_name(omui::icons::name::INFO).has_frame(false).build();
         legend.add_css_class("header-action");
-        omui::i18n::bind_tooltip(&legend, "What the marks mean");
+        omui::i18n::bind_tooltip(&legend, "What the symbols mean");
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         top.add_css_class("map-bar");
         top.set_halign(gtk::Align::Start);
@@ -461,7 +461,7 @@ impl MapPage {
             grid.attach(&text, 1, row as i32, 1, 1);
         }
         let note = gtk::Label::new(None);
-        omui::i18n::bind_label(&note, "Marks show from street level, where a street map of the area is installed. Click one for its name and distance.");
+        omui::i18n::bind_label(&note, "Help points show once you zoom in to street level, where a street map of the area is installed. Click one for its name and distance.");
         note.set_wrap(true);
         note.set_max_width_chars(34);
         note.set_xalign(0.0);

@@ -3,7 +3,7 @@
  "mode": "now",
  "title": "Stay warm, cool and sheltered",
  "short": "Heat, cold, smoke, carbon monoxide, damaged homes and outdoor shelter",
- "intro": "Find guidance for keeping people at a safe temperature and under cover when the power is out, the air is smoky, or home is damaged or unsafe. It also points to safe heating and generator use, because the fixes people grab first can poison or burn them. For treating someone already ill from heat or cold, see the first-aid topic.",
+ "intro": "Find guidance for keeping people at a safe temperature and under cover when the power is out, the air is smoky, or home is damaged or unsafe. It also points to safe heating and generator use, because the fixes people grab first can poison or burn them. For treating someone already ill from heat or cold, see the guide ‘Someone is hurt or sick’. Many readings are from US agencies; local rules, emergency numbers and services differ.",
  "keywords": [
   "shelter",
   "heat",
@@ -44,31 +44,32 @@
   "high-rise",
   "city",
   "upper floor",
-  "cooling center"
+  "cooling center",
+  "cooling centre"
  ],
  "choices": [
   {
    "id": "heat",
-   "label": "It's dangerously hot and the power or AC is out",
+   "label": "It's dangerously hot and the power or air conditioning is out",
    "hint": "Heat wave, no air conditioning, older people or babies at home",
    "read": [
     {
      "doc": "1c0d7a149286b5",
      "page": 2,
      "label": "Stay safe in extreme heat",
-     "note": "FEMA sheet on keeping the home cool, finding air-conditioned places, warning about fans in high heat, and signs and actions for heat cramps, exhaustion and stroke."
+     "note": "FEMA (the US federal emergency agency) sheet on keeping the home cool, finding air-conditioned places, warning about fans in high heat, and signs and actions for heat cramps, heat exhaustion and heatstroke."
     },
     {
      "doc": "9681a68ebd07f5",
      "page": 26,
      "label": "What to do during a heat wave",
-     "note": "CERT 2019 annex: window reflectors and shades, public cool places, the limits of electric fans, clothing, checking on neighbours and drinking fluids."
+     "note": "CERT (US community volunteer responder training) 2019 annex: window reflectors and shades, public cool places, the limits of electric fans, clothing, checking on neighbours and drinking fluids."
     },
     {
      "doc": "475720b524a372",
      "page": 1,
-     "label": "NWS heat safety tips and heat alerts",
-     "note": "National Weather Service sheet on heat watches and warnings, slowing down, light clothing and drinking water; next page has the heat index chart."
+     "label": "Heat safety tips and heat alerts (NWS)",
+     "note": "US National Weather Service (NWS) sheet on heat watches and warnings, slowing down, light clothing and drinking water; next page has the heat index chart."
     },
     {
      "doc": "18bf4604bf28c4",
@@ -87,13 +88,13 @@
      "doc": "9681a68ebd07f5",
      "page": 25,
      "label": "Why upper floors and city blocks are riskier in a heat wave",
-     "note": "CERT 2019 annex: higher floors of multistory buildings and being confined to bed are linked to higher heat death risk; city asphalt and concrete keep nights hotter."
+     "note": "CERT 2019 annex: higher floors of multi-storey buildings and being confined to bed are linked to higher heat death risk; city asphalt and concrete keep nights hotter."
     },
     {
      "doc": "9681a68ebd07f5",
      "page": 26,
-     "label": "Finding cooler places and checking on neighbors",
-     "note": "CERT 2019 annex: air-conditioned public places, its warning about fans alone when the heat index exceeds 99°F (37°C), and checking on neighbors without air conditioning."
+     "label": "Finding cooler places and checking on neighbours",
+     "note": "CERT 2019 annex: air-conditioned public places, its warning about fans alone when the heat index exceeds 99°F (37°C), and checking on neighbours without air conditioning."
     },
     {
      "doc": "8a228a96ebfa42",
@@ -104,13 +105,13 @@
   },
   {
    "id": "cold",
-   "label": "It's freezing and the heat is out",
+   "label": "It's freezing and the heating is off",
    "hint": "Winter storm, no heating, staying warm overnight",
    "read": [
     {
      "doc": "f6becaef71ffd5",
      "label": "Stay safe during winter weather",
-     "note": "Ready.gov page on preparing a home for cold, avoiding carbon monoxide, never heating with a gas stove or oven, and signs and actions for frostbite and hypothermia."
+     "note": "Ready.gov (the US government preparedness site) page on preparing a home for cold, avoiding carbon monoxide, never heating with a gas stove or oven, and signs and actions for frostbite and hypothermia."
     },
     {
      "doc": "9681a68ebd07f5",
@@ -128,7 +129,7 @@
      "doc": "med-2e83e22162a9a006",
      "page": 461,
      "label": "First aid for someone who is too cold",
-     "note": "IFRC 2025 guidance on warming a person with hypothermia and avoiding burns. Full first aid is in the hurt topic."
+     "note": "IFRC (International Federation of Red Cross and Red Crescent Societies) 2025 guidance on warming a person with hypothermia and avoiding burns. Full first aid is in the guide ‘Someone is hurt or sick’."
     }
    ]
   },
@@ -141,12 +142,12 @@
      "doc": "18bf4604bf28c4",
      "page": 2,
      "label": "Avoid carbon monoxide poisoning in an outage",
-     "note": "FEMA: generators, camp stoves and charcoal grills only outdoors and away from openings, never heat the home with a stove, oven, grill or dryer, and install CO alarms."
+     "note": "FEMA: generators, camp stoves and charcoal grills only outdoors and away from openings, never heat the home with a stove, oven, grill or dryer, and install carbon monoxide (CO) alarms."
     },
     {
      "doc": "f6becaef71ffd5",
      "label": "Generator safety",
-     "note": "Ready.gov section on where to run a generator, CO detectors, keeping it dry, extension cords and refuelling only after it cools."
+     "note": "Ready.gov section on where to run a generator, CO alarms, keeping it dry, extension cords and refuelling only after it cools."
     },
     {
      "doc": "9681a68ebd07f5",
@@ -170,7 +171,7 @@
     {
      "doc": "a90ff7e6f3cf01",
      "label": "Protect yourself from wildfire smoke",
-     "note": "Ready.gov: N95 masks, a closed-off clean-air room with a portable air cleaner, HVAC recirculate settings, and when to evacuate or go to a community building."
+     "note": "Ready.gov: N95 masks, a closed-off clean-air room with a portable air cleaner, setting the heating or air-conditioning system to recirculate, and when to evacuate or go to a community building."
     },
     {
      "doc": "ed5bac0a81b009",
@@ -187,7 +188,7 @@
   },
   {
    "id": "damaged",
-   "label": "Home is damaged – is it safe to stay?",
+   "label": "Home is damaged: is it safe to stay?",
    "hint": "After earthquake, fire or storm: cracks, gas smell, downed lines",
    "read": [
     {
@@ -210,7 +211,7 @@
     },
     {
      "doc": "5e162f84b8d790",
-     "label": "Going to a mass care shelter",
+     "label": "Going to a public emergency shelter",
      "note": "Ready.gov on what community shelters provide, bringing your own kit and cleaning supplies, pets, and how to find open shelters."
     }
    ]
@@ -229,7 +230,7 @@
      "doc": "ed5bac0a81b009",
      "page": 33,
      "label": "Types of sheltering",
-     "note": "CERT 2019 on shelter-in-place, staying home for up to two weeks, and mass care shelters."
+     "note": "CERT 2019 on shelter-in-place, staying home for up to two weeks, and public emergency shelters."
     },
     {
      "doc": "cecc1671ae4d02",
@@ -286,7 +287,7 @@
    "page": 2
   },
   {
-   "text": "If your carbon monoxide alarm sounds or you smell gas, move to fresh air immediately, call for help from there and stay until emergency personnel arrive.",
+   "text": "If your CO alarm sounds or you smell gas, move to fresh air immediately, call for help from there and stay until emergency personnel arrive.",
    "doc": "9681a68ebd07f5",
    "page": 60
   },
@@ -301,7 +302,7 @@
    "page": 2
   },
   {
-   "text": "Heat stroke (very high temperature, red hot dry skin, confusion, unconsciousness): call the emergency number or get the person to a hospital immediately.",
+   "text": "Heatstroke (very high temperature, red hot dry skin, confusion, unconsciousness): call the emergency number or get the person to a hospital immediately.",
    "doc": "1c0d7a149286b5",
    "page": 2
   },
@@ -333,12 +334,12 @@
    "page": 18
   },
   {
-   "text": "If experts or local officials tell you to evacuate, leave. Older people and those with access and functional needs may need to leave well before official notice.",
+   "text": "If experts or local officials tell you to evacuate, leave. Older people and those with disabilities or other needs may need to leave well before official notice.",
    "doc": "ed5bac0a81b009",
    "page": 32
   },
   {
-   "text": "Living on higher floors of multistory buildings, and being confined to bed, are linked to a higher risk of heat-related death.",
+   "text": "Living on higher floors of multi-storey buildings, and being confined to bed, are linked to a higher risk of heat-related death.",
    "doc": "9681a68ebd07f5",
    "page": 25
   }
@@ -347,7 +348,7 @@
   {
    "doc": "e629b2983d95e4",
    "page": 6,
-   "label": "Smoke and carbon monoxide alarms, power for medical devices",
+   "label": "Smoke and CO alarms, power for medical devices",
    "note": "American Red Cross (2020): CO and smoke alarms on every floor and near bedrooms, backup power plans, and learning to shut off utilities."
   },
   {
@@ -359,13 +360,13 @@
   {
    "doc": "a90ff7e6f3cf01",
    "label": "Prepare a clean-air room and N95 masks for wildfire season",
-   "note": "Ready.gov: a room you can close off, a portable air cleaner, N95 masks, alerts, evacuation routes and a go bag."
+   "note": "Ready.gov: a room you can close off, a portable air cleaner, N95 masks, alerts, evacuation routes and a go-bag."
   },
   {
    "doc": "db4d9783fca34b",
    "page": 2,
    "label": "Kit items for sheltering: dust mask, plastic sheeting, duct tape",
-   "note": "FEMA checklist including items for sealing a room, a radio, flashlight and first aid kit; first page adds sleeping bags or blankets and clothing."
+   "note": "FEMA checklist including items for sealing a room, a radio, flashlight and first-aid kit; first page adds sleeping bags or blankets and clothing."
   },
   {
    "doc": "4c096c3377a13d",
@@ -377,13 +378,13 @@
    "doc": "5cd0b4e41cc479",
    "page": 23,
    "label": "Shoes and a flashlight by every bed",
-   "note": "FEMA Earthquake Safety at Home (2020) planning list, including drop-cover-hold-on practice and checking tsunami zones."
+   "note": "Earthquake Safety at Home (FEMA, 2020) planning list, including Drop, Cover and Hold On practice and checking tsunami zones."
   }
  ],
  "learn": [
   {
    "doc": "cecc1671ae4d02",
-   "label": "FEMA Are You Ready? (2020)",
+   "label": "Are You Ready? (FEMA, 2020)",
    "note": "In-depth citizen preparedness guide covering hazards, sheltering, evacuation plans, supplies and recovering after disasters."
   },
   {
@@ -393,12 +394,12 @@
   },
   {
    "doc": "5cd0b4e41cc479",
-   "label": "FEMA Earthquake Safety at Home (2020)",
+   "label": "Earthquake Safety at Home (FEMA, 2020)",
    "note": "How to secure your space, find home weak points, plan, and recover after an earthquake."
   },
   {
    "doc": "5b0efa0b70cb98",
-   "label": "US Army ATP 3-50.21 Survival (2018)",
+   "label": "Survival manual ATP 3-50.21 (US Army, 2018)",
    "note": "Current military field survival manual; chapter 6 covers clothing, shelter sites, tarp and natural shelters, and insulation."
   },
   {
@@ -411,7 +412,7 @@
    "zim": "zim/mdwiki_en_all_maxi_2025-11.zim/Heat_stroke",
    "title": "Heat stroke",
    "label": "Encyclopedia: Heat stroke (MDWiki)",
-   "note": "Medical encyclopedia article on heat stroke, who is at risk and prevention."
+   "note": "Medical encyclopedia article on heatstroke, who is at risk and prevention."
   },
   {
    "zim": "zim/mdwiki_en_all_maxi_2025-11.zim/Hypothermia",

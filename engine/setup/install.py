@@ -135,7 +135,7 @@ def check_zip(path, installed_bytes=None):
             if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
                 raise Refused('unpack', f'The pack uses a kind of compression Lastbook does not accept ({info.filename[:80]!r}).')
             if info.compress_type == zipfile.ZIP_STORED and info.compress_size != info.file_size:
-                raise Refused('unpack', f'The pack holds a stored file whose sizes disagree ({info.filename[:80]!r}).')
+                raise Refused('unpack', f'The pack is damaged: the size of a file in it is wrong ({info.filename[:80]!r}). Download it again.')
             total += info.file_size
             if not dropped('/'.join(parts[1:])):
                 kept += info.file_size

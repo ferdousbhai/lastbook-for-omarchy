@@ -457,12 +457,12 @@ class PlaceNamesTests(unittest.TestCase):
 
     def test_too_few_rows_left_is_incomplete(self):
         self.cities = self.cities[:9000] + ['a\tb'] * 5000
-        self.failed('The place names downloaded incomplete. Try again later.')
-        self.failed('The place names downloaded incomplete. Try again later.', countries='AA\tAAX\t1\tAA\tLand AA\n')
+        self.failed('The place names did not download completely. Try again later.')
+        self.failed('The place names did not download completely. Try again later.', countries='AA\tAAX\t1\tAA\tLand AA\n')
 
     def test_a_changed_layout_is_one_plain_failure(self):
         self.cities = ['\t'.join(['x'] * 6)] * 12_000               # fewer columns everywhere
-        self.failed('The place names downloaded incomplete. Try again later.')
+        self.failed('The place names did not download completely. Try again later.')
 
     def test_files_that_are_not_what_they_should_be(self):
         self.failed(cities=b'<html>Service unavailable</html>')                     # not a zip

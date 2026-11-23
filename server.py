@@ -782,7 +782,7 @@ GEO = HERE / 'derived' / 'geo'
 
 # What `--nearby` takes: the kinds the street-level maps hold (engine/map_pois.py KINDS where the map's word differs).
 HELP = {'hospital': 'Hospital', 'clinic': 'Clinic', 'doctors': 'Doctor', 'pharmacy': 'Pharmacy',
-        'chemist': 'Chemist / drugstore (may not sell medicines)', 'dentist': 'Dentist', 'fire_station': 'Fire station',
+        'chemist': 'Drugstore / toiletries shop (may not sell medicines)', 'dentist': 'Dentist', 'fire_station': 'Fire station',
         'police': 'Police', 'drinking_water': 'Drinking water tap', 'fountain': 'Fountain (not necessarily drinkable)',
         'spring': 'Spring (untested)', 'toilet': 'Public toilet',
         'shelter': 'Roofed shelter (a bus or rain shelter, hut or post: not an emergency shelter)',

@@ -3,7 +3,7 @@
  "mode": "now",
  "title": "Get safe drinking water",
  "short": "Treat, find and store water",
- "intro": "Readings for when tap water is off or may be unsafe: how to treat water, where to find water already in your home, and how to store it. It also points to warnings about water that boiling or bleach cannot fix, such as salt water and flood water.",
+ "intro": "Readings for when tap water is off or may be unsafe: how to treat water, where to find water already in your home, and how to store it. It also points to warnings about water that boiling or bleach cannot fix, such as salt water and floodwater. Many readings are from US agencies; local rules, emergency numbers and services differ.",
  "keywords": [
   "water",
   "drinking water",
@@ -28,7 +28,8 @@
   "river",
   "harbor",
   "seawater",
-  "salt water"
+  "salt water",
+  "harbour"
  ],
  "choices": [
   {
@@ -40,13 +41,13 @@
      "doc": "f7ff53bcaae9cc",
      "page": 13,
      "label": "Ways to treat water of uncertain quality",
-     "note": "FEMA/Red Cross booklet (2004). When to treat water, why to let particles settle or strain first, and boiling instructions. Says boiling and bleach do not remove chemicals."
+     "note": "Booklet (2004) from FEMA (the US federal emergency agency) and the Red Cross. When to treat water, why to let particles settle or strain first, and boiling instructions. Says boiling and bleach do not remove chemicals."
     },
     {
      "doc": "e4bfed4b6afd6d",
      "page": 2,
      "label": "Keep water safe during and after a flood",
-     "note": "FDA fact sheet (2007): use unexposed bottled water, how to boil or bleach cloudy water, and what to do if your well was flooded."
+     "note": "Fact sheet (2007) from the FDA (the US food and medicine regulator): use unexposed bottled water, how to boil or bleach cloudy water, and what to do if your well was flooded."
     },
     {
      "doc": "5cd0b4e41cc479",
@@ -70,7 +71,7 @@
     {
      "doc": "f7ff53bcaae9cc",
      "page": 13,
-     "label": "Boiling: the FEMA/Red Cross method",
+     "label": "Boiling water to make it safe (FEMA/Red Cross method)",
      "note": "FEMA/Red Cross booklet (2004) calls boiling the safest method and describes boil time, cooling, and pouring between containers for taste."
     },
     {
@@ -89,20 +90,20 @@
     {
      "doc": "f7ff53bcaae9cc",
      "page": 14,
-     "label": "Bleach drops per gallon and the smell test",
+     "label": "Bleach drops per gallon (3.8 litres) and the smell test",
      "note": "FEMA/Red Cross booklet (2004). Gives a dose for bleach of 5.25–6% strength (stated on page 13), the waiting time, and what to do if no chlorine smell remains."
     },
     {
      "doc": "med-953dfe1df69e0773",
      "page": 23,
-     "label": "Bleach chart for 1 liter up to a 200-liter barrel",
+     "label": "Bleach chart for 1 litre up to a 200-litre barrel",
      "note": "Hesperian (2017) chart for 5% bleach. Says to read the label for the percent of chlorine, use more if weaker, and avoid bleach with soap or perfume."
     },
     {
      "doc": "ed5bac0a81b009",
      "page": 135,
-     "label": "CERT manual: bleach amounts for clear and cloudy water",
-     "note": "FEMA CERT Participant Manual (2019): boiling, tablets, or non-perfumed bleach, with drop counts for clear versus cloudy water and a re-dose step."
+     "label": "Bleach amounts for clear and cloudy water (CERT manual)",
+     "note": "FEMA CERT (US community volunteer responder training) Participant Manual (2019): boiling, tablets, or non-perfumed bleach, with drop counts for clear versus cloudy water and a re-dose step."
     },
     {
      "doc": "med-ea4055db35ff180d",
@@ -120,7 +121,7 @@
     {
      "doc": "2bcf93d0ed97f2",
      "label": "Filter, then disinfect: collecting and purifying natural water",
-     "note": "National Park Service page. Says filtration by itself does not purify water and must be followed by boiling or chemical treatment."
+     "note": "US National Park Service page. Says filtration by itself does not purify water and must be followed by boiling or chemical treatment."
     },
     {
      "doc": "med-3a93d7d4c97d404d",
@@ -150,7 +151,7 @@
      "doc": "f7ff53bcaae9cc",
      "page": 12,
      "label": "Hidden water sources in your home",
-     "note": "FEMA/Red Cross booklet (2004): using water in the hot-water tank, pipes and ice; which sources not to drink (toilet tank, radiators, waterbeds, pools); shutting the main valve."
+     "note": "FEMA/Red Cross booklet (2004): using water in the water heater, pipes and ice; which sources not to drink (toilet tank, radiators, waterbeds, pools); shutting the main valve."
     },
     {
      "doc": "0dfdf1fb4b178f",
@@ -187,13 +188,13 @@
      "doc": "1693406275fcc129",
      "page": 2,
      "label": "What happens to tap water when water utilities lose power",
-     "note": "EPA Power Resilience Guide (2023), written for water utilities: pumps can stop producing water, pressure loss can let contaminants into pipes, and sewage can back up into homes."
+     "note": "US Environmental Protection Agency (EPA) Power Resilience Guide (2023), written for water utilities: pumps can stop producing water, pressure loss can let contaminants into pipes, and sewage can back up into homes."
     },
     {
      "doc": "f7ff53bcaae9cc",
      "page": 12,
      "label": "Water already inside your home: water heater, pipes, ice",
-     "note": "FEMA/Red Cross (2004) lists hot-water tanks as emergency drinking-water sources. Norway's guidance below recommends hygiene use only; the sources disagree."
+     "note": "FEMA/Red Cross (2004) lists water heaters as emergency drinking-water sources. Norway's guidance below recommends hygiene use only; the sources disagree."
     },
     {
      "doc": "c6155c3ed58c35",
@@ -212,7 +213,7 @@
      "doc": "f7ff53bcaae9cc",
      "page": 12,
      "label": "Emergency outdoor water sources",
-     "note": "FEMA/Red Cross booklet (2004) lists rain, streams, ponds and springs, which to avoid, that seawater needs distilling, and not to drink flood water."
+     "note": "FEMA/Red Cross booklet (2004) lists rain, streams, ponds and springs, which to avoid, that seawater needs distilling, and not to drink floodwater."
     },
     {
      "doc": "med-ea4055db35ff180d",
@@ -236,14 +237,14 @@
   },
   {
    "id": "river",
-   "label": "Only river, harbor or flood water nearby",
+   "label": "Only river, harbour or floodwater nearby",
    "hint": "City river, canal, bay or flooded streets",
    "read": [
     {
      "doc": "f7ff53bcaae9cc",
      "page": 12,
      "label": "Which outdoor water to avoid, and salt water",
-     "note": "FEMA/Red Cross booklet (2004) lists outdoor sources to treat first, water to avoid (floating material, odor, dark color), salt water only if distilled, and no flood water."
+     "note": "FEMA/Red Cross booklet (2004) lists outdoor sources to treat first, water to avoid (floating material, odour, dark colour), salt water only if distilled, and no floodwater."
     },
     {
      "doc": "f7ff53bcaae9cc",
@@ -254,15 +255,15 @@
     {
      "doc": "9681a68ebd07f5",
      "page": 59,
-     "label": "What flood water can carry",
-     "note": "CERT Hazard Annexes (2019), hurricane section: floodwaters may hold oil, gasoline, chemicals, bacteria and raw sewage, plus hidden downed power lines."
+     "label": "What floodwater can carry",
+     "note": "CERT Hazard Annexes (2019), hurricane section: floodwater may hold oil, petrol (gasoline), chemicals, bacteria and raw sewage, plus hidden downed power lines."
     }
    ]
   },
   {
    "id": "chemical",
    "label": "Water may contain fuel, chemicals or sewage",
-   "hint": "Odd smell or color, spill, flood water, industrial area",
+   "hint": "Odd smell or colour, spill, floodwater, industrial area",
    "read": [
     {
      "doc": "med-ea4055db35ff180d",
@@ -322,7 +323,7 @@
    "page": 29
   },
   {
-   "text": "Do not drink flood water, or water from toilet tanks, radiators, waterbeds, or pools and spas.",
+   "text": "Do not drink floodwater, or water from toilet tanks, radiators, waterbeds, or pools and spas.",
    "doc": "f7ff53bcaae9cc",
    "page": 12
   },
@@ -357,12 +358,12 @@
    "page": 2
   },
   {
-   "text": "Do not use salt water unless you distill it first.",
+   "text": "Do not use salt water unless you distil it first.",
    "doc": "f7ff53bcaae9cc",
    "page": 12
   },
   {
-   "text": "Floodwaters may carry oil, gasoline, chemicals, bacteria and raw sewage, and can hide downed power lines.",
+   "text": "Floodwater may carry oil, petrol, chemicals, bacteria and raw sewage, and can hide downed power lines.",
    "doc": "9681a68ebd07f5",
    "page": 59
   }
@@ -372,7 +373,7 @@
    "doc": "cecc1671ae4d02",
    "page": 20,
    "label": "How much water to keep per person (Ready.gov)",
-   "note": "FEMA Are You Ready? guide (2020): water per person per day, and suggested numbers of days to keep on hand."
+   "note": "FEMA Are You Ready? guide (2020), also on Ready.gov (the US government preparedness site): water per person per day, and suggested numbers of days to keep on hand."
   },
   {
    "doc": "f7ff53bcaae9cc",
@@ -384,12 +385,12 @@
    "doc": "f7ff53bcaae9cc",
    "page": 10,
    "label": "Choosing and preparing containers for stored water",
-   "note": "FEMA/Red Cross booklet (2004): bottled versus home-filled water, which containers to avoid; page 11 covers cleaning, filling, labeling and replacing."
+   "note": "FEMA/Red Cross booklet (2004): bottled versus home-filled water, which containers to avoid; page 11 covers cleaning, filling, labelling and replacing."
   },
   {
    "doc": "ed5bac0a81b009",
    "page": 26,
-   "label": "CERT tips: which plastic bottles to use and when to replace",
+   "label": "Which plastic bottles to use and when to replace them (CERT tips)",
    "note": "FEMA CERT manual (2019): look for recycling symbol 1, avoid milk jugs and glass, store cool and dark, replace every six months."
   },
   {
@@ -408,7 +409,7 @@
    "doc": "cecc1671ae4d02",
    "page": 21,
    "label": "Add a water purification system to your kit",
-   "note": "FEMA Are You Ready? (2020) list of extra kit items, including a water purification system and hand sanitizer."
+   "note": "FEMA Are You Ready? (2020) list of extra kit items, including a water purification system and hand sanitiser."
   }
  ],
  "learn": [
@@ -450,13 +451,13 @@
   {
    "zim": "zim/mdwiki_en_all_maxi_2025-11.zim/Portable_water_purification",
    "title": "Portable water purification",
-   "label": "Encyclopedia: portable water purification",
+   "label": "Encyclopedia: Portable water purification (MDWiki)",
    "note": "Overview of boiling, filters, chemical and UV methods and what each removes."
   },
   {
    "zim": "zim/wikipedia_en_all_nopic_2026-06.zim/Rainwater_harvesting",
    "title": "Rainwater harvesting",
-   "label": "Encyclopedia: rainwater harvesting",
+   "label": "Encyclopedia: Rainwater harvesting (Wikipedia)",
    "note": "Background on collecting and storing rainwater, quality concerns and system types."
   },
   {

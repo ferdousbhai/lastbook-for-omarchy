@@ -57,11 +57,11 @@
 {"do":"key","keys":"plus"}
 {"do":"key","keys":"Left"}
 {"do":"shot","path":"map-help-chosen.png"}
-{"do":"click","role":"button","name":"What the marks mean"}
-{"do":"wait","role":"label","name":"Marks show from street level, where a street map of the area is installed. Click one for its name and distance.","visible":true}
+{"do":"click","role":"button","name":"What the symbols mean"}
+{"do":"wait","role":"label","name":"Help points show once you zoom in to street level, where a street map of the area is installed. Click one for its name and distance.","visible":true}
 {"do":"shot","path":"map-legend.png"}
 {"do":"key","keys":"Escape"}
-{"do":"wait","role":"label","name":"Marks show from street level, where a street map of the area is installed. Click one for its name and distance.","visible":false}
+{"do":"wait","role":"label","name":"Help points show once you zoom in to street level, where a street map of the area is installed. Click one for its name and distance.","visible":false}
 {"do":"click","role":"button","name":"Close"}
 {"do":"wait","role":"label","name":"Around Mapton","visible":false}
 

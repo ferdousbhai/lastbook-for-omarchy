@@ -3,7 +3,7 @@
  "mode": "now",
  "title": "Stay safe in an earthquake, fire, flood or tsunami",
  "short": "Earthquake, tsunami, wildfire, home and high-rise fire, flood, shelter-in-place",
- "intro": "What official guides say to do during and right after an earthquake, tsunami warning, wildfire or wildfire smoke, home or high-rise fire, flood, or chemical or radiation emergency, and how to plan an evacuation without a car — and how to get a go-bag and family plan ready beforehand.",
+ "intro": "What official guides say to do during and right after an earthquake, tsunami warning, wildfire or wildfire smoke, home or high-rise fire, flood, or chemical or radiation emergency, and how to plan an evacuation without a car — and how to get a go-bag and family plan ready beforehand. Many readings are from US agencies; local rules, emergency numbers and services differ.",
  "keywords": [
   "earthquake",
   "drop cover hold on",
@@ -47,19 +47,19 @@
     {
      "doc": "d0fbb2e051cd46",
      "page": 9,
-     "label": "FEMA: Drop, Cover and Hold On",
-     "note": "FEMA 2024 sheet: what to do indoors, in bed, in a vehicle or high-rise, and going inland after shaking if tsunamis are possible."
+     "label": "Drop, Cover and Hold On in an earthquake (FEMA)",
+     "note": "2024 sheet from FEMA (the US federal emergency agency): what to do indoors, in bed, in a vehicle or high-rise, and going inland after shaking if tsunamis are possible."
     },
     {
      "doc": "9681a68ebd07f5",
      "page": 17,
-     "label": "CERT: why not to run outside or stand in a doorway",
-     "note": "During shaking in a car, in bed, outdoors or near the coast, plus first steps if you are trapped."
+     "label": "Why not to run outside or stand in a doorway (CERT)",
+     "note": "CERT (US community volunteer responder training) manual: during shaking in a car, in bed, outdoors or near the coast, plus first steps if you are trapped."
     },
     {
      "doc": "5cd0b4e41cc479",
      "page": 56,
-     "label": "FEMA P-530: what to do during an earthquake",
+     "label": "What to do during an earthquake (FEMA P-530)",
      "note": "Detailed survival guidance from FEMA's home earthquake guide, including what to do with no table nearby."
     }
    ]
@@ -72,7 +72,7 @@
     {
      "doc": "9681a68ebd07f5",
      "page": 18,
-     "label": "CERT: first checks after an earthquake",
+     "label": "First checks after an earthquake (CERT)",
      "note": "Check yourself, then others; put out small fires; clean up spills; inspect for damage; expect aftershocks; tune to emergency broadcasts."
     },
     {
@@ -92,13 +92,13 @@
   {
    "id": "tsunami",
    "label": "Tsunami warning, or a strong quake at the coast",
-   "hint": "Near the beach, harbor or low ground by the ocean",
+   "hint": "Near the beach, harbour or low ground by the ocean",
    "read": [
     {
      "doc": "68b98222512b05",
      "page": 1,
-     "label": "NWS: tsunami safety — natural vs official warnings",
-     "note": "Go to high ground or inland right away after a strong quake at the coast; plan to evacuate on foot; a cancelled warning doesn't mean safe."
+     "label": "Tsunami safety: natural vs official warnings (NWS)",
+     "note": "US National Weather Service (NWS): go to high ground or inland right away after a strong quake at the coast; plan to evacuate on foot; a cancelled warning doesn't mean safe."
     },
     {
      "doc": "9681a68ebd07f5",
@@ -115,7 +115,7 @@
     {
      "doc": "d0fbb2e051cd46",
      "page": 29,
-     "label": "FEMA: how to stay safe when a tsunami threatens",
+     "label": "How to stay safe when a tsunami threatens (FEMA)",
      "note": "Prepare, survive, be safe: shelters 100 feet (30 m) up or a mile (1.6 km) inland, evacuation route signs, electrocution risk in floodwater."
     }
    ]
@@ -128,8 +128,8 @@
     {
      "doc": "2848f4bffb8109",
      "page": 8,
-     "label": "Ready.gov: before you evacuate from a wildfire",
-     "note": "The Five Ps to take, and steps that help firefighters if there's time: lights on, windows closed, garage opener disconnected."
+     "label": "Before you evacuate from a wildfire (Ready.gov)",
+     "note": "Ready.gov (the US government preparedness site): the Five Ps to take, and steps that help firefighters if there's time: lights on, windows closed, garage opener disconnected."
     },
     {
      "doc": "2848f4bffb8109",
@@ -140,7 +140,7 @@
     {
      "doc": "d0fbb2e051cd46",
      "page": 33,
-     "label": "FEMA: how to stay safe when a wildfire threatens",
+     "label": "How to stay safe when a wildfire threatens (FEMA)",
      "note": "Leave immediately when told, call the emergency number if trapped, use N95 masks, and avoid hot ash and embers after."
     }
    ]
@@ -152,13 +152,13 @@
    "read": [
     {
      "doc": "a90ff7e6f3cf01",
-     "label": "Ready.gov: protecting yourself from smoke",
-     "note": "N95 masks, a closed-off room with a portable air cleaner, high-efficiency HVAC filters on recirculate, and extra caution for lung conditions."
+     "label": "Protecting yourself from smoke (Ready.gov)",
+     "note": "N95 masks, a closed-off room with a portable air cleaner, high-efficiency filters in the heating or air-conditioning system set to recirculate, and extra caution for lung conditions."
     },
     {
      "doc": "d0fbb2e051cd46",
      "page": 33,
-     "label": "FEMA: N95 respirators for wildfire smoke",
+     "label": "N95 respirators for wildfire smoke (FEMA)",
      "note": "Gather N95 masks ahead of time and use them to keep particles out of the air you breathe."
     }
    ]
@@ -177,12 +177,12 @@
     {
      "doc": "9681a68ebd07f5",
      "page": 36,
-     "label": "CERT: if trapped by smoke, and after a fire",
-     "note": "Staying low near a window and signaling the fire department; electrical dangers when returning after a fire."
+     "label": "If trapped by smoke, and after a fire (CERT)",
+     "note": "Staying low near a window and signalling the fire department; electrical dangers when returning after a fire."
     },
     {
      "doc": "27757fb5d39987",
-     "label": "U.S. Fire Administration: home fire escape plans",
+     "label": "Home fire escape plans (US Fire Administration)",
      "note": "You may have less than 2 minutes to escape; two ways out of every room, a meeting place, and high-rise advice."
     }
    ]
@@ -194,19 +194,19 @@
    "read": [
     {
      "doc": "27757fb5d39987",
-     "label": "USFA: leaving a high-rise apartment in a fire",
-     "note": "U.S. Fire Administration page: high-rise fires are especially dangerous; leave, close the door behind you, pull the alarm, take the stairs, not the elevator unless firefighters direct it."
+     "label": "Leaving a high-rise apartment in a fire (US Fire Administration)",
+     "note": "US Fire Administration (USFA) page: high-rise fires are especially dangerous; leave, close the door behind you, pull the alarm, take the stairs, not the elevator unless firefighters direct it."
     },
     {
      "doc": "cae1149a714fc3",
      "page": 1,
      "label": "Red Cross: if you can't reach the exit stairs",
-     "note": "Red Cross sheet (2014): if trapped, call the emergency number, close doors, hang a white sheet outside the window; practice reaching the fire stairs or a safe place in your unit."
+     "note": "Red Cross sheet (2014): if trapped, call the emergency number, close doors, hang a white sheet outside the window; practise reaching the fire stairs or a safe place in your unit."
     },
     {
      "doc": "9681a68ebd07f5",
      "page": 35,
-     "label": "CERT: no elevators, hot doors, and being trapped in a room",
+     "label": "No elevators, hot doors, and being trapped in a room (CERT)",
      "note": "CERT 2019 annex: never using an elevator to escape, checking a door for heat and smoke, and sealing gaps with wet cloth if all exits are blocked."
     },
     {
@@ -224,45 +224,45 @@
     {
      "doc": "d0fbb2e051cd46",
      "page": 13,
-     "label": "FEMA: how to stay safe when a flood threatens",
+     "label": "How to stay safe when a flood threatens (FEMA)",
      "note": "Evacuate when told, don't walk or drive through floodwater, avoid closed attics, and electrical and generator hazards after."
     },
     {
      "doc": "cecc1671ae4d02",
      "page": 12,
      "label": "Turn Around, Don't Drown and flood steps",
-     "note": "Are You Ready: how little moving water can sweep you or a car away, going to higher levels, and after-flood electrocution risks."
+     "note": "FEMA's Are You Ready? guide: how little moving water can sweep you or a car away, going to higher levels, and after-flood electrocution risks."
     }
    ]
   },
   {
    "id": "no-car",
    "label": "I may need to evacuate and have no car",
-   "hint": "Bus, train, paratransit, a ride from neighbors or family",
+   "hint": "Bus, train, accessible transport (paratransit), a ride from neighbours or family",
    "read": [
     {
      "doc": "cecc1671ae4d02",
      "page": 20,
-     "label": "Are You Ready: planning evacuation without a car",
-     "note": "FEMA Are You Ready? guide (2020): planning transportation with family, friends or local government if you have no car, and checking on neighbors who may need a ride."
+     "label": "Planning evacuation without a car (Are You Ready?)",
+     "note": "FEMA Are You Ready? guide (2020): planning transport with family, friends or local government if you have no car, and checking on neighbours who may need a ride."
     },
     {
      "doc": "2848f4bffb8109",
      "page": 5,
-     "label": "Public transportation and paratransit in an evacuation",
-     "note": "FEMA wildfire guide (written 2014, reposted 2020): arranging shared rides and asking local emergency management how evacuation by public transportation or paratransit works, including staging areas."
+     "label": "Public and accessible transport in an evacuation",
+     "note": "FEMA wildfire guide (written 2014, reposted 2020): arranging shared rides and asking local emergency management how evacuation by public or accessible transport works, including staging areas."
     },
     {
      "doc": "cecc1671ae4d02",
      "page": 19,
      "label": "Meeting places and backup ways to get out",
-     "note": "FEMA Are You Ready? (2020): meeting places in several directions that everyone can reach, and learning alternate routes and backup modes of transportation out of your area."
+     "note": "FEMA Are You Ready? (2020): meeting places in several directions that everyone can reach, and learning alternate routes and backup ways to travel out of your area."
     },
     {
      "doc": "53da8d3443e35e",
      "page": 1,
      "label": "Commuter plan: write down routes, buses and trains",
-     "note": "Ready.gov fill-in form (2013): normal and alternative routes between work and home, public transportation lines and stops, and taxi and local bus numbers."
+     "note": "Ready.gov fill-in form (2013): normal and alternative routes between work and home, public transport lines and stops, and taxi and local bus numbers."
     }
    ]
   },
@@ -274,8 +274,8 @@
     {
      "doc": "ed5bac0a81b009",
      "page": 241,
-     "label": "CERT: sealing a room for a chemical release",
-     "note": "Shutting off ventilation, plastic sheeting and duct tape, how long you'd typically stay, and ventilating afterward."
+     "label": "Sealing a room for a chemical release (CERT)",
+     "note": "Shutting off ventilation, plastic sheeting and duct tape, how long you'd typically stay, and ventilating afterwards."
     },
     {
      "doc": "255b448d041a65",
@@ -286,13 +286,13 @@
     {
      "doc": "d0fbb2e051cd46",
      "page": 21,
-     "label": "FEMA: nuclear explosion — get inside, stay inside",
+     "label": "Nuclear explosion: get inside, stay inside (FEMA)",
      "note": "Best shelter locations, at least 10 minutes to find shelter, removing and washing off fallout, and safe food and water."
     },
     {
      "doc": "9681a68ebd07f5",
      "page": 75,
-     "label": "CERT: nuclear power plant emergency",
+     "label": "Nuclear power plant emergency (CERT)",
      "note": "Follow local instructions, sheltering vs evacuating, closing air intakes, and showering and bagging clothes after exposure."
     }
    ]
@@ -320,7 +320,7 @@
    "page": 60
   },
   {
-   "text": "If crawlspace walls have slid or are visibly leaning, turn off gas at the meter and do not reoccupy until a home safety evaluation.",
+   "text": "If crawlspace walls have slid or are visibly leaning, turn off gas at the meter and do not move back in until the home has been checked for safety.",
    "doc": "5cd0b4e41cc479",
    "page": 66
   },
@@ -387,8 +387,8 @@
   {
    "doc": "ed5bac0a81b009",
    "page": 25,
-   "label": "CERT: create a family disaster plan",
-   "note": "Two meeting places, an out-of-area check-in contact, wallet cards, shutting off utilities, alarms, and meeting neighbors."
+   "label": "Create a family disaster plan (CERT)",
+   "note": "Two meeting places, an out-of-area contact, wallet cards, shutting off utilities, alarms, and meeting neighbours."
   },
   {
    "doc": "255b448d041a65",
@@ -399,7 +399,7 @@
   {
    "doc": "db4d9783fca34b",
    "page": 2,
-   "label": "FEMA 2024 emergency supply kit checklist",
+   "label": "Emergency supply kit checklist (FEMA, 2024)",
    "note": "Basic kit items — water, food, radio with weather alerts, flashlight, whistle, masks, plastic sheeting, utility wrench — and extras on the reverse."
   },
   {
@@ -412,7 +412,7 @@
    "doc": "9681a68ebd07f5",
    "page": 16,
    "label": "Earthquake-proof your home",
-   "note": "CERT: practice Drop, Cover, Hold On, secure furniture and water heaters, shoes and flashlight by the bed, licensed pros for flexible gas lines."
+   "note": "CERT: practise Drop, Cover and Hold On, secure furniture and water heaters, keep shoes and a flashlight by the bed, and use licensed professionals for flexible gas lines."
   },
   {
    "doc": "9681a68ebd07f5",
@@ -422,7 +422,7 @@
   },
   {
    "doc": "a90ff7e6f3cf01",
-   "label": "Ready.gov: prepare home and family for wildfires",
+   "label": "Prepare home and family for wildfires (Ready.gov)",
    "note": "Alerts, evacuation zones, a 30-foot (9 m) fire-resistant zone, a clean-air room, N95 masks and backup charging."
   },
   {
@@ -435,7 +435,7 @@
  "learn": [
   {
    "doc": "d0fbb2e051cd46",
-   "label": "FEMA hazard information sheets (2024)",
+   "label": "Hazard information sheets (FEMA, 2024)",
    "note": "Full set of two-page sheets for every major hazard, from earthquake and tsunami to power outage and nuclear explosion."
   },
   {
@@ -456,7 +456,7 @@
   {
    "doc": "ed5bac0a81b009",
    "label": "CERT Basic Training Participant Manual (2019)",
-   "note": "Neighborhood volunteer training: preparedness, fire safety and utilities, first aid, light search and rescue, terrorism."
+   "note": "Neighbourhood volunteer training: preparedness, fire safety and utilities, first aid, light search and rescue, terrorism."
   },
   {
    "doc": "255b448d041a65",
@@ -470,18 +470,18 @@
   },
   {
    "doc": "6eb90a18a3fd0c",
-   "label": "NOAA tsunami program fact sheet",
-   "note": "How NOAA detects tsunamis and issues warnings."
+   "label": "Tsunami warning fact sheet (NOAA)",
+   "note": "How NOAA (the US weather and oceans agency) detects tsunamis and issues warnings."
   },
   {
    "doc": "34d75afda44bde",
-   "label": "EPA Protective Action Guides for radiological incidents",
-   "note": "Planning manual for officials on when to shelter or evacuate after radiation releases. Technical; written for emergency planners."
+   "label": "Protective Action Guides for radiological incidents (EPA)",
+   "note": "Planning manual from the US Environmental Protection Agency (EPA) for officials on when to shelter or evacuate after radiation releases. Technical; written for emergency planners."
   },
   {
    "doc": "ec27c9c3c6b74c",
    "label": "Nuclear War Survival Skills (Kearny)",
-   "note": "Classic civil-defense book from the 1980s on fallout shelters and expedient protection. Historical — prefer current official guidance."
+   "note": "Classic civil-defence book from the 1980s on fallout shelters and expedient protection. Historical — prefer current official guidance."
   }
  ],
  "related": [

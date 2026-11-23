@@ -1,7 +1,7 @@
 {
  "id": "energy",
  "mode": "learn",
- "title": "Make and manage power",
+ "title": "Learn electricity, batteries and solar",
  "short": "Electricity basics, batteries, solar, generators",
  "intro": "A beginner's path from electrical safety and basic theory to batteries, solar panels, charge controllers, inverters and generator care, with pointers to small wind and micro-hydro. It is for understanding and looking after a system; wiring into a house is a job for a qualified electrician.",
  "keywords": [
@@ -38,12 +38,12 @@
    "page": 4
   },
   {
-   "text": "Low-voltage circuits of 115 volts and below can kill; fatalities from voltages as low as 30 volts have been recorded.",
+   "text": "Circuits of 115 volts and below (less than household mains in most countries) can kill; fatalities from voltages as low as 30 volts have been recorded.",
    "doc": "eng-4f1f21ea9351fcec",
    "page": 263
   },
   {
-   "text": "Never work alone on electrical equipment, and work on energized circuits only when absolutely necessary.",
+   "text": "Never work alone on electrical equipment, and work on energised circuits only when absolutely necessary.",
    "doc": "eng-b70776fb7c7b0bde",
    "page": 226
   },
@@ -58,7 +58,7 @@
    "page": 13
   },
   {
-   "text": "Inverter terminals can stay dangerously energized even when switched off; disconnect the battery before servicing, and leave internal servicing to qualified personnel (Victron manual, model-specific).",
+   "text": "Inverter terminals can stay dangerously energised even when switched off; disconnect the battery before servicing, and leave internal servicing to qualified personnel (Victron manual, model-specific).",
    "doc": "equipment-694555f3b9a47b0e",
    "page": 2
   },
@@ -72,12 +72,12 @@
    "page": 18
   },
   {
-   "text": "Connecting a generator to house wiring requires an isolation (transfer) switch installed by a qualified electrician; improper connections can backfeed and electrocute utility workers.",
+   "text": "Connecting a generator to house wiring requires a transfer switch installed by a qualified electrician; improper connections can backfeed and electrocute utility workers.",
    "doc": "equipment-b463000c0e14b4ad",
    "page": 56
   },
   {
-   "text": "Make sure a generator's engine is off and cool before maintenance, and never use gasoline to clean parts.",
+   "text": "Make sure a generator's engine is off and cool before maintenance, and never use petrol (gasoline) to clean parts.",
    "doc": "equipment-b463000c0e14b4ad",
    "page": 59
   }
@@ -111,20 +111,20 @@
    "doc": "equipment-b463000c0e14b4ad",
    "page": 67,
    "label": "Storing a generator and its fuel",
-   "note": "Why gasoline deteriorates in storage and what affects it; Honda model-specific storage steps follow on the next pages."
+   "note": "Why petrol deteriorates in storage and what affects it; Honda model-specific storage steps follow on the next pages."
   },
   {
    "doc": "5cd0b4e41cc479",
    "page": 68,
    "label": "Check rooftop solar after an earthquake",
-   "note": "FEMA P-530 checklist item on damaged or shifted solar panels and switching off the solar feed."
+   "note": "Checklist item in FEMA P-530, from FEMA (the US federal emergency agency), on damaged or shifted solar panels and switching off the solar feed."
   }
  ],
  "learn": [
   {
    "doc": "eng-4f1f21ea9351fcec",
    "label": "NEETS Module 1: matter, energy and direct current",
-   "note": "U.S. Navy self-study course: what electricity is, batteries, Ohm's law and DC circuits, with review questions. Older training text."
+   "note": "NEETS (US Navy Electricity and Electronics Training Series) self-study course: what electricity is, batteries, Ohm's law and DC circuits, with review questions. Older training text."
   },
   {
    "doc": "eng-370c8714b3377bbf",
@@ -139,7 +139,7 @@
   {
    "doc": "3ecb5e0370365a99",
    "label": "Victron: Energy Unlimited",
-   "note": "Victron's 2011 guide to off-grid and boat power: battery aging, charging, energy budgets and generators. Mostly lead-acid; older."
+   "note": "Victron's 2011 guide to off-grid and boat power: battery ageing, charging, energy budgets and generators. Mostly lead-acid; older."
   },
   {
    "doc": "c87af72e51c38f3a",
@@ -154,7 +154,7 @@
   {
    "doc": "47e8a442a2b343f0",
    "label": "Storage Battery Maintenance and Principles",
-   "note": "Bureau of Reclamation 2020 manual for large battery rooms: hazards, ventilation, lead-acid, NiCd and lithium. Written for qualified facility staff."
+   "note": "US Bureau of Reclamation 2020 manual for large battery rooms: hazards, ventilation, lead-acid, NiCd and lithium. Written for qualified facility staff."
   },
   {
    "doc": "video-89u8R_aUFO4",
@@ -163,18 +163,18 @@
   },
   {
    "doc": "a6b4cbfc71c2d72d",
-   "label": "DOE consumer guide to small wind",
-   "note": "Two-page U.S. Department of Energy overview of home wind turbines, sizing and grid connection."
+   "label": "Consumer guide to small wind power (DOE)",
+   "note": "Two-page US Department of Energy (DOE) overview of home wind turbines, sizing and grid connection."
   },
   {
    "doc": "eng-be1c99a3bc9aad69",
    "label": "Wind turbines on or near buildings: lessons",
-   "note": "NREL report: rooftop and urban turbine projects often produced far less than estimated. Relevant before buying a turbine for a city lot."
+   "note": "Report from NREL (the US National Renewable Energy Laboratory): rooftop and urban turbine projects often produced far less than estimated. Relevant before buying a turbine for a city lot."
   },
   {
    "doc": "883e521e727e9ae0",
    "label": "Microhydropower Handbook, Volume 1",
-   "note": "U.S. DOE 1983 handbook on assessing a stream, design, equipment and safety. Historical; only relevant with flowing water on site."
+   "note": "US DOE 1983 handbook on assessing a stream, design, equipment and safety. Historical; only relevant with flowing water on site."
   },
   {
    "zim": "zim/wikibooks_en_all_maxi_2026-04.zim/Battery_Power/Lithium_Ion_Batteries",
@@ -293,7 +293,7 @@
      "doc": "equipment-694555f3b9a47b0e",
      "page": 2,
      "label": "Inverter safety instructions (Victron)",
-     "note": "Model-specific manual: energized terminals, grounding and GFCI notes. Read your own inverter's manual."
+     "note": "Model-specific manual: energised terminals, grounding and earth-leakage (GFCI/RCD) notes. Read your own inverter's manual."
     }
    ]
   },

@@ -3,7 +3,7 @@
  "mode": "now",
  "title": "Someone is hurt or sick",
  "short": "First aid for bleeding, burns, breathing, injuries and sudden illness",
- "intro": "Find the right first-aid pages fast when someone is injured or suddenly ill and help may be slow to arrive. Start with checking the person and the scene, then pick what you see. These pages describe what trusted first-aid manuals say; they do not replace training or a medical professional.",
+ "intro": "Find the right first-aid pages fast when someone is injured or suddenly ill and help may be slow to arrive. Start with checking the person and the scene, then pick what you see. These pages describe what trusted first-aid manuals say; they do not replace training or a medical professional. Many readings are from US agencies; local rules, emergency numbers and services differ.",
  "keywords": [
   "first aid",
   "injury",
@@ -52,12 +52,16 @@
   "poison",
   "swallowed",
   "overdose",
-  "pesticide"
+  "pesticide",
+  "ambulance",
+  "emergency number",
+  "diarrhoea",
+  "heatstroke"
  ],
  "choices": [
   {
    "id": "check",
-   "label": "I don't know what's wrong – how do I check the person?",
+   "label": "I don't know what's wrong: how do I check the person?",
    "hint": "Accident, collapse, several injured people, you need a calm order of steps",
    "read": [
     {
@@ -76,7 +80,7 @@
      "doc": "med-2e83e22162a9a006",
      "page": 114,
      "label": "The general approach: scene safety and life threats first",
-     "note": "IFRC 2025 guidelines on keeping yourself safe, then finding life-threatening problems (unresponsive, breathing, severe bleeding) before anything else. Written for first-aid educators."
+     "note": "IFRC (International Federation of Red Cross and Red Crescent Societies) 2025 guidelines on keeping yourself safe, then finding life-threatening problems (unresponsive, breathing, severe bleeding) before anything else. Written for first-aid educators."
     },
     {
      "doc": "med-68adb7585ea5d7e0",
@@ -229,7 +233,7 @@
   },
   {
    "id": "shock",
-   "label": "Pale, cold, sweaty, weak – could be shock",
+   "label": "Pale, cold, sweaty, weak: could be shock",
    "hint": "After heavy bleeding, bad burns, severe vomiting or a severe allergy",
    "read": [
     {
@@ -267,7 +271,7 @@
      "doc": "med-2e83e22162a9a006",
      "page": 307,
      "label": "Spinal injury: keep still, do not strap the neck",
-     "note": "IFRC 2025: who may have a spinal injury, always call emergency services, and when an unresponsive person should or should not be moved."
+     "note": "IFRC 2025: who may have a spinal injury, always call the emergency number, and when an unresponsive person should or should not be moved."
     },
     {
      "doc": "med-2e83e22162a9a006",
@@ -279,19 +283,19 @@
   },
   {
    "id": "heatcold",
-   "label": "Too hot or too cold (heat stroke, hypothermia, frostbite)",
-   "hint": "Heat wave, no AC, confused and hot, shivering, numb white fingers",
+   "label": "Too hot or too cold (heatstroke, hypothermia, frostbite)",
+   "hint": "Heat wave, no air conditioning, confused and hot, shivering, numb white fingers",
    "read": [
     {
      "doc": "med-2e83e22162a9a006",
      "page": 446,
      "label": "Heat illness: cool the person fast",
-     "note": "IFRC 2025 on heat exhaustion and heatstroke, cooling methods, and when to call emergency services. Next page lists the warning signs."
+     "note": "IFRC 2025 on heat exhaustion and heatstroke, cooling methods, and when to call the emergency number. Next page lists the warning signs."
     },
     {
      "doc": "med-443ae5cfaa6ecc68",
      "page": 57,
-     "label": "Heat stroke: signs and how to cool someone",
+     "label": "Heatstroke: signs and how to cool someone",
      "note": "Hesperian on who is most at risk, dangerous signs and how to cool quickly; warns that ice baths are dangerous for older or ill people."
     },
     {
@@ -304,7 +308,7 @@
      "doc": "med-443ae5cfaa6ecc68",
      "page": 60,
      "label": "Frostbite: warming frozen fingers and toes",
-     "note": "Hesperian on rewarming frozen parts, not rubbing, and why a thawed part must not refreeze. See the shelter topic for keeping a home warm or cool."
+     "note": "Hesperian on rewarming frozen parts, not rubbing, and why a thawed part must not refreeze. See the guide ‘Stay warm, cool and sheltered’ for keeping a home warm or cool."
     }
    ]
   },
@@ -323,7 +327,7 @@
      "doc": "med-2e83e22162a9a006",
      "page": 376,
      "label": "Help the person use their own epinephrine auto-injector",
-     "note": "IFRC 2025 key action: stop contact with the allergen and help the person use prescribed medication. Next page covers calling EMS and repeat reactions."
+     "note": "IFRC 2025 key action: stop contact with the allergen and help the person use prescribed medication. Next page covers calling the emergency number and repeat reactions."
     }
    ]
   },
@@ -336,7 +340,7 @@
      "doc": "med-2e83e22162a9a006",
      "page": 348,
      "label": "First steps for any poisoning",
-     "note": "IFRC 2025 steps: stop the exposure, find out what was taken and how much, reach a poison centre or EMS and follow them. Do not make the person vomit."
+     "note": "IFRC 2025 steps: stop the exposure, find out what was taken and how much, reach a poison centre or the emergency number and follow their advice. Do not make the person vomit."
     },
     {
      "doc": "med-2e83e22162a9a006",
@@ -348,7 +352,7 @@
   },
   {
    "id": "diarrhea",
-   "label": "Diarrhea, vomiting or dehydration",
+   "label": "Diarrhoea, vomiting or dehydration",
    "hint": "Stomach bug, bad water, baby or older person drying out",
    "read": [
     {
@@ -366,14 +370,14 @@
     {
      "doc": "med-d9ac20e4a9829e89",
      "page": 8,
-     "label": "Diarrhea in children: drinks, food, no plug medicines",
-     "note": "Hesperian on how much rehydration drink to give small children, continuing food and breastfeeding, and avoiding anti-diarrhea medicines."
+     "label": "Diarrhoea in children: drinks, food, no medicines to stop diarrhoea",
+     "note": "Hesperian on how much rehydration drink to give small children, continuing food and breastfeeding, and avoiding anti-diarrhoea medicines."
     },
     {
      "doc": "med-8bd4770a63b99cc6",
      "page": 25,
-     "label": "Danger signs with vomiting or diarrhea",
-     "note": "Vomiting and diarrhea warning signs (blood, a lot of watery stool fast, weeks of diarrhea) and who is most at risk."
+     "label": "Danger signs with vomiting or diarrhoea",
+     "note": "Vomiting and diarrhoea warning signs (blood, a lot of watery stool fast, weeks of diarrhoea) and who is most at risk."
     }
    ]
   },
@@ -391,7 +395,7 @@
     {
      "doc": "med-f0d080c42e81de5f",
      "page": 20,
-     "label": "Stroke: face, arm, speech – get to a hospital fast",
+     "label": "Stroke signs in the face, arm and speech: get to a hospital fast",
      "note": "Hesperian on recognising a stroke and why treatment within the first hours matters."
     },
     {
@@ -429,7 +433,7 @@
      "doc": "ed5bac0a81b009",
      "page": 128,
      "label": "How responders set up treatment areas after a disaster",
-     "note": "CERT manual on decentralized and central medical treatment areas where survivors are cared for until transport to professional care. Written for trained CERT volunteers."
+     "note": "CERT (US community volunteer responder training) manual on decentralised and central medical treatment areas where survivors are cared for until transport to professional care. Written for trained CERT volunteers."
     },
     {
      "doc": "clinical-14def41d1ef369f1",
@@ -462,7 +466,7 @@
    "page": 11
   },
   {
-   "text": "Emergency medical services should be called for all severe bleeding.",
+   "text": "Call the emergency number for all severe bleeding.",
    "doc": "med-2e83e22162a9a006",
    "page": 256
   },
@@ -472,7 +476,7 @@
    "page": 20
   },
   {
-   "text": "Burns that are large, deep, on the face, throat or genitals, or caused by chemicals, electricity or flames need emergency medical services.",
+   "text": "Burns that are large, deep, on the face, throat or genitals, or caused by chemicals, electricity or flames need emergency medical care: call the emergency number.",
    "doc": "med-2e83e22162a9a006",
    "page": 289
   },
@@ -487,17 +491,17 @@
    "page": 24
   },
   {
-   "text": "Always call emergency services when a spinal injury is suspected; do not move an unresponsive person with a possible spine injury unless they are in danger or help has arrived.",
+   "text": "Always call the emergency number when a spinal injury is suspected; do not move an unresponsive person with a possible spine injury unless they are in danger or help has arrived.",
    "doc": "med-2e83e22162a9a006",
    "page": 307
   },
   {
-   "text": "Call emergency services for heat illness if the person shows unusual behaviour or confusion, becomes unresponsive, has a seizure or has a body temperature above 39°C (102.2°F).",
+   "text": "Call the emergency number for heat illness if the person shows unusual behaviour or confusion, becomes unresponsive, has a seizure or has a body temperature above 39°C (102.2°F).",
    "doc": "med-2e83e22162a9a006",
    "page": 446
   },
   {
-   "text": "For all cases of hypothermia, emergency medical services should be called and the person's airway, breathing and circulation watched.",
+   "text": "For all cases of hypothermia, call the emergency number and watch the person's airway, breathing and circulation.",
    "doc": "med-2e83e22162a9a006",
    "page": 461
   },
@@ -507,7 +511,7 @@
    "page": 59
   },
   {
-   "text": "Call emergency services whenever anaphylaxis is suspected; symptoms can return hours after improving. Recognising anaphylaxis requires training.",
+   "text": "Call the emergency number whenever anaphylaxis is suspected; symptoms can return hours after improving. Recognising anaphylaxis requires training.",
    "doc": "med-2e83e22162a9a006",
    "page": 377
   },
@@ -527,7 +531,7 @@
    "page": 20
   },
   {
-   "text": "Do not make a poisoned person vomit, and do not give milk, water or activated charcoal unless a poison control centre or poison expert tells you to.",
+   "text": "Do not make a poisoned person vomit, and do not give milk, water or activated charcoal unless a poison centre or poison expert tells you to.",
    "doc": "med-2e83e22162a9a006",
    "page": 347
   },
@@ -547,26 +551,26 @@
   {
    "doc": "db4d9783fca34b",
    "page": 2,
-   "label": "FEMA basic emergency supply kit checklist",
-   "note": "Ready.gov 2024 checklist including a first aid kit, whistle, dust mask and plastic sheeting; first page adds prescriptions, glasses and a first aid book."
+   "label": "Basic emergency supply kit checklist (FEMA)",
+   "note": "2024 checklist from Ready.gov (the US government preparedness site), run by FEMA (the US federal emergency agency): includes a first-aid kit, whistle, dust mask and plastic sheeting; first page adds prescriptions, glasses and a first-aid book."
   },
   {
    "doc": "ed5bac0a81b009",
    "page": 46,
-   "label": "CERT volunteer first aid pouch",
+   "label": "First-aid pouch for CERT volunteers",
    "note": "CERT 2019 list of minimum first-aid pouch items (dressings, pads, triangular bandages, roller bandage) plus gloves, lights and tools on the previous page."
   },
   {
    "doc": "med-c1d102b9e751af81",
    "page": 233,
-   "label": "Red Cross field first aid bag and how to look after it",
-   "note": "ICRC 2006 annex on keeping a first aid bag clean and restocked, improvising, and a detailed contents table. Written for Red Cross first aiders in conflict areas; older edition."
+   "label": "Red Cross field first-aid bag and how to look after it",
+   "note": "ICRC 2006 annex on keeping a first-aid bag clean and restocked, improvising, and a detailed contents table. Written for Red Cross first aiders in conflict areas; older edition."
   },
   {
    "doc": "5cd0b4e41cc479",
    "page": 23,
    "label": "Take a first aid, CPR, Until Help Arrives or CERT course",
-   "note": "FEMA Earthquake Safety at Home (2020) recommends a ready first aid kit and taking first aid, CPR, Until Help Arrives or CERT training."
+   "note": "FEMA Earthquake Safety at Home (2020) recommends a ready first-aid kit and taking first aid, CPR, Until Help Arrives or CERT training."
   },
   {
    "doc": "med-a840a35b017c5748",
@@ -595,7 +599,7 @@
   {
    "doc": "clinical-14def41d1ef369f1",
    "label": "Where There Is No Doctor (2025): Chapter 10 First Aid",
-   "note": "The classic village health book's first aid chapter, including shock, bleeding, wounds, burns, fractures and moving injured people."
+   "note": "The first-aid chapter of this classic health book for places far from a doctor, including shock, bleeding, wounds, burns, fractures and moving injured people."
   },
   {
    "doc": "ed5bac0a81b009",

@@ -1,9 +1,9 @@
 {
  "id": "comms",
  "mode": "now",
- "title": "Communicate & find your way",
+ "title": "Stay in touch and find your way",
  "short": "Family contact, emergency radio, ham radio, map and compass",
- "intro": "Ways to reach family and get official warnings when phones and internet are down or overloaded, what you need to know before using two-way radios, and how to find your way with a map and compass or signal for help.",
+ "intro": "Ways to reach family and get official warnings when phones and internet are down or overloaded, what you need to know before using two-way radios, and how to find your way with a map and compass or signal for help. Many readings are from US agencies; local rules, emergency numbers and services differ.",
  "keywords": [
   "phone down",
   "no signal",
@@ -27,7 +27,9 @@
   "navigation",
   "signal",
   "whistle",
-  "rescue"
+  "rescue",
+  "PMR446",
+  "licence"
  ],
  "choices": [
   {
@@ -38,20 +40,20 @@
     {
      "doc": "d0fbb2e051cd46",
      "page": 29,
-     "label": "FEMA: save calls for emergencies, use texts",
-     "note": "FEMA 2024 sheet notes phone systems are often down or busy after disasters and suggests text messages or social media to reach family."
+     "label": "Save calls for emergencies and use texts",
+     "note": "A 2024 sheet from FEMA (the US federal emergency agency) notes phone systems are often down or busy after disasters and suggests text messages or social media to reach family."
     },
     {
      "doc": "5cd0b4e41cc479",
      "page": 60,
      "label": "After an earthquake: text rather than call",
-     "note": "FEMA P-530: stay off the phone except for emergencies, use text messaging, and contact your out-of-area safety contact."
+     "note": "FEMA P-530: stay off the phone except for emergencies, use text messaging, and get in touch with your out-of-area contact."
     },
     {
      "doc": "cecc1671ae4d02",
      "page": 18,
      "label": "Using your family communication plan",
-     "note": "Are You Ready: the out-of-area point of contact, two ways to reach them, wallet cards and practicing the plan."
+     "note": "FEMA's Are You Ready? guide: the out-of-area contact, two ways to reach them, wallet cards and practising the plan."
     }
    ]
   },
@@ -63,61 +65,61 @@
     {
      "doc": "2c619f4fe19187",
      "page": 2,
-     "label": "NOAA Weather Radio and local alert sign-ups",
-     "note": "FEMA fact sheet: what NOAA Weather Radio broadcasts, SAME receivers, opt-in text alerts and reverse-911 systems."
+     "label": "Weather alert radio and local alert sign-ups",
+     "note": "FEMA fact sheet: what NOAA Weather Radio (from the US weather and oceans agency) broadcasts, SAME receivers (radios that sound only for alerts in your area), opt-in text alerts and reverse-911 systems (automatic warning calls to local phones)."
     },
     {
      "doc": "2c619f4fe19187",
      "page": 1,
      "label": "How emergency alerts reach your phone",
-     "note": "Wireless Emergency Alerts need no sign-up; also EAS broadcasts and keeping spare batteries or chargers."
+     "note": "Wireless Emergency Alerts (the US alerts sent to mobile phones) need no sign-up; also Emergency Alert System (EAS) broadcasts on US radio and TV, and keeping spare batteries or chargers."
     }
    ]
   },
   {
    "id": "ham",
    "label": "Ham (amateur) radio — can I use it?",
-   "hint": "Licensing, ARES, getting started",
+   "hint": "Licensing (every country has its own rules; these readings describe the US), getting started",
    "read": [
     {
      "doc": "1403f321ea0a31",
      "label": "Ham vs GMRS vs FRS: licensing and range",
-     "note": "TACDA overview: ham operators must pass a test and get an FCC license; GMRS needs a license too; FRS does not. Points to local clubs."
+     "note": "Overview from TACDA (The American Civil Defense Association): ham operators must pass a test and get a licence from the FCC (the US radio regulator); GMRS (a US walkie-talkie service) needs a licence too; FRS (US licence-free walkie-talkies) does not. Points to local clubs."
     },
     {
      "doc": "46dad12e12e2fe",
      "label": "Beginner's guide to ham radio",
-     "note": "The Prepared (2017 prepper site): radio types compared, the FCC license and test, and starter equipment. Not an official source."
+     "note": "The Prepared (2017 prepper site): radio types compared, the FCC licence and test, and starter equipment. Not an official source."
     },
     {
      "doc": "a922465bee681e",
      "page": 18,
-     "label": "ARRL: using your license for emergency service",
-     "note": "How licensed hams join emergency communication groups (ARES) and the ARRL's emergency training courses."
+     "label": "Using your licence for emergency service (ARRL)",
+     "note": "How licensed hams join ARES (Amateur Radio Emergency Service, US volunteer emergency radio groups) and the emergency training courses of the ARRL (the US national amateur radio association)."
     }
    ]
   },
   {
    "id": "local-radio",
-   "label": "Talking with neighbors without phones",
-   "hint": "FRS/GMRS walkie-talkies, CB, neighborhood radio plans",
+   "label": "Talking with neighbours without phones",
+   "hint": "Licence-free walkie-talkies (FRS in the US, PMR446 in Europe), CB, neighbourhood radio plans",
    "read": [
     {
      "doc": "4f6b406c191181",
      "page": 47,
-     "label": "FRS and GMRS radios for neighborhoods",
-     "note": "ARES Manual (2015): license rules, channel-number confusion between brands, alkaline battery backup and coverage testing. GMRS license term stated here may be outdated."
+     "label": "FRS and GMRS radios for neighbourhoods",
+     "note": "ARES Manual (2015): licence rules, channel-number confusion between brands, alkaline battery backup and coverage testing. GMRS licence term stated here may be outdated."
     },
     {
      "doc": "4f6b406c191181",
      "page": 46,
-     "label": "Working with neighbors and CERT groups",
-     "note": "How neighborhood groups and licensed hams can plan local communications together."
+     "label": "Working with neighbours and CERT groups",
+     "note": "How neighbourhood groups, CERT (US community volunteer responder training) teams and licensed hams can plan local communications together."
     },
     {
      "doc": "54221d8bbd84d45b",
      "label": "Meshtastic: text over a LoRa mesh",
-     "note": "Getting-started page for low-power LoRa radios that pass text messages without cell or internet service. Requires compatible hardware."
+     "note": "Getting-started page for low-power LoRa radios that pass text messages without mobile phone or internet service. Requires compatible hardware."
     }
    ]
   },
@@ -129,14 +131,14 @@
     {
      "doc": "bf9e99715ecdde",
      "page": 1,
-     "label": "USGS: finding your way with map and compass",
-     "note": "Map scale, symbols, bearings and why the compass points to magnetic, not true, north."
+     "label": "Finding your way with map and compass (USGS)",
+     "note": "US Geological Survey (USGS) primer: map scale, symbols, bearings and why the compass points to magnetic, not true, north."
     },
     {
      "doc": "5b0efa0b70cb98",
      "page": 161,
      "label": "Finding direction from the sun and shadows",
-     "note": "Army ATP 3-50.21 (2018): using the sun and shadows to find north; following pages cover stars and other methods."
+     "note": "US Army ATP 3-50.21 (2018): using the sun and shadows to find north; following pages cover stars and other methods."
     },
     {
      "doc": "5b0efa0b70cb98",
@@ -165,13 +167,13 @@
     {
      "doc": "ed5bac0a81b009",
      "page": 32,
-     "label": "CERT: protect your airway and signal rescuers",
+     "label": "Protect your airway and signal rescuers (CERT)",
      "note": "If trapped, bang on an object or blow a whistle; yelling is a last resort."
     },
     {
      "doc": "8bb952fd2f238b",
      "page": 200,
-     "label": "Army signaling techniques (historical FM 21-76)",
+     "label": "Army signalling techniques (historical FM 21-76)",
      "note": "1992 Army manual, superseded: getting attention with fire, light, contrast and patterns. Military context; wilderness focus."
     }
    ]
@@ -179,15 +181,15 @@
  ],
  "limits": [
   {
-   "text": "Ham radio operators must pass a test and hold a license; the source describes the US FCC license classes (Technician, General or Extra).",
+   "text": "Ham radio operators must pass a test and hold a licence; the source describes the US FCC licence classes (Technician, General or Extra).",
    "doc": "1403f321ea0a31"
   },
   {
-   "text": "In the US you need an FCC license to communicate on ham radio (the article says the test can be prepared for in days).",
+   "text": "In the US you need an FCC licence to communicate on ham radio (the article says the test can be prepared for in days).",
    "doc": "46dad12e12e2fe"
   },
   {
-   "text": "In the US, FRS radios may be used without a license, but transmitting on GMRS radios requires a license.",
+   "text": "In the US, FRS radios may be used without a licence, but transmitting on GMRS radios requires a licence.",
    "doc": "4f6b406c191181",
    "page": 47
   },
@@ -211,14 +213,14 @@
   {
    "doc": "e74ed9511d24c6",
    "page": 1,
-   "label": "FEMA fill-in family communication plan",
-   "note": "Two-page form for household phone numbers, school and work plans, an out-of-town contact and meeting places."
+   "label": "Fill-in family communication plan (FEMA)",
+   "note": "Two-page form for household phone numbers, school and work plans, an out-of-area contact and meeting places."
   },
   {
    "doc": "ed5bac0a81b009",
    "page": 25,
-   "label": "CERT: family check-in contact and meeting places",
-   "note": "Pick two meeting places and an out-of-area check-in contact, carry wallet cards, and practice."
+   "label": "Family check-in contact and meeting places (CERT)",
+   "note": "Pick two meeting places and an out-of-area contact, carry wallet cards, and practise."
   },
   {
    "doc": "5cd0b4e41cc479",
@@ -241,7 +243,7 @@
   {
    "doc": "c91b2af6713df7",
    "page": 6,
-   "label": "ARES: what a ham does first in an emergency",
+   "label": "What a ham does first in an emergency (ARES)",
    "note": "ARRL field guide for licensed hams: make sure your own family is safe before responding, then check in."
   }
  ],
@@ -249,7 +251,7 @@
   {
    "doc": "4f6b406c191181",
    "label": "ARES Manual (2015)",
-   "note": "ARRL's manual for the Amateur Radio Emergency Service: organization, FCC rule definitions, working with agencies and neighbors."
+   "note": "ARRL's manual for the Amateur Radio Emergency Service: organisation, FCC rule definitions, working with agencies and neighbours."
   },
   {
    "doc": "c91b2af6713df7",
@@ -263,23 +265,23 @@
   },
   {
    "doc": "ham-reference-50110f1fd49f96af",
-   "label": "ARRL U.S. amateur band chart",
-   "note": "One-page chart of which frequencies each U.S. license class may use."
+   "label": "US amateur band chart (ARRL)",
+   "note": "One-page chart of which frequencies each US licence class may use."
   },
   {
    "zim": "zim/wikibooks_en_all_maxi_2026-04.zim/FCC_Technician_Class_Exam_Study_Guide_-_2014-2018/Subelement_T1_Group_A",
    "title": "FCC Technician Class Exam Study Guide - 2014-2018/Subelement T1 Group A",
-   "label": "Wikibooks: Technician license rules study guide",
-   "note": "Study notes on FCC amateur rules for the entry-level license. Written for the 2014–2018 question pool, so check current rules."
+   "label": "Wikibooks: Technician licence rules study guide",
+   "note": "Study notes on FCC amateur rules for the entry-level licence. Written for the 2014–2018 question pool, so check current rules."
   },
   {
    "doc": "e0d32d475cba9e",
-   "label": "TACDA: civil defense communications",
+   "label": "Civil defence communications (TACDA)",
    "note": "Overview of CB, FRS, GMRS and ham options for emergencies. Older chapter; some channel and rule details may be outdated."
   },
   {
    "doc": "78a5c135618251",
-   "label": "USGS: using a compass with a topographic map",
+   "label": "Using a compass with a topographic map (USGS)",
    "note": "How to orient a USGS topo map and take bearings, including declination."
   },
   {
@@ -294,7 +296,7 @@
   },
   {
    "doc": "433d02ed3ce4d9",
-   "label": "Coast Guard navigation and piloting",
+   "label": "Navigation and piloting on the water (US Coast Guard)",
    "note": "Boat Crew Handbook (2017) on charts, compasses and piloting on the water."
   }
  ],

@@ -21,7 +21,7 @@ use crate::{
 };
 
 /// The kinds a search can be narrowed to: (kind, label), the label in English and translated where it is shown.
-const KINDS: &[(&str, &str)] = &[("any", n_!("Everything")), ("manual", n_!("Manuals & pages")), ("video", n_!("Videos")), ("encyclopedia", n_!("Encyclopedias"))];
+const KINDS: &[(&str, &str)] = &[("any", n_!("Everything")), ("manual", n_!("Manuals and pages")), ("video", n_!("Videos")), ("encyclopedia", n_!("Encyclopedias"))];
 const THUMB_W: i32 = 64;
 const THUMB_H: i32 = 84;   // the box a page is fitted into: 64 wide for a letter or A4 page
 /// How long the line on how search finds things is kept before the engine is asked again: asking costs Recall a

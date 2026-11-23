@@ -23,7 +23,7 @@ Commands:
   place QUERY|LAT,LON [--nearby hospital,pharmacy,…]   places on the offline map, or a point, and help points near the first
   guides | guide ID                   the situation guides; one guide's branches and the pages they point to
   status                              library folder and counts, meaning search, map files
-  index [--wait SECONDS]              build the meaning-search index until nothing is pending (the lastbook-index user service runs this)
+  index [--wait SECONDS] [--pause SECONDS]   build the meaning-search index until nothing is pending (the lastbook-index user service runs this)
   open                                the window (as lastbook alone does)
   open TARGET [PAGE] [--dry-run]      show a document (DOC_ID) or a route (guide:hurt, search:burns, map:LAT,LON,LABEL) in a new window
   skill [install|uninstall]           print the agent skill; install or remove it (it installs itself on first use)

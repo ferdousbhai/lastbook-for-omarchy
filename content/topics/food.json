@@ -3,7 +3,7 @@
  "mode": "now",
  "title": "Keep food safe and cook without power",
  "short": "Fridge and freezer in an outage, safe cooking, emergency food",
- "intro": "Readings for when the power or gas is out: how long fridge and freezer food stays safe, what to throw away, how to cook without burning or poisoning anyone, and how to make stored food last.",
+ "intro": "Readings for when the power or gas is out: how long fridge and freezer food stays safe, what to throw away, how to cook without burning or poisoning anyone, and how to make stored food last. Many readings are from US agencies; local rules, emergency numbers and services differ.",
  "keywords": [
   "food",
   "fridge",
@@ -22,7 +22,8 @@
   "emergency food",
   "baby formula",
   "flood",
-  "hungry"
+  "hungry",
+  "power cut"
  ],
  "choices": [
   {
@@ -34,13 +35,13 @@
      "doc": "e4bfed4b6afd6d",
      "page": 1,
      "label": "How long the fridge and freezer stay cold, and checking food after",
-     "note": "FDA fact sheet (2007): keep doors closed, hours a fridge and a full or half-full freezer hold, dry ice, and how to judge food when power returns."
+     "note": "Fact sheet (2007) from the FDA (the US food and medicine regulator): keep doors closed, hours a fridge and a full or half-full freezer hold, dry ice, and how to judge food when power returns."
     },
     {
      "doc": "18bf4604bf28c4",
      "page": 2,
-     "label": "Ready.gov power outage sheet: during and after",
-     "note": "FEMA sheet (2023): fridge and freezer times, the 'when in doubt, throw it out' rule, and what to do about refrigerated medicines."
+     "label": "Power outage sheet: during and after (Ready.gov)",
+     "note": "Sheet (2023) from FEMA (the US federal emergency agency), on its site Ready.gov (the US government preparedness site): fridge and freezer times, the 'when in doubt, throw it out' rule, and what to do about refrigerated medicines."
     },
     {
      "doc": "f7ff53bcaae9cc",
@@ -65,7 +66,7 @@
      "doc": "e4bfed4b6afd6d",
      "page": 1,
      "label": "Temperature and time rules for perishable food",
-     "note": "FDA fact sheet (2007): which foods to discard after time above 40 °F (4 °C), and that you cannot rely on appearance or odor."
+     "note": "FDA fact sheet (2007): which foods to discard after time above 40 °F (4 °C), and that you cannot rely on appearance or odour."
     },
     {
      "doc": "0dfdf1fb4b178f",
@@ -82,20 +83,20 @@
     {
      "doc": "99dd5e2cc78a16a0",
      "label": "Home-canned food you are unsure about",
-     "note": "National Center for Home Food Preservation: botulism toxin risk, the CDC advice to discard suspect home-canned food, and when it is safe to eat."
+     "note": "US National Center for Home Food Preservation (NCHFP): botulism toxin risk, the advice of the CDC (the US public health agency) to discard suspect home-canned food, and when it is safe to eat."
     }
    ]
   },
   {
    "id": "flood",
    "label": "Food got wet in a flood",
-   "hint": "Pantry, cans or garden touched flood water",
+   "hint": "Pantry, cans or garden touched floodwater",
    "read": [
     {
      "doc": "e4bfed4b6afd6d",
      "page": 2,
      "label": "What to discard and how to save sealed cans after a flood",
-     "note": "FDA fact sheet (2007): which containers cannot be saved, cleaning and sanitizing undamaged cans and pouches, and sanitizing dishes."
+     "note": "FDA fact sheet (2007): which containers cannot be saved, cleaning and sanitising undamaged cans and pouches, and sanitising dishes."
     },
     {
      "doc": "1f738924576334",
@@ -189,12 +190,12 @@
  ],
  "limits": [
   {
-   "text": "Throw away refrigerated food that has been at 40 °F (4 °C) or higher for more than 4 hours, or that has an unusual odor, color or texture.",
+   "text": "Throw away refrigerated food that has been at 40 °F (4 °C) or higher for more than 4 hours, or that has an unusual odour, colour or texture.",
    "doc": "18bf4604bf28c4",
    "page": 2
   },
   {
-   "text": "Discard perishable food that has been above 40 °F (4 °C) for 2 hours or more; you cannot rely on appearance or odor.",
+   "text": "Discard perishable food that has been above 40 °F (4 °C) for 2 hours or more; you cannot rely on appearance or odour.",
    "doc": "e4bfed4b6afd6d",
    "page": 1
   },
@@ -209,7 +210,7 @@
    "page": 2
   },
   {
-   "text": "Do not eat any food that may have touched flood water unless it is in a waterproof container that can be cleaned.",
+   "text": "Do not eat any food that may have touched floodwater unless it is in a waterproof container that can be cleaned.",
    "doc": "e4bfed4b6afd6d",
    "page": 2
   },
@@ -239,32 +240,32 @@
   {
    "doc": "cecc1671ae4d02",
    "page": 20,
-   "label": "Ready.gov kit basics: food, can opener and cooking tools",
+   "label": "Kit basics: food, can opener and cooking tools (Ready.gov)",
    "note": "FEMA Are You Ready? guide (2020); page 22 covers keeping canned food cool, rotating stock and throwing out damaged cans."
   },
   {
    "doc": "18bf4604bf28c4",
    "page": 2,
-   "label": "Prepare now: carbon monoxide alarms and supplies",
+   "label": "Prepare now: carbon monoxide (CO) alarms and supplies",
    "note": "FEMA power outage sheet (2023): smoke and CO alarms with battery backup, a plan for medicines and medical devices, and supplies for several days."
   },
   {
    "doc": "ed5bac0a81b009",
    "page": 27,
-   "label": "CERT kit: choosing food that needs no cooking",
-   "note": "FEMA CERT manual (2019): nonperishable food needing no refrigeration and little water, avoiding salty foods, checking dates twice a year."
+   "label": "Choosing food that needs no cooking (CERT kit)",
+   "note": "FEMA CERT (US community volunteer responder training) manual (2019): nonperishable food needing no refrigeration and little water, avoiding salty foods, checking dates twice a year."
   },
   {
    "doc": "db4d9783fca34b",
    "page": 1,
-   "label": "Ready.gov supply checklist (printable)",
+   "label": "Printable supply checklist (Ready.gov)",
    "note": "FEMA checklist (2024) including mess kits, paper plates, infant formula and pet food among extra items."
   }
  ],
  "learn": [
   {
    "doc": "f7ff53bcaae9cc",
-   "label": "FEMA/Red Cross: Food and Water in an Emergency (full booklet)",
+   "label": "Food and Water in an Emergency (FEMA/Red Cross, full booklet)",
    "note": "16-page booklet (FEMA 477, August 2004) on food and water supplies, outages, cooking and water treatment."
   },
   {
@@ -274,36 +275,36 @@
   },
   {
    "doc": "d0fbb2e051cd46",
-   "label": "FEMA hazard information sheets (2024 set)",
+   "label": "Hazard information sheets (FEMA, 2024 set)",
    "note": "One-page-per-hazard sheets, including power outage, earthquake and flood, with prepare-survive-after steps."
   },
   {
    "doc": "e4bfed4b6afd6d",
-   "label": "FDA: Food and Water Safety During Hurricanes, Power Outages, and Floods",
+   "label": "Food and Water Safety During Hurricanes, Power Outages, and Floods (FDA)",
    "note": "Two-page FDA consumer fact sheet (December 2007)."
   },
   {
    "doc": "ec27c9c3c6b74c",
    "page": 81,
    "label": "Kearny: Food chapter (living on stored whole grains)",
-   "note": "Nuclear War Survival Skills (1987 civil-defense book): minimum food needs and preparing staples such as whole-grain wheat and corn. Dated; written for fallout sheltering."
+   "note": "Nuclear War Survival Skills (1987 civil-defence book): minimum food needs and preparing staples such as whole-grain wheat and corn. Dated; written for fallout sheltering."
   },
   {
    "zim": "zim/mdwiki_en_all_maxi_2025-11.zim/Carbon_monoxide_poisoning",
    "title": "Carbon monoxide poisoning",
-   "label": "Encyclopedia: carbon monoxide poisoning",
+   "label": "Encyclopedia: Carbon monoxide poisoning (MDWiki)",
    "note": "Medical overview of symptoms, causes such as indoor fuel burning, and treatment."
   },
   {
    "zim": "zim/mdwiki_en_all_maxi_2025-11.zim/Food_safety",
    "title": "Food safety",
-   "label": "Encyclopedia: food safety",
+   "label": "Encyclopedia: Food safety (MDWiki)",
    "note": "Background on foodborne hazards, safe handling and storage."
   },
   {
    "zim": "zim/wikipedia_en_all_nopic_2026-06.zim/Foodborne_illness",
    "title": "Foodborne illness",
-   "label": "Encyclopedia: foodborne illness",
+   "label": "Encyclopedia: Foodborne illness (Wikipedia)",
    "note": "Causes, symptoms and prevention of food poisoning."
   }
  ],

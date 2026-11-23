@@ -360,7 +360,7 @@ class Archive:
         self.leaf_off, self.data_off = u64(40), u64(56)
         self.clustered, self.compression, self.tile_type = head[96] == 1, head[97], head[99]
         if self.tile_type != 1:
-            raise download.Failed('network', 'The map archive does not hold vector tiles.')
+            raise download.Failed('network', 'The map server sent a map Lastbook cannot use. Try again later.')
         if head[98] not in (1, 2):      # tiles as they are, or gzip: all the map and --nearby read (brotli and zstd they do not)
             raise download.Failed('network', 'The map on the server is packed in a way this version of Lastbook cannot read. '
                                              'Update Lastbook, then try again.')
@@ -480,7 +480,7 @@ class Cut:
         self.build = newest_build(self.allowed, self.context, self.control)
         self.archive = Archive(self.build, self.control, self.allowed, self.context)
         if not self.archive.clustered:      # tiles stored in id order: every Protomaps build is, and reading in one pass needs it
-            raise download.Failed('network', 'The map archive is not in the order Lastbook reads. Try again later.')
+            raise download.Failed('network', 'The map server sent a map in a form Lastbook cannot read. Try again later.')
         if self.bbox is None:
             self.ranges = [(0, sum(4 ** z for z in range(self.maxzoom + 1)), None)]
         else:
@@ -742,7 +742,7 @@ def build_places(dest, control, allowed=None, context=None):
     if len(cities) < listed:
         print(f'setup: {listed - len(cities)} of {listed} place name rows could not be read and were left out', flush=True)
     if len(cities) < MIN_PLACES or len(countries) < 200:
-        raise download.Failed('network', 'The place names downloaded incomplete. Try again later.')
+        raise download.Failed('network', 'The place names did not download completely. Try again later.')
     control.check()
     sweep(Path(dest).parent, keep=dest)
     part = Path(str(dest) + '.part')

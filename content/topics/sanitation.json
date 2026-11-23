@@ -2,8 +2,8 @@
  "id": "sanitation",
  "mode": "now",
  "title": "Toilets, waste and hygiene when plumbing fails",
- "short": "Emergency toilets, handwashing, garbage, diarrhea",
- "intro": "Readings for when toilets cannot be flushed or sewer lines may be broken: emergency toilets, keeping hands clean with little water, handling garbage, and stopping diarrhea from spreading. It also shows the warning signs that mean someone needs medical help.",
+ "short": "Emergency toilets, handwashing, garbage, diarrhoea",
+ "intro": "Readings for when toilets cannot be flushed or sewer lines may be broken: emergency toilets, keeping hands clean with little water, handling garbage, and stopping diarrhoea from spreading. It also shows the warning signs that mean someone needs medical help. Many readings are from US agencies; local rules, emergency numbers and services differ.",
  "keywords": [
   "toilet",
   "sanitation",
@@ -23,7 +23,11 @@
   "cholera",
   "vomiting",
   "dehydration",
-  "flies"
+  "flies",
+  "rubbish",
+  "nappies",
+  "diarrhoea",
+  "hand sanitiser"
  ],
  "choices": [
   {
@@ -35,7 +39,7 @@
      "doc": "5cd0b4e41cc479",
      "page": 74,
      "label": "After an earthquake: check sewer lines before using drains",
-     "note": "FEMA P-530 Earthquake Safety at Home (2020): where to look for sewer damage, and to stop sending toilet, kitchen and shower water down drains until it is repaired."
+     "note": "FEMA P-530 Earthquake Safety at Home (2020), from the US federal emergency agency: where to look for sewer damage, and to stop sending toilet, kitchen and shower water down drains until it is repaired."
     },
     {
      "doc": "c6155c3ed58c35",
@@ -53,7 +57,7 @@
      "doc": "ec27c9c3c6b74c",
      "page": 110,
      "label": "Bucket toilet with a bag liner and lid",
-     "note": "Nuclear War Survival Skills (Kearny, 1987 civil-defense book, shelter setting): urine and feces handling, bagging, a lined 5-gallon can with lid. Product names are dated."
+     "note": "Nuclear War Survival Skills (Kearny, 1987 civil-defence book, shelter setting): urine and faeces handling, bagging, a lined 5-gallon (19-litre) can with lid. Product names are dated."
     }
    ]
   },
@@ -85,7 +89,7 @@
   {
    "id": "hands",
    "label": "Keep hands clean with little water",
-   "hint": "No running water, soap or sanitizer",
+   "hint": "No running water, soap or sanitiser",
    "read": [
     {
      "doc": "med-953dfe1df69e0773",
@@ -102,8 +106,8 @@
     {
      "doc": "ed5bac0a81b009",
      "page": 134,
-     "label": "Hand sanitizer and hygiene in makeshift conditions",
-     "note": "FEMA CERT manual (2019): handwashing time, CDC alcohol strength for sanitizer and how to use it, gloves, and bagging soiled waste."
+     "label": "Hand sanitiser and hygiene in makeshift conditions",
+     "note": "FEMA CERT (US community volunteer responder training) manual (2019): handwashing time, the alcohol strength the CDC (the US public health agency) gives for sanitiser and how to use it, gloves, and bagging soiled waste."
     }
    ]
   },
@@ -140,7 +144,7 @@
   },
   {
    "id": "diarrhea",
-   "label": "Someone has diarrhea or vomiting",
+   "label": "Someone has diarrhoea or vomiting",
    "hint": "Adult, child or baby",
    "read": [
     {
@@ -158,13 +162,13 @@
     {
      "doc": "med-8bd4770a63b99cc6",
      "page": 25,
-     "label": "Danger signs with diarrhea or vomiting",
-     "note": "Hesperian (2017): when vomiting or diarrhea is dangerous, including sudden heavy watery diarrhea and blood in stool."
+     "label": "Danger signs with diarrhoea or vomiting",
+     "note": "Hesperian (2017): when vomiting or diarrhoea is dangerous, including sudden heavy watery diarrhoea and blood in stool."
     },
     {
      "doc": "med-d9ac20e4a9829e89",
      "page": 7,
-     "label": "Children with dehydration or diarrhea",
+     "label": "Children with dehydration or diarrhoea",
      "note": "Hesperian (2017): why children are in more danger, keeping up breastfeeding, and getting help if the child does not improve quickly."
     }
    ]
@@ -195,7 +199,7 @@
   },
   {
    "id": "floodmess",
-   "label": "Sewage or flood water got into the house",
+   "label": "Sewage or floodwater got into the house",
    "hint": "Backed-up drains, flooded rooms, mud",
    "read": [
     {
@@ -208,14 +212,14 @@
      "doc": "e4bfed4b6afd6d",
      "page": 2,
      "label": "Clean dishes and utensils after flood contact",
-     "note": "FDA fact sheet (2007): washing, then sanitizing pans, dishes and utensils by boiling or a bleach solution."
+     "note": "Fact sheet (2007) from the FDA (the US food and medicine regulator): washing, then sanitising pans, dishes and utensils by boiling or a bleach solution."
     }
    ]
   }
  ],
  "limits": [
   {
-   "text": "A lot of watery diarrhea in a short time, diarrhea with blood and mucus, or diarrhea lasting weeks are danger signs.",
+   "text": "A lot of watery diarrhoea in a short time, diarrhoea with blood and mucus, or diarrhoea lasting weeks are danger signs.",
    "doc": "med-8bd4770a63b99cc6",
    "page": 25
   },
@@ -255,19 +259,19 @@
    "doc": "ed5bac0a81b009",
    "page": 29,
    "label": "Sanitation items for your disaster kit",
-   "note": "FEMA CERT manual (2019) kit list: toilet paper, garbage bags and ties, bucket with tight lid, bleach, disinfectant, hand sanitizer, feminine supplies."
+   "note": "FEMA CERT manual (2019) kit list: toilet paper, garbage bags and ties, bucket with tight lid, bleach, disinfectant, hand sanitiser, feminine supplies."
   },
   {
    "doc": "c6155c3ed58c35",
    "page": 13,
    "label": "Hygiene supplies to keep at home",
-   "note": "Norwegian civil protection guide: wipes, sanitizer, gloves, extra toilet paper and waste bags, nappies and sanitary products."
+   "note": "Norwegian civil protection guide: wipes, sanitiser, gloves, extra toilet paper and waste bags, nappies and sanitary products."
   },
   {
    "doc": "cecc1671ae4d02",
    "page": 21,
-   "label": "Ready.gov kit extras: soap, sanitizer, hygiene products",
-   "note": "FEMA Are You Ready? guide (2020): cleaning supplies, soap, hand sanitizer of at least 60% alcohol, and feminine hygiene items."
+   "label": "Kit extras: soap, sanitiser, hygiene products (Ready.gov)",
+   "note": "FEMA Are You Ready? guide (2020), also on Ready.gov (the US government preparedness site): cleaning supplies, soap, hand sanitiser of at least 60% alcohol, and feminine hygiene items."
   },
   {
    "doc": "5cd0b4e41cc479",
@@ -296,7 +300,7 @@
   {
    "doc": "med-ece1337373486dc8",
    "label": "WHO: hygiene promotion in emergencies",
-   "note": "Why hygiene behavior matters most for preventing diarrhoea after disasters, and how to promote it."
+   "note": "Why hygiene behaviour matters most for preventing diarrhoea after disasters, and how to promote it."
   },
   {
    "doc": "med-0e083d57bbe5021a",
@@ -311,7 +315,7 @@
   {
    "doc": "med-8884c589eaca56bd",
    "label": "Sphere Handbook (2018): humanitarian WASH standards",
-   "note": "International minimum standards for water, sanitation and hygiene in disasters. Technical reference for organizers."
+   "note": "International minimum standards for water, sanitation and hygiene in disasters. Technical reference for organisers."
   },
   {
    "doc": "med-99953e703fef507a",
@@ -322,18 +326,18 @@
    "doc": "ec27c9c3c6b74c",
    "page": 109,
    "label": "Kearny: Shelter Sanitation and Preventive Medicine chapter",
-   "note": "Nuclear War Survival Skills (1987 civil-defense book): expedient toilets, waste handling and disease prevention while sheltering. Some advice and products are dated."
+   "note": "Nuclear War Survival Skills (1987 civil-defence book): expedient toilets, waste handling and disease prevention while sheltering. Some advice and products are dated."
   },
   {
    "zim": "zim/mdwiki_en_all_maxi_2025-11.zim/Container-based_sanitation",
    "title": "Container-based sanitation",
-   "label": "Encyclopedia: container-based sanitation",
+   "label": "Encyclopedia: Container-based sanitation (MDWiki)",
    "note": "Background on toilets that collect waste in sealed containers for removal."
   },
   {
    "zim": "zim/mdwiki_en_all_maxi_2025-11.zim/Cholera",
    "title": "Cholera",
-   "label": "Encyclopedia: cholera",
+   "label": "Encyclopedia: Cholera (MDWiki)",
    "note": "Medical overview of cholera: spread, symptoms, treatment and prevention."
   }
  ],

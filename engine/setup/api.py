@@ -27,7 +27,7 @@ MAX_BODY = 64 * 1024
 WORLD_ESTIMATE = 650 * 10 ** 6     # the world map to city level (zoom 8) and place search, before it is measured
 PLACES_ESTIMATE = 55 * 10 ** 6     # place search alone (a 14 MB download, a 40 MB file): for a library whose world map is here
 ACTIVE = ('waiting', 'downloading', 'verifying', 'unpacking', 'activating')
-ELSEWHERE = 'This download is running in another Lastbook window. Use that window.'
+ELSEWHERE = 'This download is running in another Lastbook window. Use that window to pause or cancel it.'
 STAGED = 'What you downloaded is ready and waiting. Open the library first, then add to it.'
 
 
@@ -664,7 +664,7 @@ class Setup:
                 return {'error': f'Lastbook cannot save in “{lib.name}”. Move it somewhere you can save to, then choose it there.', 'code': 'folder'}
             with self.lock:
                 if self.job and self.job['state'] in ACTIVE:
-                    return {'error': 'A download is under way. Pause or cancel it first.', 'code': 'busy'}
+                    return {'error': 'A download is already under way. Pause or cancel it first.', 'code': 'busy'}
                 self.job = {'id': uuid.uuid4().hex[:12], 'state': 'done', 'error': None, 'started': _now(), 'folder': str(lib),
                             'items': [_item('library', 'pack', lib.name, 0, state='done')],
                             'plan': {'use_library': str(lib), 'work': str(_work_for(lib)), 'target': str(lib)}}

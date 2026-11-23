@@ -284,11 +284,11 @@ def _open(url, start, etag, allowed, context, timeout, end=None, control=None):
             r.close()
             _close(control, conn)
             if not loc:
-                raise Failed('network', 'The download server answered with a move to nowhere.')
+                raise Failed('network', 'The download server sent Lastbook to an address that does not exist. Try again later.')
             url = urllib.parse.urljoin(url, loc)
             continue
         return conn, r, url
-    raise Failed('network', 'The download server sent Lastbook round in circles.')
+    raise Failed('network', 'The download server redirected too many times. Try again later.')
 
 
 def _body(r, n, control=None, watch=None, to_end=False):
@@ -348,7 +348,7 @@ def fetch_range(url, start, length, control, allowed=None, context=None, timeout
                 if r.status == 429 or 500 <= r.status < 600:
                     raise OSError(f'HTTP {r.status}')     # the server is busy or briefly broken: tried again below, as a broken connection is
                 if r.status != 206:
-                    raise Failed('network', f'The map server answered {r.status} to a part request.')
+                    raise Failed('network', f'The map server refused part of the map (HTTP {r.status}). Try again later.')
                 cr = _content_range(r.getheader('Content-Range'))
                 if cr and cr[0] != start + had:
                     raise Failed('network', 'The map server answered with another part of the map than the one asked for.')

@@ -246,10 +246,10 @@ impl Browse {
             me.about.append(&text_card(&tr("What's in it"), &glib::markup_escape_text(&holds.join("\n")), ""));
             let ix = &lib["index"];
             let search = if ix["state"] == "waiting for Recall" {
-                tr("Meaning-based search is off: Recall for Omarchy isn't running.")
+                tr("Meaning search is off: Recall for Omarchy is not running.")
             } else {
                 omui::trnf(
-                    "Meaning-based search (through Recall for Omarchy): {n} passages from {} documents.",
+                    "Meaning search (through Recall for Omarchy): {n} passages from {} documents.",
                     ix["chunks"].as_i64().unwrap_or(0),
                     &[&omui::i18n::format_int(ix["docs"].as_i64().unwrap_or(0))],
                 )

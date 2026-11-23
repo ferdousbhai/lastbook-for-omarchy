@@ -46,7 +46,7 @@ def bounded(low, high):
     def parse(v):
         n = int(v)
         if not low <= n <= high:
-            raise argparse.ArgumentTypeError(f'must be {low}..{high}')
+            raise argparse.ArgumentTypeError(f'must be a number from {low} to {high}')
         return n
     parse.__name__ = 'number'
     return parse
@@ -57,11 +57,13 @@ def page_list(v):
     out = []
     for part in v.split(','):
         m = re.fullmatch(r'\s*(\d+)\s*(?:-\s*(\d+)\s*)?', part)
-        if not m or int(m[1]) < 1 or (m[2] and not int(m[1]) <= int(m[2]) <= int(m[1]) + MAX_PAGES):
+        if not m or int(m[1]) < 1 or (m[2] and int(m[2]) < int(m[1])):
             raise argparse.ArgumentTypeError('pages look like 3,4,5 or 3-5')
+        if m[2] and int(m[2]) - int(m[1]) >= MAX_PAGES:
+            raise argparse.ArgumentTypeError(f'at most {MAX_PAGES} pages per call')
         out.extend(range(int(m[1]), int(m[2] or m[1]) + 1))
     if len(out) > MAX_PAGES:
-        raise argparse.ArgumentTypeError(f'at most {MAX_PAGES} pages a call')
+        raise argparse.ArgumentTypeError(f'at most {MAX_PAGES} pages per call')
     return out
 
 
@@ -103,7 +105,7 @@ def library(given):
             raise Failed(why)
         remembered = app_main.remembered()
         if remembered is not None and not remembered.exists():      # a library was set up, and its folder is not there now
-            raise Failed(f'The library folder {remembered} is not there (a disk not connected?). Connect it, or run `lastbook` to choose another.')
+            raise Failed(f'The library folder {remembered} is not there (is its disk disconnected?). Connect it, or run `lastbook` to choose another.')
         raise Failed('No library yet: run `lastbook` to set one up.')
     return found
 

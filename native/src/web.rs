@@ -199,7 +199,7 @@ impl WebPage {
         // No page loads before the filter that blocks the network is in place, and none at all if it cannot be.
         let (filtered, waiting) = (Rc::new(Cell::new(false)), Rc::new(RefCell::new(None::<String>)));
         let blocked = gtk::Label::new(None);
-        omui::i18n::bind_label(&blocked, "Pages cannot be shown: Lastbook could not set up its block on the network.");
+        omui::i18n::bind_label(&blocked, "Pages cannot be shown: Lastbook could not block them from reaching the internet.");
         blocked.add_css_class("error");
         blocked.set_wrap(true);
         blocked.set_visible(false);

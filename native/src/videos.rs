@@ -163,7 +163,7 @@ impl Videos {
     /// Says that the video on show cannot be played here, if it cannot, in the language of the moment.
     fn say_unplayable(&self) {
         if let Some((base, why)) = self.unplayable.borrow().as_ref() {
-            self.meta.set_text(&tr!("{} · can't play here: {} (an AV1 video needs gst-plugin-dav1d)", base, why));
+            self.meta.set_text(&tr!("{} · cannot play here: {} (an AV1 video needs gst-plugin-dav1d)", base, why));
             self.meta.add_css_class("error");
         }
     }

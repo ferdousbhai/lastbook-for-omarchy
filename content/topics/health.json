@@ -3,7 +3,7 @@
  "mode": "learn",
  "title": "Care for health over time without a doctor",
  "short": "Examining the sick, medicines, chronic illness, teeth, pregnancy, mental health, disability",
- "intro": "A beginner's path for looking after a household's health for weeks or months when doctors, pharmacies and clinics are hard to reach. It starts with how to use the main village-health books and moves on to medicines, long-term conditions, teeth, pregnancy, stress and caring for people with disabilities. Knowing when to get skilled help is part of every step.",
+ "intro": "A beginner's path for looking after a household's health for weeks or months when doctors, pharmacies and clinics are hard to reach. It starts with how to use the library's main health books, such as Where There Is No Doctor, and moves on to medicines, long-term conditions, teeth, pregnancy, stress and caring for people with disabilities. Knowing when to get skilled help is part of every step.",
  "keywords": [
   "health",
   "doctor",
@@ -42,7 +42,8 @@
   "caregiver",
   "pressure sores",
   "Where There Is No Doctor",
-  "Hesperian"
+  "Hesperian",
+  "labour"
  ],
  "choices": [
   {
@@ -153,20 +154,20 @@
   },
   {
    "id": "pregnant",
-   "label": "Someone is pregnant or in labor",
-   "hint": "No prenatal care, labor starting, bleeding after birth",
+   "label": "Someone is pregnant or in labour",
+   "hint": "No prenatal care, labour starting, bleeding after birth",
    "read": [
     {
      "doc": "med-c8a380e07e30f3e3",
      "page": 19,
-     "label": "Danger signs in labor and birth",
-     "note": "Hesperian list of labor danger signs that need medical help, and supplies to prepare for a safe birth."
+     "label": "Danger signs in labour and birth",
+     "note": "Hesperian list of labour danger signs that need medical help, and supplies to prepare for a safe birth."
     },
     {
      "doc": "clinical-8dc56ea4c7868623",
      "page": 2,
      "label": "Problems that cannot be treated at home",
-     "note": "A Book for Midwives (2026): severe hemorrhage, eclampsia and a prolapsed cord need a medical center; do not learn procedures only from reading."
+     "note": "A Book for Midwives (2026): severe haemorrhage, eclampsia and a prolapsed cord need a medical centre; do not learn procedures only from reading."
     },
     {
      "doc": "clinical-8dc56ea4c7868623",
@@ -191,7 +192,7 @@
      "doc": "med-2e83e22162a9a006",
      "page": 486,
      "label": "Supporting someone after a traumatic event",
-     "note": "IFRC 2025: listen, be empathetic, keep in contact and connect the person to other resources. A brief introduction, not formal psychological first aid training."
+     "note": "IFRC (International Federation of Red Cross and Red Crescent Societies) 2025: listen, be empathetic, keep in contact and connect the person to other resources. A brief introduction, not formal psychological first aid training."
     },
     {
      "doc": "med-323535ddfa576a04",
@@ -203,7 +204,7 @@
      "doc": "ed5bac0a81b009",
      "page": 144,
      "label": "Normal stress reactions to disaster",
-     "note": "CERT 2019 on common disaster stress reactions in survivors and helpers, including vicarious trauma and burnout."
+     "note": "CERT (US community volunteer responder training) 2019 manual on common disaster stress reactions in survivors and helpers, including vicarious trauma and burnout."
     }
    ]
   },
@@ -291,17 +292,17 @@
    "page": 1
   },
   {
-   "text": "Severe hemorrhage, eclampsia or a prolapsed cord cannot be treated at home. Procedures in A Book for Midwives that you have not been trained to do should be learned from someone experienced, not from reading.",
+   "text": "Severe haemorrhage, eclampsia or a prolapsed cord cannot be treated at home. Procedures in A Book for Midwives that you have not been trained to do should be learned from someone experienced, not from reading.",
    "doc": "clinical-8dc56ea4c7868623",
    "page": 2
   },
   {
-   "text": "Labor danger signs (very long labor, blood pressure 160/110 or higher, fever with fast pulse, sideways baby, cord coming first) need medical help.",
+   "text": "Labour danger signs (very long labour, blood pressure 160/110 or higher, fever with fast pulse, sideways baby, cord coming first) need medical help.",
    "doc": "med-c8a380e07e30f3e3",
    "page": 19
   },
   {
-   "text": "If someone talks about suicide or death, take it seriously and ask directly; you do not have to help them alone – involve others and connect them with care.",
+   "text": "If someone talks about suicide or death, take it seriously and ask directly; you do not have to help them alone; involve others and connect them with care.",
    "doc": "med-323535ddfa576a04",
    "page": 7
   },
@@ -333,7 +334,7 @@
    "doc": "18bf4604bf28c4",
    "page": 2,
    "label": "Medicines and medical devices in a power outage",
-   "note": "FEMA (2023) sheet: plan with your doctor for powered medical devices and refrigerated medicines, and when to replace medicines kept warm."
+   "note": "FEMA (the US federal emergency agency) sheet (2023): plan with your doctor for powered medical devices and refrigerated medicines, and when to replace medicines kept warm."
   },
   {
    "doc": "e629b2983d95e4",
@@ -374,7 +375,7 @@
   {
    "doc": "med-27894636f99b2041",
    "label": "New Where There Is No Doctor: contents",
-   "note": "Planned contents of Hesperian's new book (advance chapters 2015–2020). Only some chapters are in the library, e.g. first aid, heart, belly and diarrhea, diabetes, pregnancy, children."
+   "note": "Planned contents of Hesperian's new book (advance chapters 2015–2020). Only some chapters are in the library, e.g. first aid, heart, belly and diarrhoea, diabetes, pregnancy, children."
   },
   {
    "doc": "clinical-adf7e76078ea5681",

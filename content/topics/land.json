@@ -1,9 +1,9 @@
 {
  "id": "land",
  "mode": "learn",
- "title": "Find safe land and natural resources",
+ "title": "Know your land: hazards, soil, water and wild plants",
  "short": "Local hazards, soil, water sources, wild plants and finding your way",
- "intro": "A learning track for understanding the ground you live on: which natural hazards threaten it, whether its soil and water can be used, why wild plants need great caution, and how to read maps and navigate. The app's separate offline Maps page shows places; this track explains what the map data can and cannot tell you.",
+ "intro": "A guide to understanding the ground you live on: which natural hazards threaten it, whether its soil and water can be used, why wild plants need great caution, and how to read maps and navigate. The app's Map screen shows places and nearby help; this guide covers reading paper maps and using a compass.",
  "keywords": [
   "land",
   "hazard",
@@ -27,28 +27,25 @@
   "compass",
   "topographic",
   "navigation",
-  "gazetteer",
-  "OpenStreetMap",
-  "GIS",
   "coast"
  ],
  "choices": [
   {
    "id": "coast",
    "label": "I live near the beach or low-lying coast",
-   "hint": "Canals, harbors, low coastal ground",
+   "hint": "Canals, harbours, low coastal ground",
    "read": [
     {
      "doc": "9681a68ebd07f5",
      "page": 97,
      "label": "Which coastal areas face the most tsunami risk",
-     "note": "CERT annex describing tsunamis and the areas at greater risk: near the shoreline, low elevation and along rivers that feed the ocean."
+     "note": "CERT (US community volunteer responder training) annex describing tsunamis and the areas at greater risk: near the shoreline, low elevation and along rivers that feed the ocean."
     },
     {
      "doc": "a7a60dbbb26052",
      "page": 2,
      "label": "Learn your tsunami zone and warning signs",
-     "note": "FEMA sheet on evacuation zone maps and routes, natural warning signs, and what to do during and after a tsunami."
+     "note": "FEMA (the US federal emergency agency) sheet on evacuation zone maps and routes, natural warning signs, and what to do during and after a tsunami."
     },
     {
      "doc": "5cd0b4e41cc479",
@@ -97,8 +94,8 @@
     {
      "doc": "d0fbb2e051cd46",
      "page": 32,
-     "label": "Wildfire basics and defense zones",
-     "note": "FEMA 2024 wildfire sheet on what wildfires are, when risk rises, and setting up defense zones around a home."
+     "label": "Wildfire basics and defence zones",
+     "note": "FEMA 2024 wildfire sheet on what wildfires are, when risk rises, and setting up defence zones around a home."
     }
    ]
   },
@@ -136,7 +133,7 @@
      "doc": "5b0efa0b70cb98",
      "page": 42,
      "label": "Common myths about poisonous plants",
-     "note": "Army survival manual (2018) page on why plant toxicity varies and why look-alikes such as poison hemlock and wild carrot fool people."
+     "note": "US Army survival manual (2018) page on why plant toxicity varies and why look-alikes such as poison hemlock and wild carrot fool people."
     },
     {
      "doc": "5b0efa0b70cb98",
@@ -155,7 +152,7 @@
      "doc": "bf9e99715ecdde",
      "page": 1,
      "label": "Map symbols, scale and direction",
-     "note": "USGS two-page primer on topographic map colours, scale and taking a bearing with a compass."
+     "note": "US Geological Survey (USGS) two-page primer on topographic map colours, scale and taking a bearing with a compass."
     },
     {
      "doc": "78a5c135618251",
@@ -203,7 +200,7 @@
    "page": 1
   },
   {
-   "text": "Former industrial sites and old gas stations may need expert help to assess soil before use.",
+   "text": "Former industrial sites and old fuel (petrol) stations may need expert help to assess soil before use.",
    "doc": "coastal-growing-0e2825ce7a278c7c5e86",
    "page": 5
   }
@@ -211,7 +208,7 @@
  "prepare": [
   {
    "doc": "d0fbb2e051cd46",
-   "label": "FEMA one-page sheets for every major hazard",
+   "label": "Short sheets for every major hazard (FEMA)",
    "note": "2024 set of two-page sheets covering earthquake, flood, landslide, tsunami, wildfire, heat, power outage and more."
   },
   {
@@ -224,7 +221,7 @@
    "doc": "coastal-growing-0e2825ce7a278c7c5e86",
    "page": 3,
    "label": "Research a site's past use before using its soil",
-   "note": "UC guide on clues, records and online databases for learning a property's history."
+   "note": "University of California (UC) guide on clues, records and online databases for learning a property's history."
   },
   {
    "doc": "506033947edccf",
@@ -234,7 +231,7 @@
   {
    "doc": "d571edf1e80fbf",
    "label": "Rip currents and beach hazards",
-   "note": "National Weather Service hub page for rip current and beach safety materials."
+   "note": "US National Weather Service hub page for rip current and beach safety materials."
   }
  ],
  "learn": [
@@ -257,12 +254,12 @@
    "doc": "eng-5a131eb5010e45d7",
    "page": 374,
    "label": "How good are your soils? Field and lab evaluation",
-   "note": "SARE chapter on assessing soil health in the field and with laboratory tests."
+   "note": "Chapter from SARE (the US Sustainable Agriculture Research and Education programme) on assessing soil health in the field and with laboratory tests."
   },
   {
    "doc": "8bb952fd2f238b",
    "page": 109,
-   "label": "Poisonous plants chapter (historical Army manual)",
+   "label": "Poisonous plants chapter (historical US Army manual)",
    "note": "Older FM 21-76 Army survival manual chapter on how plants poison by eating, contact and absorption."
   },
   {
@@ -278,7 +275,7 @@
   {
    "zim": "zim/wikipedia_en_all_nopic_2026-06.zim/Soil_liquefaction",
    "title": "Soil liquefaction",
-   "label": "Encyclopedia: soil liquefaction",
+   "label": "Encyclopedia: Soil liquefaction (Wikipedia)",
    "note": "Wikipedia article on how saturated loose soils lose strength during shaking."
   }
  ],
@@ -290,7 +287,7 @@
     {
      "doc": "d0fbb2e051cd46",
      "page": 1,
-     "label": "FEMA hazard sheets overview",
+     "label": "Overview of the hazard sheets (FEMA)",
      "note": "Start of FEMA's 2024 set of short sheets, one per hazard."
     },
     {
@@ -392,7 +389,7 @@
     {
      "doc": "bf9e99715ecdde",
      "page": 1,
-     "label": "USGS map and compass primer",
+     "label": "Map and compass primer (USGS)",
      "note": "Two pages on symbols, scale and direction."
     },
     {

@@ -3,7 +3,7 @@
  "mode": "learn",
  "title": "Grow staple food",
  "short": "Containers, beds, soil, water, staple crops and seed saving",
- "intro": "A step-by-step learning track for growing food over months and years, starting with a few containers or a small bed and building toward storable staple crops and saved seed. Many readings are University of California extension guides, written for California conditions, alongside general manuals.",
+ "intro": "A step-by-step guide to growing food over months and years, starting with a few containers or a small bed and building towards storable staple crops and saved seed. Many readings are University of California extension guides, written for California conditions, alongside general manuals.",
  "keywords": [
   "grow",
   "garden",
@@ -34,14 +34,14 @@
  "choices": [
   {
    "id": "small-space",
-   "label": "I only have a patio, balcony or a little yard",
+   "label": "I only have a patio, balcony or a small garden",
    "hint": "Pots, buckets, a small raised bed",
    "read": [
     {
      "doc": "coastal-growing-84be1f504ea1d4902487",
      "page": 1,
      "label": "How deep each kind of vegetable needs its pot",
-     "note": "UC handout listing soil depths for shallow, medium and deep-rooted vegetables, container mix options and small tomato varieties for 5-gallon pots."
+     "note": "UC handout listing soil depths for shallow, medium and deep-rooted vegetables, container mix options and small tomato varieties for 5-gallon (19-litre) pots."
     },
     {
      "doc": "med-2ca695c9db63d020",
@@ -90,7 +90,7 @@
     {
      "doc": "coastal-growing-7e742f7e7ec7d1b6ee65",
      "label": "Growing potatoes from certified seed pieces",
-     "note": "UC IPM page on site, soil, planting dates, certified seed pieces (not grocery potatoes), hilling, watering and harvest."
+     "note": "UC IPM (University of California Integrated Pest Management programme) page on site, soil, planting dates, certified seed pieces (not supermarket potatoes), hilling, watering and harvest."
     },
     {
      "doc": "coastal-growing-61ed997967489e5abeb1",
@@ -151,7 +151,7 @@
      "doc": "eng-582d9d6be8c29785",
      "page": 14,
      "label": "Scouting for pests and keeping records",
-     "note": "SARE bulletin page on regularly scouting fields, looking for beneficial insects and sampling all areas."
+     "note": "Bulletin from SARE (the US Sustainable Agriculture Research and Education programme) on regularly scouting fields, looking for beneficial insects and sampling all areas."
     }
    ]
   }
@@ -168,7 +168,7 @@
    "page": 4
   },
   {
-   "text": "Former industrial or manufacturing land and old gas station sites may need expert help to assess before growing food.",
+   "text": "Former industrial or manufacturing land and old fuel (petrol) station sites may need expert help to assess before growing food.",
    "doc": "coastal-growing-0e2825ce7a278c7c5e86",
    "page": 5
   },
@@ -198,7 +198,7 @@
    "page": 1
   },
   {
-   "text": "Do not plant grocery store potatoes; use seed pieces certified free of pests and diseases.",
+   "text": "Do not plant supermarket potatoes; use seed pieces certified free of pests and diseases.",
    "doc": "coastal-growing-7e742f7e7ec7d1b6ee65"
   }
  ],
@@ -276,7 +276,7 @@
   {
    "zim": "zim/wikipedia_en_all_nopic_2026-06.zim/Seed_saving",
    "title": "Seed saving",
-   "label": "Encyclopedia: seed saving",
+   "label": "Encyclopedia: Seed saving (Wikipedia)",
    "note": "Wikipedia background on saving seed and other planting material such as tubers and cuttings."
   }
  ],

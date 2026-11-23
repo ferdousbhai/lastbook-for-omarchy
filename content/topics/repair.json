@@ -3,7 +3,7 @@
  "mode": "learn",
  "title": "Repair and build",
  "short": "Hand tools, sharpening, home fixes, woodworking, engines, welding, simple structures",
- "intro": "A step-by-step learning track for fixing and making things with a modest home or garage workshop. It starts with workshop safety and hand tools, then moves through sharpening, simple home and plumbing repairs, woodworking, small engines, metalwork and building simple structures from plans.",
+ "intro": "A step-by-step guide to fixing and making things with a modest home or garage workshop. It starts with workshop safety and hand tools, then moves through sharpening, simple home and plumbing repairs, woodworking, small engines, metalwork and building simple structures from plans.",
  "keywords": [
   "repair",
   "fix",
@@ -34,7 +34,8 @@
   "cold frame",
   "plans",
   "safety",
-  "PPE"
+  "PPE",
+  "carburettor"
  ],
  "choices": [
   {
@@ -46,7 +47,7 @@
      "doc": "eng-cea09c7220cd4bd0",
      "page": 13,
      "label": "Guide to choosing and using common hand tools",
-     "note": "Introduction to the Army/Navy TM 9-243 manual, which has a chapter per tool type with types, use, care and safety. Historical manual."
+     "note": "Introduction to the US Army/Navy TM 9-243 manual, which has a chapter per tool type with types, use, care and safety. Historical manual."
     },
     {
      "doc": "eng-cea09c7220cd4bd0",
@@ -94,7 +95,7 @@
     {
      "doc": "eng-cc45c31a68f597a7",
      "page": 354,
-     "label": "Repairing a standard washer faucet",
+     "label": "Repairing a dripping tap (washer type)",
      "note": "US Navy Utilitiesman (2014) steps for shutting off water, replacing the washer and checking the valve seat."
     },
     {
@@ -106,30 +107,30 @@
     {
      "doc": "ed5bac0a81b009",
      "page": 177,
-     "label": "Find and label your gas shutoff",
-     "note": "CERT manual page on gas shutoff valves, automatic earthquake shutoffs and who may turn gas back on."
+     "label": "Find and label your gas shut-off",
+     "note": "CERT (US community volunteer responder training) manual page on gas shut-off valves, automatic earthquake shut-offs and who may turn gas back on."
     }
    ]
   },
   {
    "id": "engine",
    "label": "My mower, tiller or generator won't start",
-   "hint": "Small gasoline engines",
+   "hint": "Small petrol (gasoline) engines",
    "read": [
     {
      "doc": "equipment-be25c3a8d8c92c7d",
      "page": 15,
      "label": "Engine will not start: causes and fixes",
-     "note": "Honda GX engine manual troubleshooting table: fuel valve, choke, switch, oil level, fuel and stale gasoline."
+     "note": "Honda GX engine manual troubleshooting table: fuel valve, choke, switch, oil level, fuel and stale petrol."
     },
     {
      "doc": "video-Pb4he2F4ZEw",
-     "label": "Video: hidden carburetor fuel filter screen",
-     "note": "Repair channel (donyboy73) showing a small fuel screen inside some small-engine carburetors; captions available."
+     "label": "Video: hidden carburettor fuel filter screen",
+     "note": "Repair channel (donyboy73) showing a small fuel screen inside some small-engine carburettors; captions available."
     },
     {
      "doc": "video-yBU86SYFjQE",
-     "label": "Video: cleaning a lawn mower carburetor",
+     "label": "Video: cleaning a lawn mower carburettor",
      "note": "Repair channel demonstration on a Briggs & Stratton engine that will not stay running after storage; captions available."
     }
    ]
@@ -167,7 +168,7 @@
      "doc": "eng-f547be2abcd61da0",
      "page": 1,
      "label": "Plan: carpenter's workbench (1952)",
-     "note": "LSU AgCenter/USDA drawing of an 8-foot carpenter's bench with drawer; image-only, open the page to view."
+     "note": "Drawing from Louisiana State University's LSU AgCenter and the US Department of Agriculture (USDA) of an 8-foot (2.4 m) carpenter's bench with drawer; image-only, open the page to view."
     },
     {
      "doc": "eng-9415fc58b55ed367",
@@ -201,7 +202,7 @@
    "page": 2
   },
   {
-   "text": "Gasoline is highly flammable and explosive; stop the engine and let it cool before handling fuel.",
+   "text": "Petrol is highly flammable and explosive; stop the engine and let it cool before handling fuel.",
    "doc": "equipment-be25c3a8d8c92c7d",
    "page": 8
   },
@@ -259,7 +260,7 @@
    "doc": "5cd0b4e41cc479",
    "page": 32,
    "label": "Strap your water heater",
-   "note": "FEMA page explaining why unbraced water heaters cause fires and leaks in earthquakes and that strapping kits exist."
+   "note": "FEMA (the US federal emergency agency) page explaining why unbraced water heaters cause fires and leaks in earthquakes and that strapping kits exist."
   },
   {
    "doc": "equipment-be25c3a8d8c92c7d",
@@ -269,8 +270,8 @@
   },
   {
    "doc": "mfg2-cb2a3ad19507d419",
-   "label": "Maintaining an ax",
-   "note": "Forest Service chapter on caring for an ax head and handle, honing and cleaning after use."
+   "label": "Maintaining an axe",
+   "note": "Forest Service chapter on caring for an axe head and handle, honing and cleaning after use."
   }
  ],
  "learn": [
@@ -394,19 +395,19 @@
   },
   {
    "title": "Step 4: Basic home repairs and plumbing",
-   "goal": "Know where your shutoffs are, fix common leaks, and secure the water heater for earthquakes.",
+   "goal": "Know where your shut-offs are, fix common leaks, and secure the water heater for earthquakes.",
    "read": [
     {
      "doc": "ed5bac0a81b009",
      "page": 177,
-     "label": "Utility shutoffs",
-     "note": "CERT pages on gas shutoff and when only professionals should restore service."
+     "label": "Utility shut-offs",
+     "note": "CERT pages on gas shut-off and when only professionals should restore service."
     },
     {
      "doc": "eng-cc45c31a68f597a7",
      "page": 354,
-     "label": "Faucet washer repair",
-     "note": "Navy Utilitiesman step list for a standard washer faucet."
+     "label": "Tap washer repair",
+     "note": "Navy Utilitiesman step list for a washer-type tap."
     },
     {
      "doc": "5cd0b4e41cc479",

@@ -1,9 +1,9 @@
 {
  "id": "power",
  "mode": "now",
- "title": "Power is out — light, phones & power",
+ "title": "Get through a power cut: light, phones and gas safety",
  "short": "Outages, generators, batteries and gas safety",
- "intro": "Help for the first hours and days without electricity: safe lighting, keeping phones charged, running a generator or battery station without poisoning or shocking anyone, power-dependent medical needs, apartment buildings where the elevator stops, and what to do if you smell gas.",
+ "intro": "Help for the first hours and days without electricity: safe lighting, keeping phones charged, running a generator or battery station without poisoning or shocking anyone, power-dependent medical needs, apartment buildings where the elevator stops, and what to do if you smell gas. Many readings are from US agencies; local rules, emergency numbers and services differ.",
  "keywords": [
   "power outage",
   "blackout",
@@ -28,7 +28,10 @@
   "high-rise",
   "elevator",
   "stairs",
-  "building manager"
+  "building manager",
+  "power cut",
+  "torch",
+  "petrol"
  ],
  "choices": [
   {
@@ -39,33 +42,33 @@
     {
      "doc": "18bf4604bf28c4",
      "page": 2,
-     "label": "FEMA: what to do during and after an outage",
-     "note": "One-page FEMA sheet (2023): flashlights not candles, keep fridge and freezer closed, carbon monoxide warnings, unplugging against surges, and when to throw out food and medicine."
+     "label": "What to do during and after an outage (FEMA)",
+     "note": "One-page sheet (2023) from FEMA (the US federal emergency agency): flashlights not candles, keep fridge and freezer closed, carbon monoxide warnings, unplugging against surges, and when to throw out food and medicine."
     },
     {
      "doc": "cecc1671ae4d02",
      "page": 14,
-     "label": "Are You Ready: power outage checklist",
+     "label": "Power outage checklist (Are You Ready?)",
      "note": "FEMA's 2020 guide: use only flashlights, avoid candles, backup charging such as a car charger, and never run the car in a garage."
     },
     {
      "doc": "e4bfed4b6afd6d",
      "page": 1,
      "label": "Keeping food safe while the power is out",
-     "note": "FDA fact sheet: thermometers, keeping doors closed, how long the fridge and freezer stay cold, and checking food once power returns. See also the Food section."
+     "note": "Fact sheet from the FDA (the US food and medicine regulator): thermometers, keeping doors closed, how long the fridge and freezer stay cold, and checking food once power returns. See also the guide ‘Keep food safe and cook without power’."
     }
    ]
   },
   {
    "id": "food-link",
    "label": "Cooking and keeping food safe without power",
-   "hint": "Fridge and freezer, camp stoves and grills — in the food guide",
+   "hint": "Fridge and freezer, camp stoves and grills; see the guide ‘Keep food safe and cook without power’",
    "goto": "food/cook"
   },
   {
    "id": "generator",
    "label": "I want to run a generator safely",
-   "hint": "Portable generator, extension cords, refuelling, CO alarm",
+   "hint": "Portable generator, extension cords, refuelling, carbon monoxide (CO) alarm",
    "read": [
     {
      "doc": "equipment-b463000c0e14b4ad",
@@ -77,19 +80,19 @@
      "doc": "equipment-b463000c0e14b4ad",
      "page": 10,
      "label": "Shock hazards: wet conditions and house connections",
-     "note": "Keep the generator dry; do not connect it to a building's wiring unless a qualified electrician installed an isolation switch."
+     "note": "Keep the generator dry; do not connect it to a building's wiring unless a qualified electrician installed a transfer switch."
     },
     {
      "doc": "equipment-b463000c0e14b4ad",
      "page": 11,
      "label": "Fire, burns and refuelling with care",
-     "note": "Hot exhaust and muffler, distance from buildings, and refuelling only with the engine off and cooled, outdoors, in an approved gasoline container."
+     "note": "Hot exhaust and muffler, distance from buildings, and refuelling only with the engine off and cooled, outdoors, in an approved petrol (gasoline) container."
     },
     {
      "doc": "d2213d245d582c",
      "page": 1,
-     "label": "U.S. Fire Administration generator one-pager",
-     "note": "Short English flyer (catalog title is Spanish): use outdoors, have CO alarms, not in wet areas, heavy-duty cords, don't refuel while running."
+     "label": "Generator safety one-pager (US Fire Administration)",
+     "note": "Short English flyer (listed under its Spanish title): use outdoors, have CO alarms, not in wet areas, heavy-duty cords, don't refuel while running."
     }
    ]
   },
@@ -120,7 +123,7 @@
      "doc": "e02dc81261aae7",
      "page": 358,
      "label": "Signs a lithium battery may catch fire",
-     "note": "Emergency Response Guidebook 2024: what thermal runaway is and warning signs such as swelling, leaking, odor or burn marks. Written for responders."
+     "note": "Emergency Response Guidebook 2024: what thermal runaway is and warning signs such as swelling, leaking, odour or burn marks. Written for responders."
     }
    ]
   },
@@ -145,25 +148,25 @@
      "doc": "cecc1671ae4d02",
      "page": 14,
      "label": "Backup and relocation plans for life-sustaining devices",
-     "note": "Are You Ready: take inventory of power-dependent medical equipment and make backup plans, including relocation."
+     "note": "FEMA's Are You Ready? guide: take inventory of power-dependent medical equipment and make backup plans, including relocation."
     }
    ]
   },
   {
    "id": "apartment",
    "label": "I live in an apartment or high-rise",
-   "hint": "Elevator out, stairs only, neighbors who can't get down",
+   "hint": "Elevator out, stairs only, neighbours who can't get down",
    "read": [
     {
      "doc": "9681a68ebd07f5",
      "page": 58,
      "label": "Who gets stuck upstairs when the elevator stops",
-     "note": "CERT Hazard Annexes (2019), hurricane section: a wheelchair user in a high-rise may be shut in when power and the elevator fail, and will need food, water and possibly medicine."
+     "note": "CERT (US community volunteer responder training) Hazard Annexes (2019), hurricane section: a wheelchair user in a high-rise may be shut in when power and the elevator fail, and will need food, water and possibly medicine."
     },
     {
      "doc": "5cf2ec3dc27738",
-     "label": "Planning with neighbors and your building",
-     "note": "Ready.gov page (2026): talking with neighbors in apartments and condos, deciding who checks on older or disabled neighbors, and high-rise basics such as not using elevators."
+     "label": "Planning with neighbours and your building",
+     "note": "Ready.gov (the US government preparedness site) page (2026): talking with neighbours in apartments and condos, deciding who checks on older or disabled neighbours, and high-rise basics such as not using elevators."
     },
     {
      "doc": "0dfdf1fb4b178f",
@@ -181,14 +184,14 @@
     {
      "doc": "ed5bac0a81b009",
      "page": 177,
-     "label": "CERT: when and how to shut off the gas",
-     "note": "Gas meter inside vs outside, the non-sparking wrench, automatic quake shutoff valves, and why only a licensed technician turns gas back on."
+     "label": "When and how to shut off the gas (CERT)",
+     "note": "Gas meter inside vs outside, the non-sparking wrench, automatic quake shut-off valves, and why only a licensed technician turns gas back on."
     },
     {
      "doc": "0dfdf1fb4b178f",
      "page": 14,
      "label": "If you smell gas: get out first",
-     "note": "Older FEMA Are You Ready section: open a window, get everyone out, shut off at the outside valve if you can, call from a neighbor's home."
+     "note": "Older FEMA Are You Ready? guide: open a window, get everyone out, shut off at the outside valve if you can, call from a neighbour's home."
     },
     {
      "doc": "ed5bac0a81b009",
@@ -224,8 +227,8 @@
     {
      "doc": "equipment-b463000c0e14b4ad",
      "page": 67,
-     "label": "Stored gasoline goes bad",
-     "note": "Honda manual (model-specific) explains that gasoline can deteriorate within weeks to months and how storage conditions matter."
+     "label": "Stored petrol goes bad",
+     "note": "Honda manual (model-specific) explains that petrol can deteriorate within weeks to months and how storage conditions matter."
     }
    ]
   }
@@ -247,7 +250,7 @@
    "page": 2
   },
   {
-   "text": "Do not connect a generator to a building's electrical system unless an isolation switch was installed by a qualified electrician.",
+   "text": "Do not connect a generator to a building's electrical system unless a transfer switch was installed by a qualified electrician.",
    "doc": "equipment-b463000c0e14b4ad",
    "page": 10
   },
@@ -262,7 +265,7 @@
    "page": 6
   },
   {
-   "text": "Do not refuel a running generator; let it cool, refuel outdoors, and store gasoline only in an approved container.",
+   "text": "Do not refuel a running generator; let it cool, refuel outdoors, and store petrol only in an approved container.",
    "doc": "equipment-b463000c0e14b4ad",
    "page": 11
   },
@@ -301,20 +304,20 @@
   {
    "doc": "18bf4604bf28c4",
    "page": 1,
-   "label": "FEMA power outage sheet: the basics",
+   "label": "Power outage sheet: the basics (FEMA)",
    "note": "Why outages are dangerous and the short list: generators outside, charged phones, medical device plan, unplug to avoid surges."
   },
   {
    "doc": "cecc1671ae4d02",
    "page": 14,
    "label": "Power outage supplies: a flashlight per person",
-   "note": "Inventory what runs on electricity, battery-powered smoke and CO detectors, and at least one flashlight with spare batteries per household member."
+   "note": "Inventory what runs on electricity, battery-powered smoke and CO alarms, and at least one flashlight with spare batteries per household member."
   },
   {
    "doc": "0dfdf1fb4b178f",
    "page": 14,
    "label": "Learn your gas and water shut-offs before you need them",
-   "note": "Older FEMA guide: contact your gas company about your meter, practice without actually turning it off, and label the water valve."
+   "note": "Older FEMA guide: contact your gas company about your meter, practise without actually turning it off, and label the water valve."
   },
   {
    "doc": "0dfdf1fb4b178f",
@@ -325,8 +328,8 @@
   {
    "doc": "ed5bac0a81b009",
    "page": 176,
-   "label": "Gas and carbon monoxide detectors",
-   "note": "CERT on natural gas and CO hazards, and where to place gas and CO detectors in the home."
+   "label": "Gas detectors and CO alarms",
+   "note": "CERT on natural gas and CO hazards, and where to place gas detectors and CO alarms in the home."
   },
   {
    "doc": "e629b2983d95e4",
@@ -345,7 +348,7 @@
   {
    "doc": "d0fbb2e051cd46",
    "page": 22,
-   "label": "FEMA hazard sheets 2024: power outage",
+   "label": "Power outage in the 2024 hazard sheets (FEMA)",
    "note": "Same FEMA outage advice inside the full 2024 set of hazard information sheets, alongside earthquake, flood, wildfire and tsunami."
   },
   {
@@ -365,18 +368,18 @@
   },
   {
    "doc": "1693406275fcc129",
-   "label": "EPA Power Resilience Guide (2023)",
-   "note": "Written for water utilities, but explains generator sizing, fuel planning, connections and maintenance in plain terms."
+   "label": "Power Resilience Guide (EPA, 2023)",
+   "note": "From the US Environmental Protection Agency (EPA); written for water utilities, but explains generator sizing, fuel planning, connections and maintenance in plain terms."
   },
   {
    "doc": "1b589c901d3982",
    "label": "Power Outage Ready Business Toolkit",
-   "note": "FEMA toolkit aimed at organizations; useful for thinking through extended outages."
+   "note": "FEMA toolkit aimed at organisations; useful for thinking through extended outages."
   },
   {
    "zim": "zim/mdwiki_en_all_maxi_2025-11.zim/Carbon_monoxide_poisoning",
    "title": "Carbon monoxide poisoning",
-   "label": "Encyclopedia: carbon monoxide poisoning",
+   "label": "Encyclopedia: Carbon monoxide poisoning (MDWiki)",
    "note": "Medical encyclopedia article on symptoms, causes and prevention of CO poisoning."
   }
  ],
