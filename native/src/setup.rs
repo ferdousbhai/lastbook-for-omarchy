@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: MIT
 //! Setup: choosing and downloading a library and the map (engine/setup/api.py, docs/SETUP-API.md).
 //!
-//! First run fills the window; with a library open, the same page manages it (About → Library and downloads). Nothing
-//! reaches the network until the person presses Download. Progress is read once a second while a job runs. When the
-//! job is done, Open asks the engine to finish, and the engine asks this program to restart on the new library.
+//! First run fills the window; with a library open, the same page manages it (Library and downloads, in the sidebar). Nothing
+//! reaches the network until the person presses Download or Check for newer libraries. The engine says when a job's state changes
+//! (`follow`); how far it has got has no such word, so that is read once a second, and only while this page is on screen
+//! in the window the person is using (`watch`). Closing the window while a download runs asks first (`guard_close`).
+//! When the job is done, Open asks the engine to finish, and the engine asks this program to restart on the new library.
+//!
+//! What the engine says in words (a reason a download failed, why no library is suggested) is English, written in
+//! engine/setup. The window translates each sentence the engine always says the same way (`ENGINE_TEXT`); one that
+//! carries a number, a path or a system error is shown as the engine wrote it, under the window's own translated
+//! heading or button. The packs' titles and summaries come from the published manifest (`MANIFEST_TEXT`) and are
+//! translated the same way, falling back to the manifest's words for a pack this version does not know.
 
 use std::{
     cell::{Cell, RefCell},
@@ -12,8 +20,8 @@ use std::{
     time::Duration,
 };
 
-use gtk::{gio, glib, prelude::*};
-use omui::{clear, label};
+use gtk::{glib, prelude::*};
+use omui::{clear, label, tr};
 use serde_json::{Value, json};
 
 use crate::engine::Engine;
@@ -24,7 +32,7 @@ pub struct SetupPage {
     window: RefCell<Option<gtk::Window>>,
     body: gtk::Box,
     job_box: gtk::Box,
-    /// The job's buttons, kept across the once-a-second redraw (a keyboard user's focus stays on them) and made again
+    /// The job's buttons, kept across each redraw of its progress (a keyboard user's focus stays on them) and made again
     /// only when what they offer changes (`job_buttons_for`).
     job_buttons: gtk::Box,
     job_buttons_for: RefCell<String>,
@@ -39,8 +47,36 @@ pub struct SetupPage {
     /// Street-level areas to add (Geofabrik region ids).
     regions: RefCell<Vec<String>>,
     folder: RefCell<Option<String>>,
-    polling: Cell<bool>,
-    poll_turn: Cell<u32>,
+    /// The job as last read, whichever screen is on show: what closing the window is judged by.
+    job: RefCell<Value>,
+    /// The timer that reads a running job's progress, while there is one to read and someone to see it (`watch`).
+    progress: RefCell<Option<glib::SourceId>>,
+    /// Keeps the application running while a download finishes with the window put away (`ask_close`).
+    held: RefCell<Option<omui::Hold>>,
+    /// The desktop's folder dialog (the portal), or a test's.
+    picker: Rc<dyn omui::FilePicker>,
+    /// The line under the buttons: what it says, in English or the engine's words (translated as it is shown, and
+    /// again after a language switch), and whether it is an error.
+    said: RefCell<(String, bool)>,
+    /// Run as the window comes back from a download that finished in the background: the library's window shows
+    /// this page, which may not be the screen it was put away on.
+    returned: RefCell<Option<Box<dyn Fn()>>>,
+}
+
+/// Whether this window's own engine is working on `job`: closing the window would stop it. A job another window runs
+/// (`elsewhere`) is not this one's to stop, and a paused, failed or finished one has nothing in flight.
+fn runs(job: &Value) -> bool {
+    job["elsewhere"] != true && job["state"].as_str().is_some_and(|s| !matches!(s, "done" | "failed" | "paused"))
+}
+
+/// Whether `job`'s progress is worth reading on a timer. This engine says when its own job changes state, so its job
+/// is read only while it moves; another window's job sends no word here, so it is read until it has ended.
+fn moves(job: &Value) -> bool {
+    match job["state"].as_str() {
+        Some("done" | "failed") | None => false,
+        Some("paused") => job["elsewhere"] == true,
+        Some(_) => true,
+    }
 }
 
 /// About how many street-level (zoom 15) map tiles a region's box [west, south, east, north] holds.
@@ -53,11 +89,117 @@ fn street_tiles(bbox: &Value) -> f64 {
 }
 
 fn gb(bytes: f64) -> String {
-    if bytes >= 1e9 { format!("{:.1} GB", bytes / 1e9) } else { format!("{:.0} MB", bytes / 1e6) }
+    use omui::i18n::format_number;
+    if bytes >= 1e9 { tr!("{} GB", format_number(bytes / 1e9, 1)) } else { tr!("{} MB", format_number(bytes / 1e6, 0)) }
+}
+
+/// The sentences engine/setup always says the same way, each as the engine writes it: the window shows each in the
+/// person's language (`engine_says`). A test checks that the engine still says each of them. The program itself never
+/// reads the table: it is there for the catalogs.
+#[allow(dead_code)]
+const ENGINE_TEXT: &[&str] = &[
+    n_!("No library is ready to download yet."),
+    n_!("Cancelled. Nothing was changed."),
+    n_!("A download is already under way. Pause or cancel it first."),
+    n_!("A download is under way. Pause or cancel it first."),
+    n_!("That library is not available yet."),
+    n_!("Lastbook does not know that map region."),
+    n_!("Choose a library first."),
+    n_!("Nothing to add: this library is already here."),
+    n_!("Lastbook cannot save in that folder. Choose another."),
+    n_!("There is no library to repair yet."),
+    n_!("Lastbook cannot tell which library this is, so it cannot repair it. Download a library instead."),
+    n_!("Lastbook cannot find that file or folder."),
+    n_!("The disk filled up. Free some space, then try again."),
+    n_!("The disk filled up while downloading. Free some space, then try again."),
+    n_!("The disk filled up while the map was being made. Free some space, then try again."),
+    n_!("The disk filled up while the place names were being saved. Free some space, then try again."),
+    n_!("The map server sent something that is not a map archive."),
+    n_!("The map archive does not hold vector tiles."),
+    n_!("Lastbook could not reach the map server to find the newest map. Try again later."),
+    n_!("The map archive is not in the order Lastbook reads. Try again later."),
+    n_!("Lastbook could not download the place names. Try again later."),
+    n_!("The place names downloaded incomplete. Try again later."),
+    n_!("Lastbook refused to download from an address it does not know."),
+    n_!("The download server answered with a move to nowhere."),
+    n_!("The download server sent Lastbook round in circles."),
+    n_!("The map server answered with another part of the map than the one asked for."),
+];
+
+/// The packs' titles and summaries as the manifest this version ships has them (packaging/arch/manifest-v1.json),
+/// for the catalogs as `ENGINE_TEXT` is.
+#[allow(dead_code)]
+const MANIFEST_TEXT: &[&str] = &[
+    n_!("Small"),
+    n_!("Medium"),
+    n_!("All"),
+    n_!("Essential first aid, water, food, shelter and repair knowledge."),
+    n_!("Small, plus the core how-to videos, all documents, Wikibooks and a detailed map of California."),
+    n_!("Everything in the library: every video, document and encyclopedia, Wikipedia included, with detailed maps for the whole US."),
+];
+
+/// A sentence of the engine's, in the person's language when it is one the catalogs know (`ENGINE_TEXT`,
+/// `MANIFEST_TEXT`), else as the engine wrote it.
+fn engine_says(text: &str) -> String {
+    omui::i18n::translate(text)
+}
+
+/// What a download is doing, from the engine's word for it.
+fn state_text(state: &str) -> String {
+    match state {
+        "waiting" => tr("Waiting"),
+        "downloading" => tr("Downloading"),
+        "verifying" => tr("Checking"),
+        "unpacking" => tr("Unpacking"),
+        "activating" => tr("Putting it in place"),
+        "making" | "cutting" => tr("Making the map"),
+        "paused" => tr("Paused"),
+        "failed" => tr("Failed"),
+        "done" => tr("Done"),
+        other => other.to_owned(),
+    }
+}
+
+/// What a download item is called: a pack by its manifest title, a part of the map by what it is.
+fn item_title(item: &Value, regions: &[Value]) -> String {
+    let (id, title) = (item["id"].as_str().unwrap_or_default(), item["title"].as_str().unwrap_or_default());
+    if item["kind"] != "osm" {
+        return engine_says(title);
+    }
+    match id {
+        "world" => tr("World map"),
+        "places" => tr("Place search"),
+        _ => match regions.iter().find(|r| r["id"] == id).and_then(|r| r["name"].as_str()) {
+            Some(name) => tr!("Streets for {}", name),
+            None => title.to_owned(),
+        },
+    }
+}
+
+/// Asks `picker` for a folder, titled `title`, and hands `chosen` the folder picked, or `failed` why the desktop could
+/// not ask (no portal, say): that is said in the window. Closing the dialog chooses nothing and says nothing.
+fn pick_folder(picker: &dyn omui::FilePicker, title: &str, chosen: impl FnOnce(String) + 'static, failed: impl FnOnce(String) + 'static) {
+    let options = omui::PickOptions { directory: true, ..omui::PickOptions::new(title) };
+    picker.open(
+        options,
+        Box::new(move |picked| match picked {
+            Ok(folders) => {
+                if let Some(folder) = folders.into_iter().next() {
+                    chosen(folder.to_string_lossy().into_owned());
+                }
+            }
+            Err(omui::PickError::Cancelled) => {}
+            Err(e) => failed(e.to_string()),
+        }),
+    );
 }
 
 impl SetupPage {
     pub fn build(engine: Arc<Engine>) -> Rc<Self> {
+        Self::with_picker(engine, Rc::new(omui::PortalFilePicker::new()))
+    }
+
+    pub fn with_picker(engine: Arc<Engine>, picker: Rc<dyn omui::FilePicker>) -> Rc<Self> {
         let (scroll, body) = crate::cards::column(12);
         let status = label("", "meta");
         let job_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -76,22 +218,79 @@ impl SetupPage {
             world: Cell::new(true),
             regions: RefCell::new(Vec::new()),
             folder: RefCell::new(None),
-            polling: Cell::new(false),
-            poll_turn: Cell::new(0),
+            job: RefCell::new(Value::Null),
+            progress: RefCell::new(None),
+            held: RefCell::new(None),
+            picker,
+            said: RefCell::new((String::new(), false)),
+            returned: RefCell::new(None),
         })
     }
 
-    pub fn set_window(&self, w: &impl IsA<gtk::Window>) {
-        self.window.replace(Some(w.clone().upcast()));
+    /// Writes `text` (English, or the engine's words) on the line under the buttons, as an error or not.
+    fn say(&self, text: &str, error: bool) {
+        self.said.replace((text.to_owned(), error));
+        self.status.set_text(&engine_says(text));
+        if error {
+            self.status.add_css_class("error");
+        } else {
+            self.status.remove_css_class("error");
+        }
+    }
+
+    /// After a language switch: the page is drawn again from the state last read, and the line under the buttons
+    /// written again.
+    pub fn retranslate(self: &Rc<Self>) {
+        if !self.state.borrow().is_null() {
+            self.redraw();
+        }
+        let (text, error) = self.said.borrow().clone();
+        self.say(&text, error);
+    }
+
+    pub fn set_window(self: &Rc<Self>, w: &impl IsA<gtk::Window>) {
+        let window: gtk::Window = w.clone().upcast();
+        // Progress is read only while there is someone to see it: this page on screen, in the window in use.
+        let me = Rc::downgrade(self);
+        window.connect_is_active_notify(move |w| {
+            if let Some(me) = me.upgrade() {
+                me.watch(w.is_active());
+            }
+        });
+        for mapped in [true, false] {
+            let me = Rc::downgrade(self);
+            let seen = move |_: &gtk::Widget| {
+                if let Some(me) = me.upgrade() {
+                    me.watch(mapped);
+                }
+            };
+            if mapped { self.root.connect_map(seen) } else { self.root.connect_unmap(seen) };
+        }
+        self.window.replace(Some(window));
+    }
+
+    /// What main.rs does as the window comes back from a download finished in the background.
+    pub fn on_return(&self, f: impl Fn() + 'static) {
+        self.returned.replace(Some(Box::new(f)));
     }
 
     /// Reads the engine's setup state and draws the page.
     pub fn refresh(self: &Rc<Self>) {
         let (engine, me) = (self.engine.clone(), Rc::downgrade(self));
         glib::spawn_future_local(async move {
-            let Ok(st) = engine.get("/api/setup/state").await else { return };
-            if let Some(me) = me.upgrade() {
-                me.draw(st);
+            let st = engine.get("/api/setup/state").await;
+            let Some(me) = me.upgrade() else { return };
+            match st {
+                Ok(st) => me.draw(st),
+                Err(e) => {
+                    clear(&me.body);
+                    let again = Rc::downgrade(&me);
+                    me.body.append(&crate::cards::problem(&tr("Lastbook could not read what there is to download."), &e.to_string(), move || {
+                        if let Some(me) = again.upgrade() {
+                            me.refresh();
+                        }
+                    }));
+                }
             }
         });
     }
@@ -115,12 +314,12 @@ impl SetupPage {
         if self.folder.borrow().is_none() {
             self.folder.replace(rec["folder"].as_str().map(str::to_owned));
         }
-        self.body.append(&label(if first { "Set up Lastbook" } else { "Library and downloads" }, "page-title"));
+        self.body.append(&label(&if first { tr("Set up Lastbook") } else { tr("Library and downloads") }, "page-title"));
         if let Some(c) = st["current"].as_object() {
             self.body.append(&label(
-                &format!(
+                &tr!(
                     "This library: {} · {}",
-                    c.get("pack").and_then(Value::as_str).unwrap_or("—"),
+                    c.get("pack").and_then(Value::as_str).map(engine_says).unwrap_or_else(|| "—".to_owned()),
                     c.get("folder").and_then(Value::as_str).unwrap_or_default()
                 ),
                 "meta",
@@ -128,10 +327,10 @@ impl SetupPage {
         }
 
         // Packs
-        self.body.append(&crate::cards::section("Library"));
+        self.body.append(&crate::cards::section(&tr("Library")));
         // Nothing suggested (no library fits the disk, or none is ready): the engine says why.
         if first && rec["pack"].is_null() && let Some(why) = rec["why"].as_str() {
-            let l = label(why, "meta");
+            let l = label(&engine_says(why), "meta");
             l.add_css_class("error");
             self.body.append(&l);
         }
@@ -146,14 +345,12 @@ impl SetupPage {
                 group = Some(row.clone());
             }
             let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
-            let mut head = format!("{} · {}", p["title"].as_str().unwrap_or(&id), gb(p["installed_bytes"].as_f64().unwrap_or(0.0)));
-            if rec["pack"] == id.as_str() {
-                head.push_str("  (recommended)");
-            }
+            let (title, size) = (engine_says(p["title"].as_str().unwrap_or(&id)), gb(p["installed_bytes"].as_f64().unwrap_or(0.0)));
+            let head = if rec["pack"] == id.as_str() { tr!("{} · {} (recommended)", title, size) } else { tr!("{} · {}", title, size) };
             text.append(&label(&head, "result-title"));
-            text.append(&label(p["summary"].as_str().unwrap_or_default(), "dim-label"));
+            text.append(&label(&engine_says(p["summary"].as_str().unwrap_or_default()), "dim-label"));
             if let Some(n) = need[&id].as_f64() {
-                text.append(&label(&format!("Needs {} free while it downloads and unpacks", gb(n)), "meta"));
+                text.append(&label(&tr!("Needs {} free while it downloads and unpacks", gb(n)), "meta"));
             }
             row.set_child(Some(&text));
             row.add_css_class("choice-row");
@@ -170,7 +367,7 @@ impl SetupPage {
             self.body.append(&row);
         }
         if !first {
-            let none = gtk::CheckButton::with_label("Keep the library as it is");
+            let none = gtk::CheckButton::with_label(&tr("Keep the library as it is"));
             if let Some(g) = &group {
                 none.set_group(Some(g));
             }
@@ -193,12 +390,12 @@ impl SetupPage {
 
         // Where
         if first {
-            self.body.append(&crate::cards::section("Where to keep it"));
+            self.body.append(&crate::cards::section(&tr("Where to keep it")));
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             let path = label(self.folder.borrow().as_deref().unwrap_or_default(), "meta");
             path.set_wrap_mode(gtk::pango::WrapMode::Char);
             path.set_hexpand(true);
-            let choose = gtk::Button::with_label("Choose folder…");
+            let choose = gtk::Button::with_label(&tr("Choose folder…"));
             choose.add_css_class("chip");
             let me = Rc::downgrade(self);
             let pl = path.clone();
@@ -210,7 +407,7 @@ impl SetupPage {
             row.append(&path);
             row.append(&choose);
             self.body.append(&row);
-            let use_existing = crate::cards::wrap_button("Use a library or pack already on this computer…");
+            let use_existing = crate::cards::wrap_button(&tr("Use a library or pack already on this computer…"));
             use_existing.add_css_class("chip");
             use_existing.set_halign(gtk::Align::Start);
             let me = Rc::downgrade(self);
@@ -221,7 +418,8 @@ impl SetupPage {
             });
             self.body.append(&use_existing);
             for f in st["found"].as_array().into_iter().flatten() {
-                let b = crate::cards::wrap_button(&format!("Use {} found at {}", f["kind"].as_str().unwrap_or("library"), f["path"].as_str().unwrap_or_default()));
+                let path = f["path"].as_str().unwrap_or_default();
+                let b = crate::cards::wrap_button(&if f["kind"] == "pack" { tr!("Use the pack found at {}", path) } else { tr!("Use the library found at {}", path) });
                 b.add_css_class("chip");
                 b.set_halign(gtk::Align::Start);
                 let (me, p) = (Rc::downgrade(self), f["path"].as_str().unwrap_or_default().to_owned());
@@ -236,7 +434,7 @@ impl SetupPage {
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         actions.set_margin_top(12);
-        let start = gtk::Button::with_label(if first { "Download and set up" } else { "Download" });
+        let start = gtk::Button::with_label(&if first { tr("Download and set up") } else { tr("Download") });
         start.add_css_class("suggested-action");
         let me = Rc::downgrade(self);
         start.connect_clicked(move |_| {
@@ -246,7 +444,7 @@ impl SetupPage {
         });
         actions.append(&start);
         if !first {
-            let repair = gtk::Button::with_label("Check every file");
+            let repair = gtk::Button::with_label(&tr("Check every file"));
             repair.add_css_class("chip");
             let me = Rc::downgrade(self);
             repair.connect_clicked(move |_| {
@@ -256,48 +454,74 @@ impl SetupPage {
             });
             actions.append(&repair);
         }
+        // The only request setup makes unasked for a download: whether newer libraries have been published since this
+        // version was built. Made when this is pressed, never when the page opens.
+        let newer = gtk::Button::with_label(&tr("Check for newer libraries"));
+        newer.add_css_class("chip");
+        let me = Rc::downgrade(self);
+        newer.connect_clicked(move |b| {
+            let Some(page) = me.upgrade() else { return };
+            b.set_sensitive(false);
+            let (engine, me, b) = (page.engine.clone(), me.clone(), b.clone());
+            glib::spawn_future_local(async move {
+                let r = engine.post("/api/setup/check", &json!({})).await;
+                b.set_sensitive(true);
+                if let (Ok(st), Some(me)) = (r, me.upgrade()) {
+                    let fetched = st["manifest"]["source"] == "fetched";
+                    me.draw(st);
+                    me.say(if fetched { n_!("The list of libraries is up to date.") } else { n_!("Lastbook could not reach downloads.lastbook.org. The list is the one this version came with.") }, false);
+                }
+            });
+        });
+        actions.append(&newer);
         self.body.append(&actions);
         self.body.append(&self.status);
         self.body.append(&self.job_box);
         self.state.replace(st.clone());
         self.draw_job(&st["job"]);
-        if st["job"]["state"].as_str().is_some_and(|s| !matches!(s, "done" | "failed")) {
-            self.poll();
-        }
     }
 
     fn choose_folder(self: &Rc<Self>, shown: gtk::Label) {
-        let dialog = gtk::FileDialog::builder().title("Where should the library go?").modal(true).build();
-        let me = Rc::downgrade(self);
-        let parent = self.window.borrow().clone();
-        dialog.select_folder(parent.as_ref(), gio::Cancellable::NONE, move |r| {
-            if let (Ok(f), Some(me)) = (r, me.upgrade())
-                && let Some(p) = f.path()
-            {
-                let p = p.to_string_lossy().into_owned();
-                shown.set_text(&p);
-                me.folder.replace(Some(p));
-            }
-        });
+        let (me, failed) = (Rc::downgrade(self), Rc::downgrade(self));
+        pick_folder(
+            &*self.picker,
+            &tr("Where should the library go?"),
+            move |p| {
+                if let Some(me) = me.upgrade() {
+                    shown.set_text(&p);
+                    me.folder.replace(Some(p));
+                }
+            },
+            move |why| {
+                if let Some(me) = failed.upgrade() {
+                    me.say(&why, true);
+                }
+            },
+        );
     }
 
     fn use_existing(self: &Rc<Self>) {
-        let dialog = gtk::FileDialog::builder().title("Choose a LastbookData folder, or the folder that holds a pack zip").modal(true).build();
-        let me = Rc::downgrade(self);
-        let parent = self.window.borrow().clone();
-        dialog.select_folder(parent.as_ref(), gio::Cancellable::NONE, move |r| {
-            if let (Ok(f), Some(me)) = (r, me.upgrade())
-                && let Some(p) = f.path()
-            {
-                me.post("/api/setup/use", json!({"path": p.to_string_lossy()}));
-            }
-        });
+        let (me, failed) = (Rc::downgrade(self), Rc::downgrade(self));
+        pick_folder(
+            &*self.picker,
+            &tr("Choose a LastbookData folder, or the folder that holds a pack zip"),
+            move |p| {
+                if let Some(me) = me.upgrade() {
+                    me.post("/api/setup/use", json!({"path": p}));
+                }
+            },
+            move |why| {
+                if let Some(me) = failed.upgrade() {
+                    me.say(&why, true);
+                }
+            },
+        );
     }
 
     /// The map: the world to city level, and street-level areas the person picks. Both are made on this computer from
     /// OpenStreetMap's newest daily build; Lastbook hosts no maps.
     fn draw_maps(self: &Rc<Self>, st: &Value) {
-        self.body.append(&crate::cards::section("Map"));
+        self.body.append(&crate::cards::section(&tr("Map")));
         let have = &st["current"]["osm"];
         let has_world = have["world"].as_bool().unwrap_or(false) && have["places"].as_bool().unwrap_or(false);
         let all: Vec<Value> = st["map_regions"].as_array().cloned().unwrap_or_default();
@@ -319,16 +543,16 @@ impl SetupPage {
         all.sort_by_key(|r| r["name"].as_str().unwrap_or_default().to_lowercase());
         if has_world {
             let installed: Vec<String> = have["regions"].as_array().into_iter().flatten()
-                .map(|r| format!("{} ({})", r["name"].as_str().unwrap_or_default(), gb(r["bytes"].as_f64().unwrap_or(0.0))))
+                .map(|r| tr!("{} ({})", r["name"].as_str().unwrap_or_default(), gb(r["bytes"].as_f64().unwrap_or(0.0))))
                 .collect();
             self.body.append(&label(&if installed.is_empty() {
-                "The world map is here, to city level.".to_owned()
+                tr("The world map is here, to city level.")
             } else {
-                format!("The world map is here, with streets for {}.", installed.join(", "))
+                tr!("The world map is here, with streets for {}.", installed.join(", "))
             }, "meta"));
             self.world.set(false);
         } else {
-            let check = gtk::CheckButton::with_label(&format!(
+            let check = gtk::CheckButton::with_label(&tr!(
                 "World map and place search, to city level · about {}",
                 gb(st["world_bytes"].as_f64().unwrap_or(650e6))
             ));
@@ -346,16 +570,16 @@ impl SetupPage {
             return;
         }
         // Street-level areas: pick from a searchable list; each pick shows as a chip that removes it when clicked.
-        let names: Vec<String> = std::iter::once("Add streets for an area…".to_owned())
+        let names: Vec<String> = std::iter::once(tr("Add streets for an area…"))
             .chain(all.iter().map(|r| {
                 let parent = r["parent"].as_str().unwrap_or_default();
-                if parent.is_empty() { r["name"].as_str().unwrap_or_default().to_owned() } else { format!("{} · {}", r["name"].as_str().unwrap_or_default(), name_of(parent)) }
+                if parent.is_empty() { r["name"].as_str().unwrap_or_default().to_owned() } else { tr!("{} · {}", r["name"].as_str().unwrap_or_default(), name_of(parent)) }
             }))
             .collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
         let dd = gtk::DropDown::from_strings(&refs);
         // Its first line says what it is for; a screen reader hears the same.
-        dd.update_property(&[gtk::accessible::Property::Label("Add streets for an area")]);
+        dd.update_property(&[gtk::accessible::Property::Label(&tr("Add streets for an area"))]);
         dd.set_enable_search(true);
         dd.set_search_match_mode(gtk::StringFilterMatchMode::Substring);
         dd.set_expression(Some(gtk::PropertyExpression::new(gtk::StringObject::static_type(), gtk::Expression::NONE, "string")));
@@ -383,7 +607,7 @@ impl SetupPage {
         for id in self.regions.borrow().iter() {
             let b = crate::cards::wrap_button(&format!("{} ✕", name_of(id)));
             b.add_css_class("chip");
-            b.set_tooltip_text(Some("Remove"));
+            omui::i18n::bind_tooltip(&b, "Remove");
             let me = Rc::downgrade(self);
             let id = id.clone();
             b.connect_clicked(move |_| {
@@ -398,9 +622,9 @@ impl SetupPage {
             self.body.append(&chips);
         }
         self.body.append(&label(
-            "Streets, buildings and help points (hospitals, pharmacies, water, shelters) for the areas you pick; a small country \
+            &tr("Streets, buildings and help points (hospitals, pharmacies, water, shelters) for the areas you pick; a small country \
              is about 0.1–0.5 GB, a large one several GB. Made on this computer from OpenStreetMap: you choose the areas, and \
-             Lastbook never detects your location.",
+             Lastbook never detects your location."),
             "meta",
         ));
     }
@@ -414,7 +638,7 @@ impl SetupPage {
             body["folder"] = json!(f);
         }
         if body["pack"].is_null() && !self.world.get() && self.regions.borrow().is_empty() {
-            self.status.set_text("Choose something to download first.");
+            self.say(n_!("Choose something to download first."), false);
             return;
         }
         self.post("/api/setup/start", body);
@@ -427,48 +651,169 @@ impl SetupPage {
             let Some(me) = me.upgrade() else { return };
             match r {
                 Ok(v) if v["error"].is_string() => {   // a job's answer carries "error": null
-                    me.status.set_text(v["error"].as_str().unwrap_or("Setup could not start."));
-                    me.status.add_css_class("error");
+                    me.say(v["error"].as_str().unwrap_or(n_!("Setup could not start.")), true);
                 }
                 Ok(v) => {
-                    me.status.remove_css_class("error");
-                    me.status.set_text("");
+                    me.say("", false);
                     if v.get("items").is_some() {
                         me.draw_job(&v);
+                    } else {
+                        me.read_job();
                     }
-                    me.poll();
                 }
-                Err(e) => me.status.set_text(&e.to_string()),
+                Err(e) => me.say(&e.to_string(), true),
             }
         });
     }
 
-    fn poll(self: &Rc<Self>) {
-        if self.polling.replace(true) {
+    /// Reads the job and draws it: when the engine says its state has changed (`follow`), on the progress timer, and
+    /// as the window comes back into use.
+    pub fn read_job(self: &Rc<Self>) {
+        let (engine, me) = (self.engine.clone(), Rc::downgrade(self));
+        glib::spawn_future_local(async move {
+            if let Ok(job) = engine.get("/api/setup/job").await
+                && let Some(me) = me.upgrade()
+            {
+                me.draw_job(&job);
+            }
+        });
+    }
+
+    /// Starts or stops the reading of progress, as the job, the screen on show or the window in use changes.
+    /// `seen_again`: this page has just come back on screen, or its window back into use, so what it shows is brought
+    /// up to date at once.
+    fn watch(self: &Rc<Self>, seen_again: bool) {
+        let seen = self.root.is_mapped() && self.window.borrow().as_ref().is_some_and(|w| w.is_active());
+        let wanted = seen && moves(&self.job.borrow());
+        if wanted && self.progress.borrow().is_none() {
+            let me = Rc::downgrade(self);
+            let timer = glib::timeout_add_local(Duration::from_secs(1), move || {
+                let Some(me) = me.upgrade() else { return glib::ControlFlow::Break };
+                me.read_job();
+                glib::ControlFlow::Continue
+            });
+            self.progress.replace(Some(timer));
+            if seen_again {
+                self.read_job();
+            }
+        } else if !wanted && let Some(timer) = self.progress.take() {
+            // Never from the timer's own turn: it only reads, and what it reads is drawn (and comes here) later.
+            timer.remove();
+        }
+    }
+
+    /// Closing the window, by its button or the keyboard (main.rs), asks first while a download runs here: the
+    /// engine is this window's child, so a window that simply closed would stop the download with it.
+    pub fn guard_close(self: &Rc<Self>, app: &gtk::Application) {
+        let Some(window) = self.window.borrow().clone() else { return };
+        let (me, app) = (Rc::downgrade(self), app.downgrade());
+        window.connect_close_request(move |window| {
+            let (Some(me), Some(app)) = (me.upgrade(), app.upgrade()) else { return glib::Propagation::Proceed };
+            if !runs(&me.job.borrow()) {
+                return glib::Propagation::Proceed;
+            }
+            // Asked a second time while the question is still open: the same question, not another over it.
+            if !omui::dialog_open(window) {
+                me.ask_close(&app);
+            }
+            glib::Propagation::Stop
+        });
+    }
+
+    /// The question a close meets while a download runs. Lastbook neither stops a download of many gigabytes unasked
+    /// nor carries one on unseen: the person chooses. Escape answers "keep the window open", which loses nothing and
+    /// leaves the download running.
+    fn ask_close(self: &Rc<Self>, app: &gtk::Application) {
+        // The English is given to the `_translated` setters, so a dialog open while the language changes follows it.
+        let dialog = omui::Dialog::new(Some(""), Some(""));
+        dialog.set_heading_translated("A download is still running");
+        dialog.set_body_translated("Lastbook can finish it in the background and open again when it is done. If you stop it, it carries on from where it stopped the next time you start it.");
+        dialog.add_response("stay", "");
+        dialog.set_response_translated("stay", "Keep the _window open");
+        dialog.add_response("stop", "");
+        dialog.set_response_translated("stop", "_Stop and close");
+        dialog.add_response("background", "");
+        dialog.set_response_translated("background", "_Finish in the background");
+        dialog.set_response_appearance("background", omui::Appearance::Suggested);
+        dialog.set_default_response("background");
+        dialog.set_close_response("stay");
+        let (me, app) = (Rc::downgrade(self), app.downgrade());
+        dialog.connect_response(move |_, id| {
+            let (Some(me), Some(app)) = (me.upgrade(), app.upgrade()) else { return };
+            // Any other answer (Escape, the close button, a response this does not know) keeps the window open.
+            match id {
+                "background" => me.to_background(),
+                "stop" => me.stop_and_leave(&app),
+                _ => {}
+            }
+        });
+        dialog.present(&self.root);
+    }
+
+    /// Puts the window away and keeps the application, and with it the engine and the download, running. The window
+    /// comes back when the job stops for any reason (`come_back`).
+    fn to_background(self: &Rc<Self>) {
+        if !runs(&self.job.borrow()) {
+            return;   // it ended while the question was open: the window stays, showing how
+        }
+        self.held.replace(Some(omui::hold()));
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.set_visible(false);
+        }
+    }
+
+    /// Pauses the download, so what has arrived is on the disk in a state the next start carries on from, then leaves.
+    fn stop_and_leave(self: &Rc<Self>, app: &gtk::Application) {
+        let hold = omui::hold();
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.set_visible(false);
+        }
+        let (engine, app) = (self.engine.clone(), app.clone());
+        glib::spawn_future_local(async move {
+            // Whatever the answer: an engine that cannot pause ends with this program, and its job starts paused next time.
+            let _ = engine.post("/api/setup/pause", &json!({})).await;
+            drop(hold);
+            app.quit();
+        });
+    }
+
+    /// Shows the window again if it was put away for a download: that has finished, failed or paused, or the engine
+    /// has gone, and each needs the person (Open the library, Try again, an explanation).
+    fn come_back(&self) {
+        if self.held.take().is_none() {
             return;
         }
-        // Each start has its own number, so a timer from the start before stops, however soon this one follows.
-        let turn = self.poll_turn.get() + 1;
-        self.poll_turn.set(turn);
+        if let Some(f) = self.returned.borrow().as_ref() {
+            f();
+        }
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.present();
+        }
+    }
+
+    /// Asks before a download is cancelled: cancelling deletes what has arrived, which may be hours of it. Escape
+    /// keeps the download as it is, running if it was.
+    fn ask_cancel(self: &Rc<Self>) {
+        // In English to the `_translated` setters, which follow a switch of language while the dialog is open.
+        let dialog = omui::Dialog::new(Some(""), Some(""));
+        dialog.set_heading_translated("Cancel this download?");
+        dialog.set_body_translated("What has been downloaded so far is deleted. Your library stays as it is.");
+        dialog.add_response("keep", "");
+        dialog.set_response_translated("keep", "_Keep the download");
+        dialog.add_response("cancel", "");
+        dialog.set_response_translated("cancel", "_Cancel the download");
+        dialog.set_response_appearance("cancel", omui::Appearance::Destructive);
+        dialog.set_default_response("keep");
+        dialog.set_close_response("keep");
         let me = Rc::downgrade(self);
-        glib::timeout_add_local(Duration::from_secs(1), move || {
-            let Some(me) = me.upgrade() else { return glib::ControlFlow::Break };
-            if me.poll_turn.get() != turn {
-                return glib::ControlFlow::Break;
+        dialog.connect_response(move |_, id| {
+            if id == "cancel"
+                && let Some(me) = me.upgrade()
+            {
+                me.post("/api/setup/cancel", json!({}));
             }
-            let (engine, weak) = (me.engine.clone(), Rc::downgrade(&me));
-            glib::spawn_future_local(async move {
-                if let Ok(job) = engine.get("/api/setup/job").await
-                    && let Some(me) = weak.upgrade()
-                {
-                    me.draw_job(&job);
-                    if job["state"].as_str().is_none_or(|s| matches!(s, "done" | "failed")) {
-                        me.polling.set(false);
-                    }
-                }
-            });
-            if me.polling.get() { glib::ControlFlow::Continue } else { glib::ControlFlow::Break }
         });
+        dialog.present(&self.root);
     }
 
     fn draw_job(self: &Rc<Self>, job: &Value) {
@@ -476,36 +821,44 @@ impl SetupPage {
         if let Some(st) = self.state.borrow_mut().as_object_mut() {
             st.insert("job".into(), job.clone());
         }
+        self.job.replace(job.clone());
+        self.watch(false);
+        if !runs(job) {
+            self.come_back();
+        }
         // Everything but the buttons is drawn again; the buttons stay (detached, then put back) unless they change.
         if self.job_buttons.parent().is_some() {
             self.job_box.remove(&self.job_buttons);
         }
         clear(&self.job_box);
         let Some(items) = job["items"].as_array().filter(|i| !i.is_empty()) else { return };
-        self.job_box.append(&crate::cards::section("Progress"));
+        self.job_box.append(&crate::cards::section(&tr("Progress")));
+        let regions = self.state.borrow()["map_regions"].as_array().cloned().unwrap_or_default();
         let mut said: Vec<String> = Vec::new();   // an item's reason is not repeated as the job's
         for it in items {
             let row = gtk::Box::new(gtk::Orientation::Vertical, 4);
             row.add_css_class("result");
             let state = it["state"].as_str().unwrap_or_default();
             let (done, total) = (it["bytes_done"].as_f64().unwrap_or(0.0), it["bytes_total"].as_f64().unwrap_or(0.0));
-            let mut line = format!("{} — {state}", it["title"].as_str().unwrap_or_default());
+            // A list of facts, each a phrase of its own joined by a dot, never a sentence glued from parts.
+            let mut line = vec![tr!("{} — {}", item_title(it, &regions), state_text(state))];
             if total > 0.0 {
-                line.push_str(&format!(" · {} of {}", gb(done), gb(total)));
+                line.push(tr!("{} of {}", gb(done), gb(total)));
             }
             if let Some(r) = it["rate_bps"].as_f64().filter(|r| *r > 0.0) {
-                line.push_str(&format!(" · {}/s", gb(r)));
+                line.push(tr!("{}/s", gb(r)));
             }
             if let Some(e) = it["eta_s"].as_f64().filter(|e| *e > 0.0) {
-                line.push_str(&format!(" · about {} min left", (e / 60.0).ceil()));
+                line.push(omui::trn!("about {n} minutes left", (e / 60.0).ceil() as i64));
             }
+            let line = line.join(" · ");
             row.append(&label(&line, "result-title"));
             let bar = gtk::ProgressBar::new();
             bar.set_fraction(if total > 0.0 { (done / total).clamp(0.0, 1.0) } else if state == "done" { 1.0 } else { 0.0 });
             row.append(&bar);
             if let Some(e) = it["error"]["message"].as_str() {
                 said.push(e.to_owned());
-                let l = label(e, "meta");
+                let l = label(&engine_says(e), "meta");
                 l.add_css_class("error");
                 row.append(&l);
             }
@@ -513,7 +866,9 @@ impl SetupPage {
         }
         let state = job["state"].as_str().unwrap_or_default();
         // What the buttons offer, not the job's every phase (downloading, verifying, unpacking… all offer Pause/Cancel).
+        let elsewhere = job["elsewhere"] == true;   // another window's engine runs it: its buttons would act on that one's files
         let offer = match state {
+            _ if elsewhere => "elsewhere".to_owned(),
             "done" | "paused" => state.to_owned(),
             "failed" => format!("failed/{}", job["error"]["code"].as_str().unwrap_or_default() == "cancelled"),
             _ => "active".to_owned(),
@@ -524,48 +879,57 @@ impl SetupPage {
             self.job_buttons_for.replace(offer);
         }
         let buttons = self.job_buttons.clone();
-        let add = |text: &str, path: &'static str, primary: bool| {
+        let add = |text: String, path: &'static str, primary: bool| {
             if !fresh {
                 return;
             }
-            let b = gtk::Button::with_label(text);
+            let b = gtk::Button::with_label(&text);
             b.add_css_class(if primary { "suggested-action" } else { "chip" });
             let me = Rc::downgrade(self);
             b.connect_clicked(move |_| {
-                if let Some(me) = me.upgrade() {
+                let Some(me) = me.upgrade() else { return };
+                if path == "/api/setup/cancel" {
+                    me.ask_cancel();
+                } else {
                     me.post(path, json!({}));
                 }
             });
             buttons.append(&b);
         };
         match state {
-            "done" => add("Open the library", "/api/setup/finish", true),
+            "done" => add(tr("Open the library"), "/api/setup/finish", true),
             "failed" if job["error"]["code"] == "cancelled" => {}   // the person's own cancel: nothing to try again
             "failed" => {
-                add("Try again", "/api/setup/retry", true);
-                add("Cancel", "/api/setup/cancel", false);
+                add(tr("Try again"), "/api/setup/retry", true);
+                add(tr("Cancel"), "/api/setup/cancel", false);
             }
+            _ if elsewhere => {}
             "paused" => {
-                add("Resume", "/api/setup/resume", true);
-                add("Cancel", "/api/setup/cancel", false);
+                add(tr("Resume"), "/api/setup/resume", true);
+                add(tr("Cancel"), "/api/setup/cancel", false);
             }
             _ => {
-                add("Pause", "/api/setup/pause", false);
-                add("Cancel", "/api/setup/cancel", false);
+                add(tr("Pause"), "/api/setup/pause", false);
+                add(tr("Cancel"), "/api/setup/cancel", false);
             }
         }
         if let Some(e) = job["error"]["message"].as_str().filter(|e| !said.iter().any(|s| s == e)) {
-            let l = label(e, "meta");
+            let l = label(&engine_says(e), "meta");
             l.add_css_class("error");
             self.job_box.append(&l);
+        }
+        if elsewhere {
+            self.job_box.append(&label(&tr("This download is running in another Lastbook window. Use that window to pause or cancel it."), "meta"));
         }
         self.job_box.append(&buttons);
     }
 }
 
-/// When the engine says setup has finished, start this program again on the new library and leave.
-pub fn restart_on_notice(app: &gtk::Application, engine: &Arc<Engine>) {
-    let (rx, app) = (engine.notices.clone(), app.downgrade());
+/// Follows what the engine says unasked. {"restart": folder}: setup has finished, so this program starts again on the
+/// new library and leaves. {"job": state}: a setup job's state has changed, so `page` reads and draws it, whether or
+/// not anyone is looking: that is how a window put away for a download knows to come back.
+pub fn follow(app: &gtk::Application, engine: &Arc<Engine>, page: &Rc<SetupPage>) {
+    let (rx, app, page) = (engine.notices.clone(), app.downgrade(), Rc::downgrade(page));
     glib::spawn_future_local(async move {
         while let Ok(msg) = rx.recv().await {
             if let Some(folder) = msg["restart"].as_str() {
@@ -577,10 +941,107 @@ pub fn restart_on_notice(app: &gtk::Application, engine: &Arc<Engine>) {
                 }
                 return;
             }
+            if msg.get("job").is_some()
+                && let Some(page) = page.upgrade()
+            {
+                page.read_job();
+            }
         }
         // The engine's output closed and this window is still here: nothing can answer any more.
+        if let Some(page) = page.upgrade() {
+            page.come_back();
+        }
         if let Some(window) = app.upgrade().and_then(|a| a.active_window()) {
-            gtk::AlertDialog::builder().modal(true).message("Lastbook's library engine stopped").detail("Close Lastbook and open it again.").build().show(Some(&window));
+            // Nothing to choose: closing it is the one answer, by its button or Escape.
+            // In English to the `_translated` setters, which follow a switch of language while the dialog is open.
+            let dialog = omui::Dialog::new(Some(""), Some(""));
+            dialog.set_heading_translated("Lastbook's library engine stopped");
+            dialog.set_body_translated("Close Lastbook and open it again.");
+            dialog.add_response("close", "");
+            dialog.set_response_translated("close", "_Close");
+            dialog.set_default_response("close");
+            dialog.set_close_response("close");
+            dialog.present(&window);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each sentence the window translates for the engine is one the engine still says, word for word: a sentence
+    /// reworded there would otherwise be shown in English, untranslated, with nothing to say so.
+    #[test]
+    fn the_engines_sentences_are_still_the_engines() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let engine: String = ["engine/setup/api.py", "engine/setup/download.py", "engine/setup/maps.py"]
+            .iter()
+            .map(|f| std::fs::read_to_string(root.join(f)).unwrap())
+            .collect();
+        for text in ENGINE_TEXT {
+            assert!(engine.contains(&format!("'{text}'")), "engine/setup no longer says {text:?}");
+        }
+        let manifest = std::fs::read_to_string(root.join("packaging/arch/manifest-v1.json")).unwrap();
+        for text in MANIFEST_TEXT {
+            assert!(manifest.contains(&format!("\"{text}\"")), "the manifest no longer says {text:?}");
+        }
+    }
+
+    #[test]
+    fn a_folder_is_asked_for_through_the_portal_and_its_failure_is_said() {
+        let picker = omui::FakeFilePicker::new();
+        let (chosen, failed) = (Rc::new(RefCell::new(Vec::new())), Rc::new(RefCell::new(Vec::new())));
+        let ask = |picker: &omui::FakeFilePicker| {
+            let (c, f) = (chosen.clone(), failed.clone());
+            pick_folder(picker, "Where should the library go?", move |p| c.borrow_mut().push(p), move |e| f.borrow_mut().push(e));
+        };
+        picker.answer(Ok(vec!["/media/usb/LastbookData".into()]));
+        ask(&picker);
+        picker.answer(Err(omui::PickError::Cancelled));
+        ask(&picker);
+        picker.answer(Err(omui::PickError::Unavailable(omui::PickDetail::new("no portal"))));
+        ask(&picker);
+        assert_eq!(*chosen.borrow(), ["/media/usb/LastbookData"]);
+        assert_eq!(*failed.borrow(), ["No file chooser is available on this desktop."], "closing the dialog says nothing");
+        let asked = picker.asked();
+        assert_eq!(asked.len(), 3);
+        assert!(asked.iter().all(|(saving, o)| !saving && o.directory && !o.multiple && o.title == "Where should the library go?"));
+    }
+
+    #[test]
+    fn a_download_says_what_it_is_and_what_it_is_doing() {
+        let regions = [json!({"id": "asia/nepal", "name": "Nepal"})];
+        assert_eq!(item_title(&json!({"kind": "osm", "id": "world", "title": "World map"}), &regions), "World map");
+        assert_eq!(item_title(&json!({"kind": "osm", "id": "asia/nepal", "title": "Nepal streets"}), &regions), "Streets for Nepal");
+        assert_eq!(item_title(&json!({"kind": "pack", "id": "small", "title": "Small"}), &regions), "Small");
+        assert_eq!(state_text("downloading"), "Downloading");
+        assert_eq!(state_text("something new"), "something new", "a state this version does not know is shown as it is");
+    }
+
+    #[test]
+    fn closing_asks_only_while_this_window_downloads() {
+        for state in ["waiting", "downloading", "verifying", "unpacking", "activating"] {
+            assert!(runs(&json!({"state": state})), "{state}");
+        }
+        for state in ["paused", "failed", "done"] {
+            assert!(!runs(&json!({"state": state})), "{state}: nothing is in flight");
+        }
+        assert!(!runs(&Value::Null), "no job at all");
+        assert!(!runs(&json!({"state": "downloading", "elsewhere": true})), "another window's download does not stop with this one");
+    }
+
+    #[test]
+    fn progress_is_read_only_while_there_is_some_to_read() {
+        assert!(moves(&json!({"state": "downloading"})));
+        assert!(moves(&json!({"state": "unpacking"})));
+        // This engine says when its own job is resumed, so a paused job of its own is not read on a timer.
+        assert!(!moves(&json!({"state": "paused"})));
+        assert!(!moves(&json!({"state": "done"})));
+        assert!(!moves(&json!({"state": "failed"})));
+        assert!(!moves(&Value::Null));
+        // Another window's engine sends no word here: its job is read until it has ended.
+        assert!(moves(&json!({"state": "paused", "elsewhere": true})));
+        assert!(!moves(&json!({"state": "done", "elsewhere": true})));
+    }
 }

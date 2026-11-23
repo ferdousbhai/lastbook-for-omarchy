@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""The bridge with no window: streaming, cancel, lanes, every refusal.
+"""The bridge and the engine's pipe with no window: streaming, lanes, every refusal, lines that are not requests.
 
   python3 -B app/tests/test_bridge.py [-v]
 
 Uses the made-up library in derived/app-build/testdata. Never packaged."""
-import faulthandler, hashlib, json, os, shutil, socket, statistics, subprocess, sys, threading, time, types, unittest
+import base64, faulthandler, hashlib, json, os, shutil, socket, statistics, subprocess, sys, tempfile, threading, time, types, unittest
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -102,6 +102,14 @@ class TestHandler(server.Handler):
             self.send_response(302)
             self.send_header('Location', '/documents/plain.txt?a="<b>')
             self.end_headers()
+            return
+        if p == '/api/t/wide':     # JSON with a two-byte character cut in two by the first chunk's end
+            data = b'["' + b'a' * (MiB - 3) + 'é'.encode() + b'"]'
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
             return
         if p == '/api/t/echo':
             return self.send_json({'headers': {k.lower(): v for k, v in self.headers.items()}, 'path': self.path})
@@ -223,6 +231,7 @@ class Both:
     def test_pdf_pictures_have_their_own_lane(self):
         self.assertEqual(B._lane_for('/documents/real.pdf', '/documents/real.pdf?pdf-page=2'), 'render')
         self.assertEqual(B._lane_for('/documents/real.pdf', '/documents/real.pdf'), 'large')
+        self.assertEqual(B._lane_for('/api/find', '/api/find?q=x'), 'small')
 
     def test_damaged_pdf_shows_a_notice_and_not_its_bytes(self):
         for p in ('/documents/s.pdf', '/documents/big.pdf'):
@@ -293,7 +302,7 @@ class Both:
         r = self.get('/documents/t/sized?bytes=%d' % B.BIG_BODY)
         self.assertEqual(r.status, 200)
         self.assertEqual(len(r.body), B.BIG_BODY)
-        self.assertEqual(self.get('/documents/t/sized?bytes=%d' % (B.WHOLE_MAX + 1)).status, 413)
+        self.assertEqual(self.get('/documents/t/sized?bytes=%d' % (4 * B.BIG_BODY)).status, 403)
 
     def test_a_page_the_size_of_the_largest_real_one_opens(self):
         self.assertGreater(B.BIG_BODY, 44 * 1000 * 1000)
@@ -468,21 +477,6 @@ class Both:
 
 class StreamTests(Both, unittest.TestCase):
 
-    def test_cancel_mid_body_stops_the_handler(self):
-        b = B.Bridge(MOD)
-        hold = threading.Event()
-        r = Rec(hold, after=4)
-        ex = b.start('GET', '/videos/huge.mkv', None, r)   # one piece of video: 8 chunks
-        self.assertTrue(wait_until(lambda: len(r.parts) == 4))
-        lane = b.lanes['large']
-        self.assertEqual(lane.active, 1)
-        ex.cancel()
-        self.assertTrue(ex.stopped)
-        hold.set()
-        self.assertTrue(wait_until(lambda: lane.active == 0))
-        self.assertFalse(r.done.is_set())
-        self.assertEqual(len(r.parts), 4)     # the write stopped midway: the other four chunks never came
-
     def test_chunks_are_bounded(self):
         r = Rec()
         self.b.start('GET', A, None, r)
@@ -532,99 +526,39 @@ class StreamTests(Both, unittest.TestCase):
         self.assertLess(first_at, 0.3)
         self.assertTrue(r.ok)
 
-    def test_cancel_stops_a_long_answer(self):
-        r = Rec()
-        ex = self.b.start('GET', '/documents/t/nolen?mb=40&ms=50', None, r)
-        self.assertTrue(wait_until(lambda: len(r.parts) >= 3))
-        ex.cancel()
-        self.assertTrue(wait_until(lambda: self.b.lanes['large'].active == 0, 5))
-        self.assertFalse(r.done.is_set())
-        self.assertLess(len(r.parts), 20)
-
-    def test_the_pipe_can_cancel_a_long_answer_after_many_later_requests(self):
-        """app/engine_pipe.py keeps a request until its answer ends, not until enough others have come after it."""
-        out = sys.stdout
-        import engine_pipe as P     # importing it points sys.stdout at the log, as the engine process wants
-        sys.stdout = out
-        real_send, P.send = P.send, lambda obj: None
-        try:
-            P.start(self.b, 'long', 'GET', '/documents/t/nolen?mb=40&ms=500', None)
-            for i in range(300):
-                P.start(self.b, i, 'GET', '/api/t/echo', None)
-            self.assertTrue(wait_until(lambda: list(P._running) == ['long']))     # the 300 answered ones are gone, the long one is not
-            P.cancel('long')
-            self.assertEqual(P._running, {})
-            self.assertTrue(wait_until(lambda: self.b.lanes['large'].active == 0, 5))
-            P.start(self.b, 'bad', 'PUT', '/', None)     # refused at once: nothing is left behind for it
-            self.assertEqual(P._running, {})
-
-            def closed(obj):     # the window has gone: every write to its pipe fails
-                raise BrokenPipeError
-            P.send = closed
-            sink = P.PipeSink('gone')
-            self.assertIn('gone', P._running)
-            with self.assertRaises(BrokenPipeError):
-                sink.finish(True)
-            self.assertEqual(P._running, {})             # over all the same, so the engine does not wait 30 s to leave
-            P.start(self.b, 'gone too', 'GET', '/api/t/echo', None)
-            self.assertTrue(wait_until(lambda: not P._running))
-        finally:
-            P.send = real_send
-
-    def test_cancel_while_queued_never_runs(self):
-        b = B.Bridge(MOD)
-        lane = b.lanes['large'] = B._Lane('large', 1, 10)
-        hold = threading.Event()
-        r1, r2 = Rec(hold), Rec()
-        e1 = b.start('GET', '/videos/huge.mkv', None, r1)
-        self.assertTrue(r1.first.wait(5))
-        e2 = b.start('GET', '/videos/a.mp4', None, r2)
-        e2.cancel()
-        e1.cancel()
-        hold.set()
-        self.assertTrue(wait_until(lambda: not lane.waiting and lane.active == 0))
-        self.assertIsNone(r2.status)
-        self.assertFalse(r2.done.is_set())
-
     def test_small_stays_quick_under_a_flood_of_large(self):
         b = B.Bridge(MOD)
         hold = threading.Event()
-        recs = [Rec(hold) for _ in range(300)]
-        exs = [b.start('GET', '/videos/huge.mkv', None, r) for r in recs]
-        lane = b.lanes['large']
-        self.assertTrue(wait_until(lambda: lane.active == 6))
+
+        class Held(Rec):     # keeps how much came, not the bytes: thirty videos' first pieces are 240 MiB
+            def data(self, chunk):
+                super().data(len(chunk))
+        recs = [Held(hold) for _ in range(30)]
+        for r in recs:
+            b.start('GET', '/videos/huge.mkv', None, r)
+        self.assertTrue(wait_until(lambda: sum(len(r.parts) for r in recs) == B.LANES['large']))
         time.sleep(0.2)
-        self.assertEqual(lane.active, 6)
-        self.assertEqual(sum(len(r.parts) for r in recs), 6)     # each worker is held at its first chunk; nothing else has been read
-        self.assertGreater(len(lane.waiting), 280)
+        self.assertEqual(sum(len(r.parts) for r in recs), B.LANES['large'])     # each that runs is held at its first chunk; the rest wait
         times = []
         for _ in range(200):
             t = time.perf_counter()
             self.assertEqual(call(b, 'GET', '/api/t/echo').status, 200)
             times.append(time.perf_counter() - t)
-        OBSERVED['stream, small during large flood (300 videos, the window not reading)'] = f'/api/t/echo median {statistics.median(times) * 1000:.2f} ms, max {max(times) * 1000:.2f} ms over 200'
+        OBSERVED['stream, small during large flood (30 videos, the window not reading)'] = f'/api/t/echo median {statistics.median(times) * 1000:.2f} ms, max {max(times) * 1000:.2f} ms over 200'
         self.assertLess(max(times), 1.0)
-        for e in exs:
-            e.cancel()
         hold.set()
-        self.assertTrue(wait_until(lambda: lane.active == 0 and not lane.waiting))
+        self.assertTrue(all(r.done.wait(30) for r in recs))
+        self.assertTrue(all(sum(r.parts) == B.VIDEO_PIECE for r in recs))
 
-    def test_queue_full(self):
-        b = B.Bridge(MOD)
-        b.lanes['large'] = B._Lane('large', 1, 2)
-        hold = threading.Event()
-        recs = [Rec(hold) for _ in range(3)]
-        exs = [b.start('GET', '/videos/huge.mkv', None, recs[0])]
-        self.assertTrue(recs[0].first.wait(5))     # one running, held
-        exs += [b.start('GET', '/videos/huge.mkv', None, r) for r in recs[1:]]     # two waiting
-        self.assertNotIn(None, exs)
-        extra = [Rec() for _ in range(3)]
-        got = [b.start('GET', '/videos/a.mp4', None, r) for r in extra]
-        self.assertEqual(got, [None] * 3)
-        self.assertEqual([r.status for r in extra], [503] * 3)
-        for e in exs:
-            e.cancel()
-        hold.set()
+    def test_slow_requests_do_not_hold_up_a_quick_one(self):
+        """A search that waits (on the embedding model, say) mostly sleeps: however many there are, a quick request starts at once."""
+        recs = [Rec() for _ in range(20)]
+        for r in recs:
+            self.b.start('GET', '/api/t/slow?ms=1500', None, r)
+        t = time.perf_counter()
+        self.assertEqual(call(self.b, 'GET', '/api/t/echo').status, 200)
+        self.assertLess(time.perf_counter() - t, 1.0)
+        self.assertTrue(all(r.done.wait(10) for r in recs))
 
     def test_redirect_becomes_a_page_that_moves_itself(self):
         r = self.get('/documents/t/redirect')
@@ -634,13 +568,104 @@ class StreamTests(Both, unittest.TestCase):
         self.assertNotIn(b'"<b>', r.body)
 
 
+class Pipe(unittest.TestCase):
+    """app/engine_pipe.py: what goes out on the window's pipe, and lines that are not requests."""
+
+    @classmethod
+    def setUpClass(cls):
+        out = sys.stdout
+        import engine_pipe     # importing it points sys.stdout at the log, as the engine process wants
+        sys.stdout = out
+        cls.P = engine_pipe
+        cls.b = B.Bridge(MOD)
+
+    def setUp(self):
+        self.sent, self.real_send = [], self.P.send
+        self.P.send = self.sent.append
+
+    def tearDown(self):
+        self.P.send = self.real_send
+
+    def answered(self, rid, timeout=20):
+        self.assertTrue(wait_until(lambda: any(m.get('id') == rid and 'end' in m for m in self.sent), timeout), rid)
+        return [m for m in self.sent if m.get('id') == rid]
+
+    def test_a_character_cut_between_chunks_arrives_whole(self):
+        self.P.answer(self.b, b'{"id": 1, "path": "/api/t/wide"}\n')
+        got = self.answered(1)
+        chunks = [m['chunk'] for m in got if 'chunk' in m]
+        self.assertGreater(len(chunks), 1)     # it did come in two
+        self.assertEqual(json.loads(''.join(chunks)), ['a' * (MiB - 3) + 'é'])
+        self.assertIs(got[-1]['end'], True)
+
+    def test_anything_but_json_comes_byte_for_byte(self):
+        page = fixture.LIB / 'pages' / 'kinds' / 'cut.html'
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_bytes(b'<p>' + b'a' * (MiB - 4) + 'é'.encode() + b'</p>')
+        slides = fixture.LIB / 'documents' / 'slides.pptx'
+        slides.write_bytes(b'PK\x03\x04\xff\xfe' * 100)
+        for rid, path in ((2, '/pages/kinds/cut.html'), (3, '/documents/slides.pptx')):
+            self.P.answer(self.b, json.dumps({'id': rid, 'path': path}))
+            got = self.answered(rid)
+            self.assertFalse(any('chunk' in m for m in got), path)
+            body = b''.join(base64.b64decode(m['b64']) for m in got if 'b64' in m)
+            if path.endswith('.pptx'):
+                self.assertEqual(body, slides.read_bytes())
+            else:
+                self.assertIn(b'a' + 'é'.encode() + b'</p>', body)     # the page is rewritten, and comes as the engine wrote it
+
+    def test_a_line_that_is_not_a_request_is_passed_over(self):
+        bad = [b'5\n', b'null\n', b'[1]\n', b'"cancel"\n', b'{"cancel": 8}\n', b'{"id": [1], "path": "/api/t/echo"}\n', b'{"id": {"a": 1}}\n',
+               b'{"id": null}\n', b'\xff\xfe{"id": 9}\n', b'{"id": 9, "path": "/api/\xff"}\n', b'\n', b'{not json\n']
+        for line in bad:
+            self.P.answer(self.b, line)
+        self.P.answer(self.b, b'{"id": 10, "path": "/api/t/echo"}\n')
+        self.assertEqual(self.answered(10)[0]['head'], 200)
+        self.assertEqual({m.get('id') for m in self.sent}, {10})
+
+    def test_the_engine_waits_for_what_it_was_asked_and_no_longer(self):
+        """main() leaves once nothing is being answered: an answered request, a refused one and one whose window has gone all end."""
+        self.P.answer(self.b, b'{"id": "slow", "path": "/documents/t/slow?ms=300"}')
+        self.assertTrue(wait_until(lambda: self.P._running == 1))
+        for i in range(50):
+            self.P.answer(self.b, json.dumps({'id': i, 'path': '/api/t/echo'}))
+        self.P.answer(self.b, b'{"id": "bad", "method": "PUT", "path": "/"}')     # refused at once
+        self.answered('slow')
+        self.assertTrue(wait_until(lambda: self.P._running == 0))
+
+        def closed(obj):     # the window has gone: every write to its pipe fails
+            raise BrokenPipeError
+        self.P.send = closed
+        sink = self.P.PipeSink('gone')
+        with self.assertRaises(BrokenPipeError):
+            sink.finish(True)
+        self.assertEqual(self.P._running, 0)     # over all the same, so the engine does not wait 30 s to leave
+        self.P.answer(self.b, b'{"id": "gone too", "path": "/api/t/echo"}')
+        self.assertTrue(wait_until(lambda: self.P._running == 0))
+
+    def test_the_real_loop_lives_through_bad_lines(self):
+        """engine_pipe.py itself, on the made-up library: malformed lines, then a request that is answered."""
+        with tempfile.TemporaryDirectory() as home:
+            env = {**os.environ, 'XDG_CONFIG_HOME': home, 'XDG_DATA_HOME': home, 'PYTHONDONTWRITEBYTECODE': '1'}
+            with subprocess.Popen([sys.executable, '-B', str(ROOT / 'app' / 'engine_pipe.py'), '--data', str(DATA)], env=env,
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as proc:
+                self.assertIn('ready', json.loads(proc.stdout.readline()))
+                proc.stdin.write(b'null\n[1]\n{"id": [1]}\n\xff\xfe\n{"id": 1, "path": "/api/doc/pdfsmall"}\n')
+                proc.stdin.close()
+                got = [json.loads(proc.stdout.readline()) for _ in range(3)]
+                self.assertEqual([next(k for k in m if k != 'id') for m in got], ['head', 'chunk', 'end'])
+                self.assertEqual(json.loads(got[1]['chunk'])['id'], 'pdfsmall')
+                self.assertEqual(proc.wait(30), 0)
+
+
 class WholeProcess(unittest.TestCase):
     def test_no_listening_socket(self):
         self.assertEqual(LISTENS, [])
         pid = str(os.getpid())
         lsof = shutil.which('lsof')
         if not lsof:
-            self.skipTest('no lsof on this system: the process-level socket and file check cannot run here')
+            # In CI a missing tool fails the run: a check that was skipped proved nothing, and a green run would hide that.
+            (self.fail if os.environ.get('CI') else self.skipTest)('no lsof on this system: the process-level socket and file check cannot run here')
         out = subprocess.run([lsof, '-nP', '-a', '-p', pid, '-i'], capture_output=True, text=True).stdout
         files = subprocess.run([lsof, '-nP', '-p', pid], capture_output=True, text=True).stdout.lower()
         how = 'lsof -i'

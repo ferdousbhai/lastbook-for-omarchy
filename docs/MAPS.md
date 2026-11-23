@@ -1,10 +1,11 @@
 # How the offline map is put together
 
-A guide for anyone who wants to improve the map. It says which files the window draws, what makes them, and what the
-engine still reads from the US map files that upstream Lastbook's packs carry.
+A guide for anyone who wants to improve the map. It says which files the window draws, what makes them, and where place
+search and `lastbook place --nearby` find their answers. All of it is made on the person's computer; upstream Lastbook's
+US map files, where an old library still has them, are read by nothing.
 
 The map follows the same rules as the rest of Lastbook (see [CONTRIBUTING.md](../CONTRIBUTING.md)). The window draws only
-from files on the computer and never asks the network for a tile, a place or an address. Lastbook hosts no map: setup makes
+from files on the computer and never asks the network for a tile or a place. Lastbook hosts no map: setup makes
 the files on the person's computer, when the person asks for them.
 
 ## What the window draws
@@ -13,29 +14,47 @@ the files on the person's computer, when the person asks for them.
 |---|---|---|
 | `world.mbtiles` | The whole world to city level (zoom 0 to 8), about 0.6 GB | Setup, `engine/setup/maps.py` |
 | `regions-<id>.mbtiles` | Street-level detail (zoom 9 to 15) for one region the person chose | Setup, the same way |
-| `world-places.sqlite` | Place search: every country, first-level region, and town of 15,000 people or more, with alternate names | Setup, from GeoNames |
+| `world-places.sqlite` | Place search: every country, first-level region, and place of 500 people or more (about 240,000; the seats of local governments too), those of 15,000+ with alternate names; about 40 MB | Setup, from GeoNames |
 
 - The tiles are OpenStreetMap vector tiles in Protomaps' basemap schema, stored as MBTiles (SQLite). `native/src/map.rs`
   opens every `regions-*.mbtiles` and `world.mbtiles`, takes each tile from the most detailed file that has it, scales a
   coarser tile up where nothing finer exists, and draws with Cairo in the theme's colours (`native/src/mvt.rs` decodes the
   tiles).
 - **Help points** come from the tiles' `pois` layer, from zoom 13: hospitals, clinics and doctors (H), pharmacies (+),
-  police (P), fire stations (F), drinking water (W), shelters (S), toilets (T) and food shops (M). The list is `help_kind`
-  in `map.rs`. Showing another kind is one line there; say in the pull request why it helps someone in an emergency.
-- **Place search** asks the engine (`/api/places`, `places()` in `server.py`), which searches `world-places.sqlite` and,
-  where a pack has them, the US files below.
+  police (P), fire stations (F), drinking water (W), shelters (S), toilets (T) and food shops (M). The list is `HELP`
+  in `map.rs`, which the legend (the map bar's info button) and the nearest-help list read too. Showing another kind is
+  one line there and its word in `MAP_HELP` in `server.py`; say in the pull request why it helps someone in an
+  emergency. A click on a mark names it, with its kind and its distance from the place found (or the map centre).
+  `lastbook place --nearby` reads the same layer (below).
+- **Nearest help** (the map bar's locate button, and on its own after a place is found) lists the nearest points of each
+  kind around the place, under one heading per mark: hospitals, clinics and doctors together as Medical help, since in
+  much of the world a small place has only a clinic or a doctor. A row centres the map on its point. The window asks the
+  engine (`/api/near?lat=&lon=`, `near_help()` in `server.py`), the same `near()` as `--nearby` (below), and measures no
+  distance itself. Where no street-level map covers the place it lists nothing and says so, with a button to Library and
+  downloads, rather than showing points from a map of somewhere else.
+- **Place search** asks the engine (`/api/places`, `places()` in `server.py`), which searches `world-places.sqlite`, or
+  takes a point as `LAT,LON` in decimal degrees. Each place says how it `match`es the query: `exact` (its name, maybe
+  with its region or country), `alternate name` (one of the other names GeoNames knows it by), `partial` (a word left
+  out, or only the start of a longer name) or `coordinates`; and `onMap`, whether an installed street-level map covers
+  it. Places are listed best first: those the query names (or, for the largest, names by an old or other name: "Bombay"
+  is Mumbai before a village called Bombay), then the larger before the smaller (`rank`: countries 0; regions, capitals
+  and cities over a million 1; then over 100,000, 15,000 and 1,000; the rest 5). Hamlets of fewer than 500, and places
+  GeoNames gives no population and no local government (some Balinese villages, such as Amed and Pemuteran), are not in
+  it: give their coordinates.
 
 ## How setup makes the files
 
 `engine/setup/maps.py` cuts the map out of the newest Protomaps daily build of OpenStreetMap, a PMTiles archive on
 `build.protomaps.com`. It reads the archive's directories over HTTPS range requests and fetches only the tiles wanted:
 all of them to zoom 8 for the world, and those inside a region's box for zoom 9 to 15. Place search is built from
-GeoNames' public files (`download.geonames.org`). Every request goes through `engine/setup/download.py`, the one module
+GeoNames' public files (`download.geonames.org`: `cities500.zip`, about 14 MB, with `countryInfo.txt` and
+`admin1CodesASCII.txt`). Every request goes through `engine/setup/download.py`, the one module
 that may open a connection, to allow-listed hosts with the pinned roots.
 
-- A file is built beside its final name and moved into place when complete, so a stopped download leaves nothing half
-  made. There is no published checksum for a cut of a daily build; every tile directory and the gazetteer are parsed
-  before anything is kept.
+- A file is built beside its final name (`<name>.part`) and moved into place when complete. A paused cut, or one the
+  network failed, keeps its part file and carries on from it while the same daily map build is still the newest; Cancel
+  removes it; what a killed process leaves behind is removed at the next map job. There is no published checksum for a cut of a
+  daily build; every tile directory and the gazetteer are parsed before anything is kept.
 - The regions offered are Geofabrik's: countries, and parts of large countries, 554 in all, each with a bounding box.
   The list ships with the app (`packaging/arch/map-regions.json`); `tools/make_region_list.py` makes it from Geofabrik's
   index. Only names and boxes are taken from Geofabrik. A region across the antimeridian (Alaska, Fiji, New Zealand, the
@@ -43,31 +62,49 @@ that may open a connection, to allow-listed hosts with the pinned roots.
 - The person picks the areas in setup (`native/src/setup.rs`; `POST /api/setup/start {world, regions}` in
   [SETUP-API.md](SETUP-API.md)). Lastbook never detects location.
 - These files belong to no pack. An upgrade to another pack keeps them (`maps.ours`).
+- A library set up before place search held villages has a gazetteer of towns of 15,000+ only. It still works, but
+  `world-places.sqlite` says which kind it is (SQLite's `user_version`, `maps.PLACES_VERSION`), and setup counts the
+  older one as missing (`maps.places_current`): Library and downloads then offers "World map and place search" again
+  (about 55 MB, since the world map is there), and adding a street-level area makes it again too. Nothing is fetched
+  until the person starts that download.
 
 Credits: map data © OpenStreetMap contributors (ODbL), tiles by Protomaps; place names from GeoNames (CC BY 4.0).
 
-## US map files from upstream's packs
+## Nearby help from the command line
 
-Upstream Lastbook's packs and state maps carry their own US map set, in SQLite files built by tools that are not in this
-repository. Setup still installs, checks and repairs them where a pack or state map has them
-([SETUP-API.md](SETUP-API.md), "State maps"). The window does not draw them. The engine reads them for two things:
+`lastbook place QUERY --nearby hospital,pharmacy,police` lists the nearest help points around the first place found
+(`near()` in `server.py`), or around a point: `lastbook place "-8.5069,115.2625" --nearby hospital`. They come from the
+`pois` layer of the installed street-level maps, which `engine/map_pois.py` reads: it opens every `regions-*.mbtiles`,
+unpacks the tiles around the place (gzip) and decodes that one layer by hand, as `mvt.rs` does for the window, so the
+engine needs no protocol buffer library.
 
-| File | What the engine uses it for |
-|---|---|
-| `derived/geo/places.sqlite` | Place search in the US: towns, ZIP codes, counties, named places (USGS GNIS, Census gazetteers) |
-| `derived/geo/addresses/<ST>.sqlite` | Street-address search for one state (`engine/address_search.py`; Overture Maps addresses) |
-| `derived/geo/national.sqlite`, `map.sqlite` | Ranking same-named US towns, and the nearest hospital, pharmacy, water… of `lastbook place --nearby` (`near()`, table `poi`) |
-| `derived/geo/water.sqlite`, `crops.sqlite`, `library-data/geography/resources/atlas.sqlite` | Named lakes, reservoirs and dams in place search, and nearby resource records for `lastbook place --nearby` |
-
-`terrain.sqlite` and `buildings.sqlite` in such a map set are no longer read by anything.
-
-What is tied to the United States here: every source of these files is a US dataset; `server.py` treats a box around
-Southern California as the area `map.sqlite` details (`socal_classes`, `in_socal`); and address search knows US state
-names and street words. Outside the US, place search uses GeoNames and there is no nearby-help lookup.
+- **Only around a sure place, only where there is a map.** Help points are looked up only when the first place is an
+  `exact`, `alternate name` or `coordinates` match, and only when a street-level map covers it (`covered`). Otherwise
+  `nearby` is empty and `nearby_note` says why in a sentence; for a place no map covers, `regions_installed` lists the
+  regions there are. So an empty `nearby` with `covered: true` means the map has no such point within reach.
+- **How far it looks.** The search reaches out from about 2 km each way, twice as far each step, as far as about 140 km
+  (`NEAR_KM`), and stops once five points of a kind lie within the distance read, so none nearer is missed. Distances
+  are on the ground (great circle) and a box is as wide in km at 60 N as at the equator; it goes on across the
+  antimeridian. Out to about 35 km (`FULL_KM`) it reads zoom 15, which holds every point. Each doubling beyond that
+  reads one zoom coarser (14, then 13), where the map keeps the larger points: the main hospitals, but few or no
+  pharmacies, clinics or police stations. So a pharmacy more than about 35 km away is not found, and a far hospital may
+  not be the nearest one. A lookup takes well under a second.
+- **Kinds.** A kind is OpenStreetMap's tag value as the tiles carry it (`hospital`, `clinic`, `doctors`, `pharmacy`,
+  `police`, `fire_station`, `supermarket`, `fuel`…). Where `--nearby`'s word differs, `KINDS` in `map_pois.py` says
+  so: `drinking_water` also takes `water_point`, `toilet` is `toilets`, `town_hall` is `townhall`, `bicycle_shop` is
+  `bicycle`. The words `--nearby` accepts are `HELP` in `server.py`, and only kinds the street maps carry belong there.
+  `shelter` is OpenStreetMap's `amenity=shelter`, a roofed structure (bus or rain shelter, hut, guard post), not an
+  emergency or evacuation shelter, and its label says so; `chemist` is a drugstore that may sell no medicines.
+- The same name within about 80 m is one point (a pharmacy mapped as a node and as a building).
+- The window's nearest-help list is the same lookup, for the kinds the map marks (`MAP_HELP`, five of each).
 
 ## Checking a map change
 
 - A change to how the map draws is a change you can see: include screenshots in a light and a dark theme.
-- `app.tests.test_maps` covers the PMTiles addressing and directory parsing behind the cut, and that an upgrade keeps the
-  person's map files. `bin/test` runs it with the window's tests.
+- `app.tests.test_maps` covers the PMTiles addressing and directory parsing behind the cut, that an upgrade keeps the
+  person's map files, and the help points read back out of a made-up street map (across the antimeridian, at 60 N, and
+  from damaged tiles); `app.tests.test_cli` asks `place` and `place --nearby` of one, by name and by coordinates, and
+  `app.tests.test_map_near` asks `/api/near` through the bridge. `native/dev/qa/map.jsonl` drives the Map screen over the
+  made-up town of `native/dev/seed.py` (Mapton, with a street map) and one without (Testville). `bin/test` runs them with
+  the window's tests.
 - Nothing a contributor adds may make the app open a connection outside setup's downloader.

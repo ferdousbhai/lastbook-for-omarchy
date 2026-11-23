@@ -2,9 +2,22 @@
 //! Pieces every screen shares: the result card, section headings, and where a source opens.
 
 use gtk::{gio, glib, prelude::*};
+use omui::tr;
 use serde_json::Value;
 
 use crate::ui::Route;
+
+/// What a screen shows in place of what it could not load: `what` went wrong in a sentence (translated by the
+/// caller), `why` in the engine's own words under it, and a button that runs `again`. A screen that asked and got
+/// nothing must never stay blank. A screen draws it anew after a language switch, as it draws all it shows.
+pub fn problem(what: &str, why: &str, again: impl Fn() + 'static) -> gtk::Widget {
+    let state = omui::EmptyState::new(Some(omui::icons::name::WARNING), what, Some(&omui::i18n::translate(why))).compact();
+    let retry = gtk::Button::with_label(&tr("Try again"));
+    retry.add_css_class("chip");
+    retry.connect_clicked(move |_| again());
+    state.set_child(Some(retry.upcast_ref()));
+    state.widget.upcast()
+}
 
 /// A card whose text is read whole (About's), not a snippet cut at four lines.
 pub fn text_card(title: &str, markup: &str, meta: &str) -> gtk::Box {
@@ -95,13 +108,28 @@ pub fn grid(max: u32, spacing: u32) -> gtk::FlowBox {
 }
 
 /// An encyclopedia's name, from its ZIM file's name.
-pub fn encyclopedia_name(file: &str) -> &str {
+pub fn encyclopedia_name(file: &str) -> String {
     if file.starts_with("mdwiki") {
-        "Medical encyclopedia (MDWiki)"
+        tr("Medical encyclopedia (MDWiki)")
     } else if file.starts_with("appropedia") {
-        "Appropedia"
+        "Appropedia".to_owned()
     } else {
-        file
+        file.to_owned()
+    }
+}
+
+/// What kind of document a catalog record is, in a word or two: the engine's `kind`, named here so that it is in the
+/// person's language (the engine's own `kindLabel` is English).
+pub fn kind_label(kind: &str) -> String {
+    match kind {
+        "pdf" => "PDF".to_owned(),
+        "html" => tr("Saved web page"),
+        "video" => tr("Video"),
+        "transcript" => tr("Transcript"),
+        "pptx" => tr("Slides"),
+        "zim" => tr("Encyclopedia"),
+        "metadata" => tr("Video details"),
+        other => other.to_owned(),
     }
 }
 
@@ -136,7 +164,7 @@ pub fn section(text: &str) -> gtk::Label {
 pub fn some_then_all<T: Clone + 'static>(into: &gtk::Box, items: &[T], first: usize, draw: impl Fn(&[T]) + 'static) {
     draw(&items[..items.len().min(first)]);
     if items.len() > first {
-        let more = gtk::Button::with_label(&format!("Show all {}", items.len()));
+        let more = gtk::Button::with_label(&omui::trn!("Show all {n}", items.len()));
         more.set_halign(gtk::Align::Start);
         into.append(&more);
         let rest = items[first..].to_vec();
@@ -174,7 +202,7 @@ pub fn route_of(s: &Value) -> Option<Route> {
         "place" => Some(Route::MapAt {
             lat: s["lat"].as_f64()?,
             lon: s["lon"].as_f64()?,
-            label: s["title"].as_str().or_else(|| s["name"].as_str()).unwrap_or("Place").to_owned(),
+            label: s["title"].as_str().or_else(|| s["name"].as_str()).map(str::to_owned).unwrap_or_else(|| tr("Place")),
         }),
         "video" => Some(Route::Watch { video: id, t: s["t"].as_f64().unwrap_or(-1.0) }),   // no moment given: no seek
         "article" => Some(Route::Wiki { path: s["wiki"].as_str()?.to_owned() }),
@@ -189,7 +217,7 @@ pub fn route_of(s: &Value) -> Option<Route> {
 pub fn source_meta(s: &Value) -> String {
     let mut meta = Vec::new();
     if s["kind"] == "article" {
-        meta.push(s["encyclopedia"].as_str().unwrap_or("Encyclopedia").to_owned());
+        meta.push(s["encyclopedia"].as_str().map(str::to_owned).unwrap_or_else(|| tr("Encyclopedia")));
     } else if let Some(p) = s["publisher"].as_str().filter(|p| !p.is_empty()) {
         meta.push(p.to_owned());
     }
@@ -197,9 +225,12 @@ pub fn source_meta(s: &Value) -> String {
         meta.push(y.to_owned());
     }
     if let Some(p) = s["page"].as_i64() {
-        meta.push(format!("page {p}{}", s["pages"].as_i64().map(|n| format!(" of {n}")).unwrap_or_default()));
+        meta.push(match s["pages"].as_i64() {
+            Some(n) => tr!("page {} of {}", omui::i18n::format_int(p), omui::i18n::format_int(n)),
+            None => tr!("page {}", omui::i18n::format_int(p)),
+        });
     } else if let Some(t) = s["t"].as_f64() {
-        meta.push(format!("at {}", clock(t)));
+        meta.push(tr!("at {}", clock(t)));
     } else if let Some(sec) = s["section"].as_str().filter(|s| !s.is_empty()) {
         meta.push(sec.to_owned());
     }

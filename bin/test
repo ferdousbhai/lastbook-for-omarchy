@@ -13,5 +13,8 @@ for script in native/dev/qa/*.jsonl; do
   printf '%s\n' "${out##*$'\n'}"
 done
 PYTHONPATH=$(bin/test-deps) python3 -B -m unittest app.tests.test_bridge app.tests.test_setup app.tests.test_data_folder \
-  app.tests.test_what_ships app.tests.test_address_search app.tests.test_validate_topics \
-  app.tests.test_libq app.tests.test_semantic app.tests.test_maps app.tests.test_cli
+  app.tests.test_what_ships app.tests.test_validate_topics \
+  app.tests.test_libq app.tests.test_semantic app.tests.test_maps app.tests.test_map_near app.tests.test_cli \
+  app.tests.test_search_keyword app.tests.test_search_encyclopedia app.tests.test_encyclopedia_shelf \
+  app.tests.test_download_stall app.tests.test_mapcut_resume app.tests.test_index_build app.tests.test_job_notices \
+  app.tests.test_reading

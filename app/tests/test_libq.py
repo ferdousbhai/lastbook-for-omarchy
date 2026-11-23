@@ -108,7 +108,8 @@ class Libq(unittest.TestCase):
 
     def test_encyclopedia_search_without_a_server(self):
         if not self.zim:
-            self.skipTest('no libzim here to write the small ZIM file')
+            # In CI a missing tool fails the run: a check that was skipped proved nothing, and a green run would hide that.
+            (self.fail if os.environ.get('CI') else self.skipTest)('no libzim here to write the small ZIM file')
         code, out = self.run_tool('--data', str(self.data), 'zim', 'rainwater barrel')
         self.assertEqual(code, 0, out)
         self.assertIn(f'zim/{ZIM}/Rainwater_harvesting | Rainwater harvesting', out)    # the form a guide's "zim" field takes

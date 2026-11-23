@@ -2,6 +2,11 @@
 //! Guides: short curated paths for urgent needs and learning tracks (content/topics, served resolved by /api/topics).
 //! A guide shows its situations ("What's happening?"), each with the pages to read, the limits its sources set (when to
 //! stop or get help), what to prepare, what to learn, and related guides.
+//!
+//! A guide's own words (its title, situations, notes and limits) are content, curated in English against English
+//! sources and cited to their pages, as the manuals they point to are: they stay as content/topics has them. A
+//! translation of the guides belongs beside them in content/, checked against its sources, not in the window's
+//! catalogs. What the window writes around them (the headings, the buttons, the page numbers) is translated here.
 
 use std::{
     cell::RefCell,
@@ -9,7 +14,7 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
-use omui::{clear, label};
+use omui::{clear, label, tr};
 use serde_json::Value;
 
 use crate::{
@@ -61,18 +66,25 @@ impl Guides {
         g
     }
 
+    /// After a language switch: the list is written again now; a guide on show is drawn again by ui.rs.
+    pub fn retranslate(&self) {
+        if !self.topics.borrow().is_empty() {
+            self.fill_list();
+        }
+    }
+
     fn fill_list(&self) {
         clear(&self.list);
-        let t = gtk::Label::new(Some("Guides"));
+        let t = gtk::Label::new(Some(&tr("Guides")));
         t.add_css_class("page-title");
         t.set_xalign(0.0);
         self.list.append(&t);
-        for (mode, heading) in [("now", "Right now"), ("learn", "Learn and prepare")] {
+        for (mode, heading) in [("now", tr("Right now")), ("learn", tr("Learn and prepare"))] {
             let topics: Vec<Value> = self.topics.borrow().iter().filter(|t| t["mode"].as_str().unwrap_or("now") == mode).cloned().collect();
             if topics.is_empty() {
                 continue;
             }
-            self.list.append(&section(heading));
+            self.list.append(&section(&heading));
             let grid = cards::grid(3, 8);
             for t in topics {
                 let c = card(t["title"].as_str().unwrap_or_default(), &glib::markup_escape_text(t["short"].as_str().unwrap_or_default()), "", None);
@@ -96,7 +108,7 @@ impl Guides {
         self.page.append(&label(t["intro"].as_str().unwrap_or_default(), "dim-label"));
 
         if let Some(choices) = t["choices"].as_array().filter(|c| !c.is_empty()) {
-            self.page.append(&section("What's happening?"));
+            self.page.append(&section(&tr("What's happening?")));
             for (i, c) in choices.iter().enumerate() {
                 let exp = gtk::Expander::new(None);
                 exp.add_css_class("choice");
@@ -115,7 +127,7 @@ impl Guides {
                 if let Some(to) = c["goto"].as_str().map(|g| g.split('/').next().unwrap_or(g).to_owned())
                     && let Some(name) = self.topics.borrow().iter().find(|t| t["id"] == to.as_str()).and_then(|t| t["title"].as_str().map(str::to_owned))
                 {
-                    let go = crate::cards::wrap_button(&format!("Open the guide: {name}"));
+                    let go = crate::cards::wrap_button(&tr!("Open the guide: {}", name));
                     go.add_css_class("chip");
                     go.set_halign(gtk::Align::Start);
                     let app = self.app.clone();
@@ -132,7 +144,7 @@ impl Guides {
             }
         }
         if let Some(limits) = t["limits"].as_array().filter(|l| !l.is_empty()) {
-            self.page.append(&section("When to stop and get help"));
+            self.page.append(&section(&tr("When to stop and get help")));
             let b = gtk::Box::new(gtk::Orientation::Vertical, 6);
             b.add_css_class("limits");
             for l in limits {
@@ -147,7 +159,11 @@ impl Guides {
                 row.append(&icon);
                 row.append(&text);
                 if let Some(src) = l["src"].as_object() {
-                    let s = gtk::Label::new(Some(&format!("{}{}", src.get("publisher").and_then(Value::as_str).unwrap_or_default(), l["page"].as_i64().map(|p| format!(", p. {p}")).unwrap_or_default())));
+                    let publisher = src.get("publisher").and_then(Value::as_str).unwrap_or_default();
+                    let s = gtk::Label::new(Some(&match l["page"].as_i64() {
+                        Some(p) => tr!("{}, p. {}", publisher, omui::i18n::format_int(p)),
+                        None => publisher.to_owned(),
+                    }));
                     s.add_css_class("meta");
                     s.set_valign(gtk::Align::Start);
                     s.set_wrap(true);
@@ -161,16 +177,16 @@ impl Guides {
             }
             self.page.append(&b);
         }
-        for (key, heading) in [("prepare", "Get ready before it happens"), ("learn", "Learn more")] {
+        for (key, heading) in [("prepare", tr("Get ready before it happens")), ("learn", tr("Learn more"))] {
             if let Some(items) = t[key].as_array().filter(|i| !i.is_empty()) {
-                self.page.append(&section(heading));
+                self.page.append(&section(&heading));
                 for r in items {
                     self.page.append(&self.item(r));
                 }
             }
         }
         if let Some(route) = t["route"].as_array().filter(|r| !r.is_empty()) {
-            self.page.append(&section("Step by step"));
+            self.page.append(&section(&tr("Step by step")));
             for step in route {
                 let l = gtk::Label::new(step["title"].as_str());
                 l.add_css_class("result-title");
@@ -185,7 +201,7 @@ impl Guides {
             }
         }
         if let Some(related) = t["related"].as_array().filter(|r| !r.is_empty()) {
-            self.page.append(&section("Related guides"));
+            self.page.append(&section(&tr("Related guides")));
             let row = gtk::FlowBox::new();
             row.set_selection_mode(gtk::SelectionMode::None);
             for r in related.iter().filter_map(Value::as_str) {
@@ -207,13 +223,13 @@ impl Guides {
         let gaps = |key: &str| t["gaps"][key].as_array().cloned().unwrap_or_default();
         let (missing, disagree) = (gaps("missing"), gaps("disagree"));
         if !missing.is_empty() || !disagree.is_empty() {
-            let exp = gtk::Expander::new(Some("What this guide does not cover"));
+            let exp = gtk::Expander::new(Some(&tr("What this guide does not cover")));
             exp.add_css_class("choice");
             let b = gtk::Box::new(gtk::Orientation::Vertical, 6);
             b.set_margin_top(8);
-            for (heading, lines) in [("", missing), ("Where the sources disagree", disagree)] {
+            for (heading, lines) in [(String::new(), missing), (tr("Where the sources disagree"), disagree)] {
                 if !heading.is_empty() && !lines.is_empty() {
-                    b.append(&label(heading, "result-title"));
+                    b.append(&label(&heading, "result-title"));
                 }
                 for l in lines.iter().filter_map(Value::as_str) {
                     let text = gtk::Label::new(Some(l));
@@ -240,11 +256,11 @@ impl Guides {
             meta.push(y.to_owned());
         }
         if let Some(p) = r["page"].as_i64() {
-            meta.push(format!("page {p}"));
+            meta.push(tr!("page {}", omui::i18n::format_int(p)));
         } else if let Some(d) = src["duration"].as_f64() {
-            meta.push(format!("video, {}", clock(d)));
+            meta.push(tr!("video, {}", clock(d)));
         } else if r["zim"].is_string() {
-            meta.push("Encyclopedia article".into());
+            meta.push(tr("Encyclopedia article"));
         }
         let title = r["label"].as_str().or_else(|| r["title"].as_str()).unwrap_or_default();
         let c = card(title, &glib::markup_escape_text(r["note"].as_str().unwrap_or_default()), &meta.join(" · "), src["trust"].as_str());

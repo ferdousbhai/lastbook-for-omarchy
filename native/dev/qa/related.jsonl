@@ -1,0 +1,28 @@
+# The Search screen's line when Recall for Omarchy is not installed, with what it is and how to add it, and the
+# readers' Related, from which another document opens (over a stand-in engine: related.engine).
+# native/dev/qa.sh native/dev/qa/related.jsonl [shots-dir]
+
+{"do":"wait","role":"window","name":"Guides — Lastbook","timeout_ms":30000}
+{"do":"key","keys":"<Control>f"}
+{"do":"wait","role":"window","name":"Search — Lastbook"}
+{"do":"wait","role":"label","name":"Searching by words only: Recall for Omarchy is not installed.","visible":true}
+{"do":"wait","role":"label","name":"Recall for Omarchy is optional: with it, search also finds pages by what they mean, not only by the words in them. To add it, run this in a terminal: curl -fsSL https://ferdousbhai.com/recall/install.sh | sudo bash","visible":true}
+{"do":"type","text":"boil water"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"generic","name":"Safe water at home, Preview Press · page 1 of 2","visible":true}
+{"do":"shot","path":"search-no-recall.png"}
+
+# Related, in the reader's bar: a document opens from it, and the web view's bar has its own.
+{"do":"focus","role":"generic","name":"Safe water at home, Preview Press · page 1 of 2"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"window","name":"Safe water at home — Lastbook"}
+{"do":"click","role":"toggle-button","name":"Related"}
+{"do":"wait","role":"button","name":"Water purification","visible":true}
+{"do":"wait","role":"button","name":"Hand tools","visible":true}
+{"do":"shot","path":"related.png"}
+{"do":"click","role":"button","name":"Rope"}
+{"do":"wait","role":"window","name":"Rope — Lastbook"}
+{"do":"wait","role":"toggle-button","name":"Related","visible":true}
+{"do":"key","keys":"<Alt>Left"}
+{"do":"wait","role":"window","name":"Safe water at home — Lastbook"}
+{"do":"quit"}

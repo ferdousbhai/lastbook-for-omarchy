@@ -35,8 +35,12 @@ NET_ALLOWED = {
 }
 ARCH = {'x86_64': 'X86-64', 'aarch64': 'AArch64'}
 SYSTEM_LIBS = re.compile(r'^(libc|libm|libdl|libpthread|librt|libstdc\+\+|libgcc_s|ld-linux-x86-64|ld-linux-aarch64|libz|libglib-2\.0|libgobject-2\.0)\.so')
-APP_ID = 'io.github.ferdousbhai.Lastbook'
+APP_ID = 'lastbook'   # the desktop entry's and the icon's name, as the window's app id (native/src/main.rs)
 WINDOW = 'usr/bin/lastbook'
+# The background indexer (packaging/systemd): its user service, the path unit that starts it when Recall appears, and the
+# drop-in that has every login want them.
+UNITS = ('usr/lib/systemd/user/lastbook-index.service', 'usr/lib/systemd/user/lastbook-index.path',
+         'usr/lib/systemd/user/default.target.d/lastbook-index.conf')
 # What the window links besides SYSTEM_LIBS: the GTK 4 stack, WebKitGTK 6, Poppler and GStreamer, all in depends=().
 WINDOW_LIBS = re.compile(r'^(libgtk-4|libgdk_pixbuf-2\.0|libgio-2\.0|libgmodule-2\.0|libpango(cairo)?-1\.0|libcairo(-gobject)?|libharfbuzz|libgraphene-1\.0|'
                          r'libwebkitgtk-6\.0|libjavascriptcoregtk-6\.0|libpoppler-glib|libgst[a-z]*-1\.0|libsoup-3\.0|libsqlite3)\.so')   # sqlite: the map files
@@ -80,7 +84,7 @@ def main():
                     problems.append(f'symlink out of the package: {rel} -> {target}')
                 continue
             n_files += 1
-            if not (rel.startswith((P, 'usr/share/licenses/lastbook-for-omarchy/')) or rel in (WINDOW, f'usr/share/applications/{APP_ID}.desktop')
+            if not (rel.startswith((P, 'usr/share/licenses/lastbook-for-omarchy/')) or rel in (WINDOW, f'usr/share/applications/{APP_ID}.desktop', *UNITS)
                     or re.fullmatch(rf'usr/share/icons/hicolor/\d+x\d+/apps/{re.escape(APP_ID)}\.png', rel)):
                 problems.append(f'file outside the places the package owns: {rel}')
             if bad_name(rel.removeprefix(P)) or BAD_FILE.search(rel) or (rel.startswith(P + 'content/') and not GUIDES.search(rel)):

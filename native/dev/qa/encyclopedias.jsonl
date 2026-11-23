@@ -1,0 +1,51 @@
+# The Encyclopedias screen: the made-up library's one encyclopedia by its front page, an article picked at random
+# ("Something to read" and the Random article button), each opening in the web view under Encyclopedias in the
+# sidebar, and Library and downloads from the sidebar. In a wide window and in a third of a screen.
+# native/dev/qa.sh native/dev/qa/encyclopedias.jsonl [shots-dir]
+
+{"do":"wait","role":"window","name":"Guides — Lastbook","timeout_ms":30000}
+{"do":"select","role":"list-item","name":"Encyclopedias"}
+{"do":"wait","role":"window","name":"Encyclopedias — Lastbook"}
+{"do":"wait","role":"button","name":"Random article","visible":true}
+{"do":"wait","role":"generic","name":"Water purification, Medical encyclopedia (MDWiki)","visible":true}
+{"do":"wait","role":"generic","name":"Medical encyclopedia (MDWiki), 1 article","visible":true}
+{"do":"shot","path":"encyclopedias.png"}
+
+# The front page, then back; the article it shows is under Encyclopedias in the sidebar.
+{"do":"focus","role":"generic","name":"Medical encyclopedia (MDWiki), 1 article"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"window","name":"Water purification — Lastbook"}
+{"do":"wait","role":"list-item","name":"Encyclopedias","selected":true}
+{"do":"shot","path":"front-page.png"}
+{"do":"key","keys":"<Alt>Left"}
+{"do":"wait","role":"window","name":"Encyclopedias — Lastbook"}
+
+# Something to read opens its article; another one is drawn in its place; Random article opens one at once.
+{"do":"focus","role":"generic","name":"Water purification, Medical encyclopedia (MDWiki)"}
+{"do":"key","keys":"space"}
+{"do":"wait","role":"window","name":"Water purification — Lastbook"}
+{"do":"key","keys":"<Alt>Left"}
+{"do":"wait","role":"window","name":"Encyclopedias — Lastbook"}
+{"do":"click","role":"button","name":"Another article"}
+{"do":"wait","role":"generic","name":"Water purification, Medical encyclopedia (MDWiki)","visible":true}
+{"do":"click","role":"button","name":"Random article"}
+{"do":"wait","role":"window","name":"Water purification — Lastbook"}
+{"do":"key","keys":"<Alt>Left"}
+{"do":"wait","role":"window","name":"Encyclopedias — Lastbook"}
+
+# A third of a screen: the screen fits without widening the window.
+{"do":"resize","width":560,"height":700}
+{"do":"wait","size":[560,700]}
+{"do":"wait","role":"button","name":"Random article","visible":true}
+{"do":"wait","size":[560,700]}
+{"do":"shot","path":"narrow-encyclopedias.png"}
+{"do":"resize","width":1024,"height":768}
+{"do":"wait","size":[1024,768]}
+
+# Library and downloads has a row of its own in the sidebar.
+{"do":"select","role":"list-item","name":"Library and downloads"}
+{"do":"wait","role":"window","name":"Library and downloads — Lastbook"}
+{"do":"wait","role":"radio","name":"Keep the library as it is","checked":true}
+{"do":"wait","role":"list-item","name":"Library and downloads","selected":true}
+{"do":"shot","path":"manage-sidebar.png"}
+{"do":"quit"}

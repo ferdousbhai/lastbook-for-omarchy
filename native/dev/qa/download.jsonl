@@ -1,0 +1,66 @@
+# A download in progress is not lost to one key or one click: a stand-in engine (download.engine) starts in first-run
+# setup with a made-up download running. Cancel asks first, and so does closing the window, by Ctrl+W and Ctrl+Q alike;
+# Escape answers each with the choice that loses nothing and leaves the download running. A change of the job's state
+# reaches the window as the engine tells it, and a window put away to finish in the background comes back when the job
+# is done. A folder chooser that fails says why.
+# native/dev/qa.sh native/dev/qa/download.jsonl [shots-dir]
+
+{"do":"wait","role":"window","name":"Set up Lastbook","timeout_ms":30000}
+{"do":"wait","role":"button","name":"Pause","visible":true}
+
+# The folder is asked for through the desktop's portal. When the desktop has no file chooser, or its chooser does not
+# answer, the window says so, under its buttons, rather than doing nothing. omui's `picker` command answers the
+# request in place of the portal.
+{"do":"picker","fail":"unavailable"}
+{"do":"click","role":"button","name":"Choose folder…"}
+{"do":"wait","role":"label","name":"No file chooser is available on this desktop.","visible":true,"timeout_ms":15000}
+{"do":"picker","fail":"no-answer"}
+{"do":"click","role":"button","name":"Choose folder…"}
+{"do":"wait","role":"label","name":"The desktop's file chooser did not answer.","visible":true,"timeout_ms":15000}
+
+# Cancel asks first. Escape keeps the download, and it is still running.
+{"do":"click","role":"button","name":"Cancel"}
+{"do":"wait","dialog":"Cancel this download?"}
+{"do":"shot","path":"cancel-asks.png"}
+{"do":"key","keys":"Escape"}
+{"do":"wait","dialog":null}
+{"do":"wait","role":"button","name":"Pause","visible":true}
+
+# Ctrl+W and Ctrl+Q ask before the window, and the download with it, goes. Escape keeps the window open.
+{"do":"key","keys":"<Control>w"}
+{"do":"wait","dialog":"A download is still running"}
+{"do":"shot","path":"close-asks.png"}
+{"do":"key","keys":"Escape"}
+{"do":"wait","dialog":null}
+{"do":"key","keys":"<Control>q"}
+{"do":"wait","dialog":"A download is still running"}
+{"do":"click","role":"button","name":"Keep the window open"}
+{"do":"wait","dialog":null}
+{"do":"wait","role":"button","name":"Pause","visible":true}
+
+# Pause and resume: the buttons follow the job. (A paused download has nothing in flight, so the window would close
+# without asking; that is not tried here, since closing it ends the run.)
+{"do":"click","role":"button","name":"Pause"}
+{"do":"wait","role":"button","name":"Resume","visible":true}
+{"do":"click","role":"button","name":"Resume"}
+{"do":"wait","role":"button","name":"Pause","visible":true}
+
+# Cancel, and this time the answer is yes: the download is cancelled, and says so.
+{"do":"click","role":"button","name":"Cancel"}
+{"do":"wait","dialog":"Cancel this download?"}
+{"do":"click","role":"button","name":"Cancel the download"}
+{"do":"wait","dialog":null}
+{"do":"wait","role":"label","name":"Cancelled. Nothing was changed.","visible":true}
+{"do":"wait","role":"button","name":"Pause","visible":false}
+
+# Started again, the made-up download is done three seconds later. Put away to finish in the background meanwhile,
+# the window comes back when the engine says the job is done, offering to open the library.
+{"do":"click","role":"button","name":"Download and set up"}
+{"do":"wait","role":"button","name":"Pause","visible":true}
+{"do":"key","keys":"<Control>w"}
+{"do":"wait","dialog":"A download is still running"}
+{"do":"click","role":"button","name":"Finish in the background"}
+{"do":"wait","role":"button","name":"Open the library","visible":true,"timeout_ms":20000}
+{"do":"wait","dialog":null}
+{"do":"shot","path":"download-done.png"}
+{"do":"quit"}

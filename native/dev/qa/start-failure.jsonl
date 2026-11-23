@@ -1,0 +1,13 @@
+# The window is on screen, and answering, before the engine is: a stand-in engine (start-failure.engine) takes four
+# seconds to start and then cannot open the library. The window says it is opening the library meanwhile, then says
+# what the engine said.
+# native/dev/qa.sh native/dev/qa/start-failure.jsonl [shots-dir]
+
+{"do":"wait","role":"window","name":"Lastbook"}
+{"do":"wait","role":"group","name":"Opening your library…","visible":true}
+{"do":"shot","path":"opening.png"}
+{"do":"wait","role":"group","name":"Lastbook could not open its library.","visible":true,"timeout_ms":20000}
+{"do":"wait","role":"label","name":"The stand-in engine has no library to open.","visible":true}
+{"do":"wait","role":"group","name":"Opening your library…","visible":false}
+{"do":"shot","path":"start-failure.png"}
+{"do":"quit"}

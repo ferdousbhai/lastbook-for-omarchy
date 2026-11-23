@@ -1,0 +1,19 @@
+# Un-saving takes one key, so it can be undone: the toast's Undo puts the item back in Saved as it was.
+# native/dev/qa.sh native/dev/qa/undo.jsonl [shots-dir]
+
+{"do":"wait","role":"window","name":"Guides — Lastbook","timeout_ms":30000}
+{"do":"click","role":"grid-cell","name":"Get safe drinking water"}
+{"do":"wait","role":"window","name":"Get safe drinking water — Lastbook"}
+{"do":"key","keys":"<Control>d"}
+{"do":"wait","role":"button","name":"Saved — click to remove (Ctrl+D)","visible":true}
+{"do":"key","keys":"<Control>d"}
+{"do":"wait","role":"button","name":"Save this (Ctrl+D)","visible":true}
+{"do":"wait","role":"alert","name":"Removed from Saved.","visible":true}
+{"do":"shot","path":"undo.png"}
+{"do":"click","role":"button","name":"Undo"}
+{"do":"wait","role":"button","name":"Saved — click to remove (Ctrl+D)","visible":true}
+{"do":"wait","role":"alert","name":"Removed from Saved.","visible":false}
+{"do":"select","role":"list-item","name":"Saved"}
+{"do":"wait","role":"window","name":"Saved — Lastbook"}
+{"do":"wait","role":"generic","name":"Get safe drinking water, Guide","visible":true}
+{"do":"quit"}

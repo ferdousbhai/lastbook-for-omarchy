@@ -5,9 +5,10 @@ engine_pipe.py (the native window's engine process) calls start(...), which feed
 window's pipe blocks while the window is behind, and that is all that holds an answer back.
 
 What holds:
-  - Lanes. The app's own small requests, page renders and large files each have their own workers,
-    so a flood of one never takes a worker from another. The small lane also adds workers
-    when a request has waited, because a slow answer mostly sleeps: it must not hold up a quick one behind it.
+  - Lanes. The app's own small requests, page renders and large files each have their own workers, so a flood of one
+    never takes a worker from another. A lane starts a worker whenever a request finds every one busy, up to its most,
+    and keeps it (the engine keeps database connections per thread): the small lane's most is high, because a slow
+    answer mostly sleeps and must not hold up a quick one behind it.
   - The flood gate. An answer over BIG_BODY is refused before any of it moves: the window holds a whole answer in memory.
   - No PDF ever reaches the web view. A PDF can carry scripts and the system's viewers run them, so what arrives is a page of images PDFium has drawn (_answer_pdf).
 """
@@ -17,7 +18,6 @@ import io
 import os
 import re
 import threading
-import time
 import traceback
 import urllib.parse
 from collections import deque
@@ -26,18 +26,13 @@ MiB = 1024 * 1024
 CHUNK = MiB                         # largest piece handed to a stream Sink
 VIDEO_PIECE = 8 * MiB               # all of a video an answer holds: its start. A memory guard for a page that names one; the window plays the library's videos from disk.
 BIG_BODY = 64 * MiB                 # the largest answer handed over whole. The largest real saved page is 44 MB.
-WHOLE_MAX = 256 * MiB               # above this the refusal says 413, not 403
 MAX_POST = 256 * 1024               # only setup is posted to, and its own limit is smaller (engine/setup/api.py MAX_BODY)
 
-# name: (workers, most waiting)
-LANES = {
-    'small': (8, 5000),     # /api/
-    'render': (2, 500),     # PDF page images: PDFium runs one at a time anyway, so more workers would only sit waiting
-    'large': (6, 1000),     # video, PDF, saved pages, encyclopedia entries
+LANES = {           # name: most workers
+    'small': 48,    # /api/
+    'render': 2,    # PDF page images: PDFium runs one at a time anyway, so more would only sit waiting
+    'large': 6,     # video, PDF, saved pages, encyclopedia entries
 }
-GROW_TO = {'small': 48}                 # most workers once requests are kept waiting
-GROW_AFTER = 0.05                       # seconds a request waits before a lane adds workers for what is waiting
-SHRINK_AFTER = 10                       # seconds an added worker sits idle before it goes
 
 FILE_PREFIXES = ('/documents/', '/pages/', '/videos/', '/videos-external/', '/transcripts/', '/metadata/videos/', '/courses/', '/collections/', '/assets/')
 VIDEO_SUFFIXES = ('.mp4', '.webm', '.mkv')
@@ -64,42 +59,24 @@ class Sink:
 
 
 class _Lane:
-    def __init__(self, name, workers, max_waiting, grow_to=None):
-        self.name, self.workers, self.max_waiting = name, workers, max_waiting
+    def __init__(self, most):
+        self.most, self.threads, self.active = most, 0, 0
         self.waiting = deque()
         self.cond = threading.Condition()
-        self.grow_to = max(workers, grow_to or 0)
-        self.threads = self.active = 0
-
-    def _add_thread(self):
-        self.threads += 1
-        threading.Thread(target=self._work, daemon=True, name=f'lane-{self.name}').start()
 
     def submit(self, ex):
         with self.cond:
-            if len(self.waiting) >= self.max_waiting:
-                return False
             self.waiting.append(ex)
-            if self.threads < self.workers and self.threads < self.active + len(self.waiting):
-                self._add_thread()
+            if self.threads < self.most and self.threads < self.active + len(self.waiting):
+                self.threads += 1
+                threading.Thread(target=self._work, daemon=True, name='lane').start()
             self.cond.notify()
-        return True
-
-    def grow(self):
-        """Called now and then while anything is waiting. True if this lane still has requests waiting."""
-        with self.cond:
-            if self.waiting and time.time() - self.waiting[0].t0 >= GROW_AFTER:
-                for _ in range(min(len(self.waiting), self.grow_to - self.threads)):
-                    self._add_thread()
-            return bool(self.waiting)
 
     def _work(self):
         while True:
             with self.cond:
                 while not self.waiting:
-                    if not self.cond.wait(SHRINK_AFTER if self.threads > self.workers else None) and not self.waiting and self.threads > self.workers:
-                        self.threads -= 1
-                        return
+                    self.cond.wait()
                 ex = self.waiting.popleft()
                 self.active += 1
             try:
@@ -137,12 +114,11 @@ def _make_handler(base):
 
 
 class Exchange:
-    """One request. `stopped` is safe to read from any thread; cancel() may be called from any thread."""
+    """One request."""
 
     def __init__(self, bridge, method, target, raw, sink):
         self.b, self.method, self.target, self.raw, self.sink = bridge, method, target, raw, sink
         self.path = urllib.parse.unquote(target.split('?', 1)[0])
-        self.stopped = False
         self.hbuf = bytearray()
         self.head_done = False
         self.status = None
@@ -153,24 +129,14 @@ class Exchange:
         self.local = None        # the file the engine is answering from, once it has found one
         self.swallow = False     # the engine's body is not wanted: a refusal or a redirect replaced it
         self.cut = False         # stopped here: a body that never said how long it was grew past the limit
-        self.t0 = time.time()
 
-    def cancel(self):
-        """The window gave up on this request. The Handler stops at its next write."""
-        self.stopped = True
-
-    # ---- worker side
     def run(self):
-        if self.stopped:
-            return
         try:
             self.b.Handler(_Sock(self.raw, self), ('127.0.0.1', 0), None)  # the constructor runs the whole request
         except GONE:
             pass
         except Exception:
             traceback.print_exc()
-        if self.stopped:
-            return
         if not self.head_done:
             self.status, self.reason = 502, 'No Answer'
             self.headers = [('Content-Length', '0')]
@@ -181,8 +147,6 @@ class Exchange:
         self.sink.finish(not (short or self.cut))
 
     def write(self, b):
-        if self.stopped:
-            raise BrokenPipeError
         if self.head_done:
             return self._body(b)
         self.hbuf += b
@@ -250,22 +214,15 @@ class Exchange:
         self._send_head()
 
     def _flood_gate(self):
-        if self.method != 'GET' or self.status not in (200, 206) or self.announced is None or self.announced <= BIG_BODY:
-            return None
-        if self.announced > WHOLE_MAX:
-            return 413, 'Too Large'
-        return 403, 'Not For This Page'
+        if self.method == 'GET' and self.status in (200, 206) and self.announced is not None and self.announced > BIG_BODY:
+            return 403, 'Not For This Page'
+        return None
 
     def file_body(self, source):
         """The Handler offers a whole open file."""
         if self.swallow:
             return
-        while True:
-            if self.stopped:
-                raise BrokenPipeError
-            b = source.read(CHUNK)
-            if not b:
-                break
+        while b := source.read(CHUNK):
             self._body(b)
 
     def _body(self, b):
@@ -282,8 +239,6 @@ class Exchange:
 
     def _send(self, b):
         for i in range(0, len(b), CHUNK):
-            if self.stopped:     # a cancel stops a write midway, not only at the Handler's next one
-                raise BrokenPipeError
             self.sink.data(b[i:i + CHUNK])
 
 
@@ -292,16 +247,13 @@ class Bridge:
         """server_module: the imported engine, after server.init()."""
         self.server = server_module
         self.Handler = _make_handler(server_module.Handler)
-        self.lanes = {n: _Lane(n, w, q, GROW_TO.get(n)) for n, (w, q) in LANES.items()}
-        self.waiting_now = threading.Event()
-        threading.Thread(target=self._grow_lanes, daemon=True, name='lane-grow').start()
+        self.lanes = {n: _Lane(most) for n, most in LANES.items()}
         self.pdf_sizes = {}
         self.pdf_lock = threading.Lock()
 
     # ---- requests
     def start(self, method, path, body, sink):
-        """Runs sink's calls on a worker. Returns the Exchange, whose cancel() the caller uses to stop the request,
-        or None if the bridge answered at once (a refusal), in which case sink already has the whole answer.
+        """Runs sink's calls on a worker, or here and now for a refusal.
         path: as the window sent it, query included. body: bytes or None."""
         refused, prepared = self._prepare(method, path, body)
         if refused:
@@ -309,17 +261,9 @@ class Bridge:
             sink.head(status, reason, hs)
             sink.data(text)
             sink.finish(True)
-            return None
+            return
         target, raw, lane = prepared
-        ex = Exchange(self, method, target, raw, sink)
-        if not lane.submit(ex):
-            status, reason, hs, text = _plain(503, 'Busy', b'too many requests')
-            sink.head(status, reason, hs)
-            sink.data(text)
-            sink.finish(True)
-            return None
-        self.waiting_now.set()
-        return ex
+        lane.submit(Exchange(self, method, target, raw, sink))
 
     # ---- PDFs, as pictures
     def pdf_page(self, path, real, n):
@@ -378,14 +322,6 @@ class Bridge:
             lines.append(f'Content-Length: {len(body or b"")}')
         raw = ('\r\n'.join(lines) + '\r\n\r\n').encode('latin-1', 'replace') + (body or b'' if method == 'POST' else b'')
         return None, (target, raw, self.lanes[_lane_for(path, target)])
-
-    def _grow_lanes(self):
-        while True:
-            self.waiting_now.wait()
-            time.sleep(GROW_AFTER)
-            self.waiting_now.clear()
-            if any([lane.grow() for lane in self.lanes.values()]):
-                self.waiting_now.set()
 
 
 def _plain(status, reason, text):

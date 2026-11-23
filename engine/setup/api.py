@@ -1,9 +1,10 @@
-"""/api/setup/*: the engine side of first-run setup and of About → Library and downloads. Contract: docs/SETUP-API.md.
+"""/api/setup/*: the engine side of first-run setup and of Library and downloads. Contract: docs/SETUP-API.md.
 
 Two ways in, one module, both set up by app/engine_pipe.py (configure(...)) and reached only through the bridge:
   - setup mode (no library yet): a Bridge around SetupServer, whose Handler serves /api/setup/* here. Nothing else.
   - normal mode: server.py hands /api/setup/ to handle().
 """
+import fcntl
 import hashlib
 import json
 import os
@@ -24,8 +25,10 @@ RECOMMEND_MARGIN = 5 * 10 ** 9     # beyond what the install needs, so the disk 
 RECOMMEND_MARGIN_MAX = 20 * 10 ** 9
 MAX_BODY = 64 * 1024
 WORLD_ESTIMATE = 650 * 10 ** 6     # the world map to city level (zoom 8) and place search, before it is measured
+PLACES_ESTIMATE = 55 * 10 ** 6     # place search alone (a 14 MB download, a 40 MB file): for a library whose world map is here
 ACTIVE = ('waiting', 'downloading', 'verifying', 'unpacking', 'activating')
-UNPACK = {'pack': 'unpack', 'map': 'unpack-map', 'addresses': 'unpack-addresses'}     # where each kind unpacks, in the work folder
+ELSEWHERE = 'This download is running in another Lastbook window. Use that window.'
+STAGED = 'What you downloaded is ready and waiting. Open the library first, then add to it.'
 
 
 def _item(id, kind, title, total, state='waiting'):
@@ -34,12 +37,13 @@ def _item(id, kind, title, total, state='waiting'):
 
 
 def _file_names(kind, entry):
-    """The file names a manifest entry (a pack, map or address index) is downloaded as."""
-    return [f['name'] for f in entry['files']] if entry and kind in UNPACK else []
+    """The file names a pack is downloaded as (an osm item has none: it is made here)."""
+    return [f['name'] for f in entry['files']] if entry and kind == 'pack' else []
 
 
 def _now():
-    return time.strftime('%Y-%m-%dT%H:%M:%S')
+    # UTC, said so: a time zone that changes under a running engine (a laptop that travels) cannot make a job look hours long.
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
 
 
 def _gb(n):
@@ -91,7 +95,7 @@ def _same_disk(a, b):
 
 
 class _Item:
-    """Progress of one item (the pack, a map), with rate and time left."""
+    """Progress of one item (the pack, a map cut), with rate and time left."""
 
     def __init__(self, d):
         self.d = d
@@ -114,16 +118,18 @@ class _Item:
 
 class Setup:
     def __init__(self, mode, settings_dir, default_parent, current=None, manifest=None, allowed=None, context=None,
-                 on_finish=None, look_for_libraries=None, home=None):
+                 on_finish=None, look_for_libraries=None, home=None, on_job=None):
         """mode: 'first-run' or 'manage'. current: the open library (manage). on_finish(folder): the app opens that library
-        (it relaunches). look_for_libraries(): LastbookData folders found."""
+        (it relaunches). look_for_libraries(): LastbookData folders found. on_job(state): called each time the job is saved,
+        which is each time its state changes, so the window need not ask on a timer whether it has."""
         self.mode, self.current = mode, Path(current) if current else None
         self.settings_dir, self.default_parent = Path(settings_dir), Path(default_parent)
         self.manifest = manifest or Manifest(allowed=allowed, context=context)
         self.allowed, self.context = allowed, context
-        self.on_finish, self.look_for_libraries = on_finish, look_for_libraries
+        self.on_finish, self.look_for_libraries, self.on_job = on_finish, look_for_libraries, on_job
         self.lock = threading.RLock()
         self.job, self.control, self.thread = None, None, None
+        self._held = None          # the open job.lock while this process runs the job (_take)
         self.sources = {}          # file name -> a file already on this computer the person chose with `use`
         self.rejected = {}         # path -> (size, mtime) of a file already here that failed its SHA-256: not offered or used again
         self.job = self._load_job()
@@ -167,7 +173,7 @@ class Setup:
 
     def _checked_job(self, job):
         """A job as this program would have written it, or None. Nothing from disk is used as a path or a file name unless it is
-        what the plan's ids and the parent folder give: pack and map come from the manifest; work and target are worked
+        what the plan's ids and the parent folder give: the pack comes from the manifest; work and target are worked
         out again; no `verified` list is kept (files are hashed again); a source must be a file of exactly the expected name."""
         plan, items = job['plan'], job['items']
         if not isinstance(plan, dict) or not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
@@ -186,39 +192,32 @@ class Setup:
         work = _work_for(target)
         ids = lambda key: (plan.get(key) or {}).get('id')
         pack = self.manifest.pack(ids('pack')) if plan.get('pack') else None
-        mp = self.manifest.map(ids('map')) if plan.get('map') else None
-        addresses = self.manifest.address_index(ids('addresses')) if plan.get('addresses') else None
-        if plan.get('addresses') and not addresses:
+        if plan.get('pack') and not pack:
             return None
-        if (plan.get('pack') and not pack) or (plan.get('map') and not mp):
-            return None
-        wanted = {('pack', pack['id']) if pack else None, ('map', mp['id']) if mp else None, ('addresses', addresses['id']) if addresses else None} - {None}
+        wanted = {('pack', pack['id'])} if pack else set()      # a job of an earlier version's state map or address index is no job
         osm = [x for x in (plan.get('osm') or []) if x in ('world', 'places') or (isinstance(x, str) and maps.region(x))]
         wanted |= {('osm', x) for x in osm}
         if {(i.get('kind'), i.get('id')) for i in items} != wanted:
             return None
-        names = [n for k, e in (('pack', pack), ('map', mp), ('addresses', addresses)) for n in _file_names(k, e)]
+        names = _file_names('pack', pack)
         sources = {n: str(v) for n, v in (plan.get('sources') or {}).items()
                    if n in names and isinstance(v, str) and Path(v).name == n and Path(v).is_file()}
         switch = bool(plan.get('switch')) and pack is not None
-        clean = {'pack': pack, 'map': mp, 'addresses': addresses, 'parent': str(parent), 'target': str(target), 'work': str(work),
+        clean = {'pack': pack, 'parent': str(parent), 'target': str(target), 'work': str(work),
                  'sources': sources, 'explicit': bool(plan.get('explicit')), 'retried': {}, 'switch': switch, 'repair': bool(plan.get('repair')),
                  'osm': osm}
         if isinstance(plan.get('damaged'), list):
             clean['damaged'] = [str(x) for x in plan['damaged']]
-        if plan.get('map_new'):
-            clean['map_new'] = str(work / 'unpack-map' / DATA_NAME)
         job['plan'] = clean
         return job
 
     def _done_after_restart(self, plan, it, was):
         """(bytes done, bytes total) for an item found mid-run at startup, from what is on disk for the step it was in."""
         if it['kind'] == 'osm':
-            return 0, it['bytes_total']        # a map cut starts over: its half-made file is set aside on the next run
-        kind = it['kind'] if it['kind'] in ('map', 'addresses') and plan.get(it['kind']) else 'pack'
-        if was == 'unpacking' and plan.get(kind):
-            total = plan[kind]['installed_bytes']
-            return min(_tree_size(Path(plan['work']) / UNPACK[kind]), total), total
+            return 0, it['bytes_total']        # a map cut carries on from its part file when it runs (maps.Cut.run); until then nothing is claimed
+        if was == 'unpacking' and plan.get('pack'):
+            total = plan['pack']['installed_bytes']
+            return min(_tree_size(Path(plan['work']) / 'unpack'), total), total
         if it.get('source') == 'found':
             return it['bytes_total'], it['bytes_total']     # nothing to download: the file is already on this computer
         return self._on_disk(plan, it), it['bytes_total']
@@ -243,6 +242,11 @@ class Setup:
         f = _job_file(self.settings_dir)
         f.parent.mkdir(parents=True, exist_ok=True)
         install._write_json(f, job)
+        if self.on_job:
+            try:
+                self.on_job(job['state'])
+            except Exception:      # a window that cannot be told never stops the job
+                traceback.print_exc()
 
     # --------------------------------------------------------------------------------------------------- the state --
     def current_info(self):
@@ -256,23 +260,8 @@ class Setup:
                 revision = ''
         except (OSError, ValueError, AttributeError):
             pack, revision = None, ''
-        return {'folder': str(self.current), 'pack': pack, 'content_revision': revision, 'map_bytes': install.map_bytes(self.current), 'map': install.map_name(self.current), 'address_indexes': self.address_indexes(),
+        return {'folder': str(self.current), 'pack': pack, 'content_revision': revision,
                 'osm': maps.installed(self.current / 'derived' / 'geo')}
-
-    def address_indexes(self):
-        if not self.current:
-            return []
-        out = []
-        for entry in self.manifest.current.get('address_indexes', []):
-            path = self.current / 'derived' / 'geo' / 'addresses' / (entry['id'] + '.sqlite')
-            try:
-                receipt = json.loads(path.with_suffix('.json').read_text(encoding='utf-8'))
-                expected = {file['name']: file['sha256'] for file in entry['files']}
-                if path.is_file() and path.stat().st_size == entry['installed_bytes'] and receipt.get('files') == expected:
-                    out.append(entry['id'])
-            except (OSError, ValueError, AttributeError):
-                pass
-        return out
 
     def found(self):
         """Files in app-owned storage, the selected library, or explicitly chosen by the person. A file is offered when its size matches; its
@@ -287,21 +276,14 @@ class Setup:
                         out.append({'kind': 'library', 'path': str(lib), 'name': lib.name})
             except Exception:
                 traceback.print_exc()
-        files = {}
-        for p in self.manifest.current['packs']:
-            for f in p['files']:
-                files[f['name']] = ('pack', p['id'], f['size'])
-        for kind, key in (('map', 'maps'), ('addresses', 'address_indexes')):
-            for x in self.manifest.current.get(key, []):
-                for f in x['files']:
-                    files[f['name']] = (kind, x['id'], f['size'])
+        files = {f['name']: (p['id'], f['size']) for p in self.manifest.current['packs'] for f in p['files']}     # name -> (pack, size)
         places = [self.default_parent]
         if self.current:
             places.append(self.current)
         candidates = [Path(p) for p in self.sources.values()]
         for place in places:
             try:
-                candidates.extend(c for c in place.iterdir() if c.name in files or (c.name.startswith('Lastbook-') and c.name.endswith('.zip')))
+                candidates.extend(c for c in place.iterdir() if c.name in files)
             except OSError:
                 continue
         for c in candidates:
@@ -309,10 +291,10 @@ class Setup:
             if key in seen or not c.is_file():
                 continue
             seen.add(key)
-            kind, pid, size = files.get(c.name, ('pack', None, None))
+            pid, size = files.get(c.name, (None, None))
             st = c.stat()
             rejected = self.rejected.get(str(c)) == (st.st_size, st.st_mtime_ns)
-            out.append({'kind': kind, 'path': str(c), 'name': c.name, 'id': pid, 'size': st.st_size,
+            out.append({'kind': 'pack', 'path': str(c), 'name': c.name, 'id': pid, 'size': st.st_size,
                         'size_ok': size == st.st_size and not rejected, 'rejected': rejected})
         return out
 
@@ -326,7 +308,6 @@ class Setup:
         parent = self.current.parent if self.current else self.default_parent
         free, total = hardware.disk_of(parent)
         need = {p['id']: install.need_bytes(p) for p in available}
-        map_need = {x['id']: _map_need(x, ()) for x in self.manifest.current.get('maps', []) if x['available']}
         if not small or not small['available']:
             return {'pack': None, 'folder': str(parent), 'need_bytes': need, 'why': 'No library is ready to download yet.'}
         margin = _margin(total)
@@ -344,20 +325,76 @@ class Setup:
                    'Keep that disk connected: Lastbook reads the library from it.')
         else:
             why = 'Small is selected to get started. You can choose a larger library.'
-        return {'pack': 'small', 'folder': str(folder), 'need_bytes': need, 'map_need_bytes': map_need, 'address_need_bytes': {x['id']: _map_need(x, ()) for x in self.manifest.current.get('address_indexes', []) if x['available']}, 'why': why}
+        return {'pack': 'small', 'folder': str(folder), 'need_bytes': need, 'why': why}
+
+    def check(self):
+        """The person asked whether newer libraries have been published: the one GET of the manifest, waited for briefly.
+        Never made unasked: opening setup (state) reaches nothing."""
+        self.manifest.fetch_now()
+        return self.state()
 
     def state(self):
-        self.manifest.fetch_once()
-        hw = self.hardware()
-        return {'mode': self.mode, 'hardware': hw, 'manifest': self.manifest.public(), 'current': self.current_info(),
+        hw, current = self.hardware(), self.current_info()
+        # A library made before place search held villages has the world map but not the current place search
+        # (maps.places_current): ticking "World map and place search" then makes only the place search again.
+        world = WORLD_ESTIMATE if not (current and current['osm']['world']) else PLACES_ESTIMATE
+        return {'mode': self.mode, 'hardware': hw, 'manifest': self.manifest.public(), 'current': current,
                 'found': self.found(), 'recommend': self.recommend(hw), 'job': self.public_job(),
-                'map_regions': maps.regions(), 'world_bytes': WORLD_ESTIMATE}
+                'map_regions': maps.regions(), 'world_bytes': world}
 
     def public_job(self):
         with self.lock:
+            if self._elsewhere():      # another window runs it: show its progress as that window saves it, and offer nothing
+                try:
+                    job = self._checked_job(json.loads(_job_file(self.settings_dir).read_text(encoding='utf-8')))
+                except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                    job = None
+                if job:
+                    return {**{k: v for k, v in job.items() if k != 'plan'}, 'elsewhere': True}
             if not self.job:
                 return None
             return {k: v for k, v in json.loads(json.dumps(self.job)).items() if k != 'plan'}
+
+    # ------------------------------------------------------------------------------------------- one job, one process --
+    def _take(self):
+        """The job's lock, held by the one engine process whose thread is running the job. Every window has an engine of
+        its own over the same settings folder and work folder; without this a second one would show the first one's
+        download as paused, and its Cancel or Resume would delete or double what the first is writing. False when another
+        process holds it."""
+        if self._held:
+            return True
+        f = None
+        try:
+            lock = _job_file(self.settings_dir).with_name('job.lock')
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            f = open(lock, 'w')
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            if f:
+                f.close()
+            return False
+        self._held = f
+        return True
+
+    def _release(self):
+        f, self._held = self._held, None
+        if f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_UN)
+            finally:
+                f.close()
+
+    def _elsewhere(self):
+        """Whether another engine process is running the job right now."""
+        if self._held:
+            return False
+        if self._take():
+            self._release()
+            return False
+        return True
+
+    def _busy_elsewhere(self):
+        return {'error': ELSEWHERE, 'code': 'busy'} if self._elsewhere() else None
 
     # -------------------------------------------------------------------------------------------------- the actions --
     def _parent_for(self, folder):
@@ -366,12 +403,16 @@ class Setup:
             return p.parent if p.name == DATA_NAME else p
         return self.current.parent if self.current else self.default_parent
 
-    def start(self, pack_id=None, folder=None, sources=None, explicit=False, repair=False, map_id=None, address_id=None, world=False, regions=()):
+    def start(self, pack_id=None, folder=None, sources=None, explicit=False, repair=False, world=False, regions=()):
+        if self._busy_elsewhere():
+            return self._busy_elsewhere()
         if repair:
             return self._start_repair()
         with self.lock:
             if self.job and self.job['state'] in ACTIVE + ('paused',):
                 return {'error': 'A download is already under way. Pause or cancel it first.', 'code': 'busy'}
+            if self._staged():
+                return {'error': STAGED, 'code': 'busy'}
             pack = self.manifest.pack(pack_id) if pack_id else None
             if pack_id and (not pack or not pack['available']):
                 return {'error': 'That library is not available yet.', 'code': 'unavailable'}
@@ -381,25 +422,9 @@ class Setup:
             same_revision = pack and (not pack.get('revision') or pack['revision'] == cur.get('content_revision', ''))
             if pack and self.mode == 'manage' and cur.get('pack') == pack['id'] and same_revision and not folder:
                 pack = None        # the same library again: only a map is wanted
-            mp = self.manifest.map(map_id) if map_id else None
-            if map_id and (not mp or not mp['available']):
-                return {'error': 'That state’s map is not available yet.', 'code': 'unavailable'}
-            requested_address = address_id
-            address_id = address_id or map_id or (pack or {}).get('map') or cur.get('map')
-            if address_id in ('base', 'us'):
-                address_id = next(iter(cur.get('address_indexes', [])), None)
-            addresses = self.manifest.address_index(address_id) if address_id else None
-            if not addresses or not addresses['available']:
-                if requested_address:
-                    return {'error': 'That state’s address search is not available yet.', 'code': 'unavailable'}
-                addresses = None
             parent = self._parent_for(folder)
             target = self.current if self.current and not folder else parent / DATA_NAME   # the open library as it is, whatever its name
             parent = target.parent
-            if addresses and addresses['id'] in cur.get('address_indexes', []) and target == self.current:
-                addresses = None
-            if mp and not pack and cur.get('map') == mp['id']:
-                mp = None          # this state's map is the one here already
             have_osm = maps.installed(Path(target) / 'derived' / 'geo') if target == self.current or not pack else {'world': False, 'places': False, 'regions': []}
             osm = []
             if world or regions:       # street-level regions draw over the world map, so a region brings the world with it
@@ -409,9 +434,7 @@ class Setup:
                     return {'error': 'Lastbook does not know that map region.', 'code': 'unavailable'}
                 if rid not in {r['id'] for r in have_osm['regions']}:
                     osm.append(rid)
-            if self.mode == 'first-run' and not pack and (mp or addresses or osm):
-                return {'error': 'Choose a library first.', 'code': 'nothing'}
-            if not pack and not mp and not addresses and not osm:
+            if not pack and not osm:
                 if self.mode == 'first-run':
                     return {'error': 'Choose a library first.', 'code': 'nothing'}
                 return {'error': 'Nothing to add: this library is already here.', 'code': 'nothing'}
@@ -428,14 +451,11 @@ class Setup:
             srcs = dict(self.sources)
             srcs.update(sources or {})
             for f in self.found():
-                if f.get('size_ok') and f['name'] not in srcs and f['kind'] in ('pack', 'map', 'addresses'):
+                if f.get('size_ok') and f['name'] not in srcs and f['kind'] == 'pack':
                     srcs[f['name']] = f['path']
-            names = [n for k, e in (('pack', pack), ('map', mp), ('addresses', addresses)) for n in _file_names(k, e)]
+            names = _file_names('pack', pack)
             have = set(srcs)
-            need = install.need_bytes(pack, have) + _map_need(mp, have) + _map_need(addresses, have) + (int(WORLD_ESTIMATE * maps.DISK_SLACK) + 512 * 2 ** 20 if 'world' in osm else 0)   # as the cut itself will ask (_do_osm)
-            preserve_map = bool(pack and cur.get('pack') == pack['id'] and target == self.current and not mp and cur.get('map') not in (None, 'base'))
-            if preserve_map:
-                need += cur['map_bytes']
+            need = install.need_bytes(pack, have) + (int(WORLD_ESTIMATE * maps.DISK_SLACK) + 512 * 2 ** 20 if 'world' in osm else 0)   # as the cut itself will ask (_do_osm)
             for name in names:     # what an earlier run already downloaded is on the disk already
                 if name in have:
                     continue
@@ -451,15 +471,11 @@ class Setup:
             items = []
             if pack:
                 items.append(_item(pack['id'], 'pack', pack['title'], pack['download_bytes']))
-            if mp:                 # after the pack: with a pack, the map replaces the pack's own map set in the staged library
-                items.append(_item(mp['id'], 'map', mp['title'], mp['download_bytes']))
-            if addresses:
-                items.append(_item(addresses['id'], 'addresses', addresses['title'] + ' address search', addresses['download_bytes']))
             for x in osm:          # sizes are known once each cut is measured, when its turn comes
                 title = {'world': 'World map', 'places': 'Place search'}.get(x) or maps.region(x)['name'] + ' streets'
                 items.append(_item(x, 'osm', title, WORLD_ESTIMATE if x == 'world' else 0))
             return self._begin(items, target, work, {
-                'pack': pack, 'map': mp, 'addresses': addresses, 'parent': str(parent), 'target': str(target), 'work': str(work),
+                'pack': pack, 'parent': str(parent), 'target': str(target), 'work': str(work),
                 'sources': {k: v for k, v in srcs.items() if k in names}, 'explicit': explicit, 'retried': {}, 'switch': bool(pack), 'osm': osm})
 
     def _begin(self, items, target, work, plan, **extra):
@@ -498,18 +514,13 @@ class Setup:
                 repair=True)
 
     def _check_library(self, it, lib, control):
-        """Files of the open library that are missing or differ from its pack-manifest.tsv (path, bytes, sha256)."""
+        """Files of the open library that are missing or differ from its pack-manifest.tsv (path, bytes, sha256). Upstream's
+        US-only map data (install.DROPPED) is meant to be absent: it is not looked for, so its absence never fetches the pack."""
         try:
             rows = [l.split('\t') for l in (lib / 'pack-manifest.tsv').read_text(encoding='utf-8').splitlines()[1:] if l.strip()]
-            rows = [(r[0], int(r[1]), r[2]) for r in rows]
+            rows = [(r[0], int(r[1]), r[2]) for r in rows if not install.dropped(r[0])]
         except (OSError, ValueError, IndexError):
             return ['pack-manifest.tsv']
-        if install.map_set(lib):      # a state map replaced the pack's own: its files are checked against map-set.json instead
-            rows = [r for r in rows if not install.map_member(r[0])]
-            try:
-                install.check_map(lib)
-            except install.Refused as e:
-                print('setup: repair:', e.message, flush=True)
         total = sum(r[1] for r in rows) or 1
         tracker, done, bad = _Item(it), 0, []
         self._set(it, 'verifying', bytes_done=0, bytes_total=total)
@@ -527,8 +538,9 @@ class Setup:
         return bad
 
     def _run(self):
+        self._take()
         self.control = download.Control()
-        self.thread = threading.Thread(target=self._work, args=(self.control,), daemon=True, name='setup-job')
+        self.thread = threading.Thread(target=self._owned_work, args=(self.control,), daemon=True, name='setup-job')
         self.thread.control = self.control
         self.thread.start()
 
@@ -539,6 +551,17 @@ class Setup:
         if c is not None and (c.why == 'cancelled' or c is not self.control):
             raise download.Stopped('cancelled')
 
+    def _staged(self):
+        """Whether a finished job's library is waiting for the restart that switches to it (the caller holds the
+        lock). A new job would share its work folder, and cancelling that job would take the waiting download with it."""
+        if not self.job or self.job['state'] != 'done':
+            return False
+        try:
+            d = json.loads(_pending_file(self.settings_dir).read_text(encoding='utf-8'))
+            return not d.get('switched') and os.path.exists(d['new'])     # still to be made, and still there
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return False
+
     def _unstage(self):
         """A switch staged by an earlier job is off: its staging folder is about to be changed."""
         try:
@@ -547,6 +570,8 @@ class Setup:
             pass
 
     def pause(self):
+        if self._busy_elsewhere():
+            return self._busy_elsewhere()
         with self.lock:
             if self.job and self.job['state'] in ACTIVE and self.control:
                 self.control.stop('paused')
@@ -554,6 +579,8 @@ class Setup:
         return self.public_job()
 
     def resume(self):
+        if self._busy_elsewhere():
+            return self._busy_elsewhere()
         with self.lock:
             if self.job and self.job['state'] == 'paused':
                 self.job['state'] = 'waiting'
@@ -564,6 +591,8 @@ class Setup:
         return self.public_job()
 
     def retry(self):
+        if self._busy_elsewhere():
+            return self._busy_elsewhere()
         with self.lock:
             if self.job and self.job['state'] == 'failed':
                 self.job['state'], self.job['error'] = 'waiting', None
@@ -576,6 +605,8 @@ class Setup:
         return self.public_job()
 
     def cancel(self):
+        if self._busy_elsewhere():
+            return self._busy_elsewhere()
         with self.lock:
             job = self.job
             if not job:
@@ -604,12 +635,20 @@ class Setup:
             t.join(30)
 
     def _clean(self, job):
-        """What the job made in its work folder goes; the person's own files and any library stay."""
+        """What the job made in its work folder goes, and the half-made map a paused or failed cut keeps beside the
+        library's maps (maps.Cut.run); the person's own files and any library stay."""
         work = Path(job['plan']['work'])
-        for sub in ('downloads', *UNPACK.values()):
+        for sub in ('downloads', 'unpack'):
             shutil.rmtree(work / sub, ignore_errors=True)
+        if job['plan'].get('osm') and not job['plan'].get('switch'):     # cut straight into the open library
+            try:
+                maps.sweep(Path(self.current or job['plan']['target']) / 'derived' / 'geo')
+            except OSError as e:
+                print('setup: a half-made map was not removed:', e, flush=True)
 
     def use(self, path):
+        if self._busy_elsewhere():
+            return self._busy_elsewhere()
         p = Path(path or '').expanduser()
         if not str(path or '').strip() or not p.exists():
             return {'error': 'Lastbook cannot find that file or folder.', 'code': 'missing'}
@@ -630,28 +669,17 @@ class Setup:
                             'items': [_item('library', 'pack', lib.name, 0, state='done')],
                             'plan': {'use_library': str(lib), 'work': str(_work_for(lib)), 'target': str(lib)}}
                 return self.public_job()
-        name, known = p.name, {}        # file name -> (kind, entry, size); a pack's name wins, then a map's, an address index's
-        for kind, key in (('pack', 'packs'), ('map', 'maps'), ('addresses', 'address_indexes')):
-            for entry in self.manifest.current.get(key, []):
-                for f in entry['files']:
-                    known.setdefault(f['name'], (kind, entry, f['size']))
+        name = p.name
+        known = {f['name']: (entry, f['size']) for entry in self.manifest.current['packs'] for f in entry['files']}
         if name not in known:
             return {'error': 'That is not a file Lastbook knows. Choose a Lastbook library zip.', 'code': 'unknown'}
-        kind, entry, size = known[name]
+        entry, size = known[name]
         if p.stat().st_size != size:
-            if kind == 'addresses':
-                return {'error': 'The address index download is incomplete.', 'code': 'size'}
             return {'error': f'That file is {_gb(p.stat().st_size)}, not the {_gb(size)} of the published {name}. The download may not have finished.', 'code': 'size'}
-        if kind == 'pack' and not entry['available']:
+        if not entry['available']:
             return {'error': 'That library is not available in this version.', 'code': 'unavailable'}
         self.sources[name] = str(p)
-        if kind == 'pack':
-            return self.start(entry['id'], sources={name: str(p)}, explicit=True)
-        if self.mode != 'manage':
-            return self.public_job() or {'job': None, 'noted': True}
-        if kind == 'map':
-            return self.start(sources={name: str(p)}, explicit=True, map_id=entry['id'])
-        return self.start(sources={name: str(p)}, explicit=True, address_id=entry['id'])
+        return self.start(entry['id'], sources={name: str(p)}, explicit=True)
 
     def finish(self):
         with self.lock:
@@ -694,6 +722,14 @@ class Setup:
         except OSError as e:
             print('setup: could not save the job:', e, flush=True)
 
+    def _owned_work(self, control):
+        try:
+            self._work(control)
+        finally:
+            with self.lock:
+                if threading.current_thread() is self.thread:      # not when a later run has begun: the lock is then its
+                    self._release()
+
     def _work(self, control):
         job = self.job
         plan = job['plan']
@@ -704,7 +740,7 @@ class Setup:
             for it in job['items']:
                 if it['state'] == 'done':
                     continue
-                do = {'pack': self._do_pack, 'map': self._do_map, 'addresses': self._do_addresses, 'osm': self._do_osm}
+                do = {'pack': self._do_pack, 'osm': self._do_osm}
                 do[it['kind']](it, plan, work, control)
                 with self.lock:
                     self._live()
@@ -728,7 +764,7 @@ class Setup:
                 self._fail(it, 'no_space', 'The disk filled up. Free some space, then try again.')
             else:
                 traceback.print_exc()
-                self._fail(it, 'unpack' if it and job['state'] == 'unpacking' else 'network', f'Lastbook could not write a file ({type(e).__name__}: {e.strerror or e}).')
+                self._fail(it, 'unpack' if it and job['state'] == 'unpacking' else 'disk', f'Lastbook could not write a file ({type(e).__name__}: {e.strerror or e}).')
         except Exception as e:
             traceback.print_exc()
             self._fail(it, 'activate', f'Setup stopped on an internal error ({type(e).__name__}).')
@@ -809,80 +845,20 @@ class Setup:
         self._set(it, 'unpacking', bytes_done=0, bytes_total=pack['installed_bytes'])
         self._unstage()
         _staging(staged, pack['files'])
-        total = sum(install.check_zip(path, pack['installed_bytes'])[1] for path, _ in got)   # every member checked before any is written
+        # Every member checked before any is written; what is DROPPED is neither written nor counted.
+        total = sum(install.check_zip(path, pack['installed_bytes'])[1] for path, _ in got)
         still = max(total - _tree_size(staged), 0)
         free, _ = hardware.disk_of(work)
         if free < still + 512 * 2 ** 20:
             raise download.Failed('no_space', f'Unpacking needs {_gb(still)} free, and the disk has {_gb(free)}. Free some space, then try again.')
         for path, _ in got:
             lib = install.unpack(path, staged, pack['installed_bytes'], control, lambda d, t: tracker.progress(d, t, 'unpacking'))
+        install.drop_upstream_maps(lib)      # what an earlier version unpacked here before DROPPED was left out
         if pack.get('revision'):
             metadata = json.loads((lib / 'pack.json').read_text(encoding='utf-8'))
             if metadata.get('content_revision') != pack['revision']:
                 raise install.Refused('unpack', 'The library content version does not match this download.')
-        current = self.current_info() or {}
-        if (not plan.get('repair') and not plan.get('map') and Path(plan['target']) == self.current and current.get('pack') == pack['id']
-                and current.get('map') not in (None, 'base')):
-            install.copy_map(self.current, lib)
         install._write_json(lib / 'setup-pack.json', {'pack': pack['id'], 'installed': _now(), 'files': [f['name'] for f in pack['files']]})
-        for path, ours in got:
-            if ours:
-                download.remove(path)
-
-    def _do_map(self, it, plan, work, control):
-        """A state map: download, check, unpack (map files only) into unpack-map/. With a pack, it replaces the staged library's own
-        map set at once; on its own it is staged and switched in when the app restarts (install._apply_map)."""
-        mp = plan['map']
-        got = self._get_files(it, mp['files'], plan, work, control)
-        tracker = _Item(it)
-        self._set(it, 'unpacking', bytes_done=0, bytes_total=mp['installed_bytes'])
-        staged = work / 'unpack-map'
-        if not plan['switch']:
-            self._unstage()
-        _staging(staged, mp['files'])
-        for path, _ in got:
-            install.check_zip(path, mp['installed_bytes'], install.map_member)
-        for path, _ in got:
-            lib = install.unpack(path, staged, mp['installed_bytes'], control, lambda d, t: tracker.progress(d, t, 'unpacking'), allowed=install.map_member)
-        if install.map_name(lib) != mp['id']:
-            raise install.Refused('unpack', f'The map file says it is {install.map_name(lib)}, not {mp["id"]}.')
-        if plan['switch']:
-            install.replace_map_in(work / 'unpack' / DATA_NAME, lib)
-            shutil.rmtree(staged, ignore_errors=True)
-        else:
-            plan['map_new'] = str(lib)
-        for path, ours in got:
-            if ours:
-                download.remove(path)
-
-    def _do_addresses(self, it, plan, work, control):
-        entry = plan['addresses']
-        relative = 'derived/geo/addresses/' + entry['id'] + '.sqlite'
-        directories = {'', 'derived', 'derived/geo', 'derived/geo/addresses'}
-
-        def allowed(name, is_dir=False):
-            return name in directories if is_dir else name == relative
-
-        def verify(lib):
-            path = lib / relative
-            if not path.is_file() or path.stat().st_size != entry['installed_bytes']:
-                raise install.Refused('unpack', 'The address index is missing or the wrong size.')
-
-        got = self._get_files(it, entry['files'], plan, work, control)
-        for path, _ in got:
-            install.check_zip(path, entry['installed_bytes'], allowed)
-        self._set(it, 'unpacking', bytes_done=0, bytes_total=entry['installed_bytes'])
-        tracker = _Item(it)
-        _staging(work / 'unpack-addresses', entry['files'])
-        for path, _ in got:
-            lib = install.unpack(path, work / 'unpack-addresses', entry['installed_bytes'], control,
-                                 lambda done, total: tracker.progress(done, total, 'unpacking'), allowed=allowed, verify=verify)
-        target = work / 'unpack' / DATA_NAME if plan['switch'] else Path(plan['target'])
-        destination = target / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        self._set(it, 'activating')
-        os.replace(lib / relative, destination)
-        install._write_json(destination.with_suffix('.json'), {'files': {file['name']: file['sha256'] for file in entry['files']}})
         for path, ours in got:
             if ours:
                 download.remove(path)
@@ -908,7 +884,8 @@ class Setup:
                            r['name'], control, self.allowed, self.context)
         total = cut.measure()
         free, _ = hardware.disk_of(geo)
-        need = int(cut.disk * maps.DISK_SLACK) + 512 * 2 ** 20     # the file, one row a tile: more than the bytes fetched
+        # The file, one row a tile: more than the bytes fetched. Less what a part file kept from an earlier run already holds.
+        need = max(int(cut.disk * maps.DISK_SLACK) + 512 * 2 ** 20 - cut.kept_bytes(), 0)
         if free < need:
             raise download.Failed('no_space', f'{it["title"]} needs {_gb(need)} free, and the disk has {_gb(free)}. Free some space, then try again.',
                                   need_bytes=need, free_bytes=free)
@@ -924,8 +901,6 @@ class Setup:
                 if not install.is_library(lib):
                     raise install.Refused('activate', 'The new library is not complete.')
                 install.stage_switch(_pending_file(self.settings_dir), lib, plan['target'])
-            elif plan.get('map_new'):
-                install.stage_switch(_pending_file(self.settings_dir), plan['map_new'], plan['target'], kind='map')
             self.job['state'] = 'done'
             for it in self.job['items']:
                 it['rate_bps'], it['eta_s'] = 0, None
@@ -938,13 +913,6 @@ def _tag_sources(job):
     for it in job['items']:
         names = _file_names(it['kind'], plan.get(it['kind']))
         it['source'] = 'found' if names and all(n in plan['sources'] for n in names) else 'download'
-
-
-def _map_need(mp, have):
-    """Room a state map needs: what is still to download plus its unpacked size."""
-    if not mp:
-        return 0
-    return sum(f['size'] for f in mp['files'] if f['name'] not in have) + (mp.get('installed_bytes') or 0)
 
 
 def _margin(total):
@@ -1000,11 +968,9 @@ def startup(settings_dir, only=None):
             _record_failed(settings_dir, note.pop('failed'))
         return lib, note
     except Exception as e:        # whatever is wrong with it, the app still starts, on the library as it is
+        # The pending switch stays: what it points at may be many GB of finished download. The next start tries again,
+        # and Cancel in Library and downloads drops it.
         print('setup: the pending switch was not carried out:', type(e).__name__, e, flush=True)
-        try:
-            pend.unlink()
-        except OSError:
-            pass
         return None, None
 
 
@@ -1104,7 +1070,11 @@ def _opened(settings_dir, note):
     olds = s.get('old') if isinstance(s.get('old'), list) else []
     if note and note.get('old') and note['old'] not in olds:
         olds = olds + [note['old']]
-    if work:
+    # A switch still waiting: not made at this start (the library's disk was away, another library was opened with --data)
+    # or tried and refused. Its download stays, to be tried again at the next start or dropped with Cancel.
+    waiting = os.path.lexists(_pending_file(settings_dir)) and (not note or (note.get('error') and not note.get('rolled_back')
+                                                                               and not note.get('old')))
+    if work and not waiting:
         install.confirm(_pending_file(settings_dir))
         try:
             job = json.loads(_job_file(settings_dir).read_text(encoding='utf-8'))
@@ -1138,8 +1108,8 @@ def configure(**kw):
 ROUTES = {
     ('GET', 'state'): lambda s, b: s.state(),
     ('GET', 'job'): lambda s, b: s.public_job(),
-    ('POST', 'start'): lambda s, b: s.start(b.get('pack'), b.get('folder'), repair=bool(b.get('repair')), map_id=b.get('map') or None, address_id=b.get('address_id') or None,
-                                         world=bool(b.get('world')), regions=[x for x in (b.get('regions') or []) if isinstance(x, str)][:50]),
+    ('POST', 'check'): lambda s, b: s.check(),
+    ('POST', 'start'): lambda s, b: s.start(b.get('pack'), b.get('folder'), repair=bool(b.get('repair')), world=bool(b.get('world')), regions=[x for x in (b.get('regions') or []) if isinstance(x, str)][:50]),
     ('POST', 'pause'): lambda s, b: s.pause(),
     ('POST', 'resume'): lambda s, b: s.resume(),
     ('POST', 'cancel'): lambda s, b: s.cancel(),

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! The Python engine (app/engine_pipe.py) as a child process: JSON lines on its standard input and output, no port.
 //!
-//! One request a line ({"id", "method", "path", "body"}); answers come back as a head, text chunks and an end, all
-//! carrying the id. The engine leaves when its input closes, which happens however this program ends.
+//! One request a line ({"id", "method", "path", "body"}); answers come back as a head, pieces ("chunk" text or "b64"
+//! bytes) and an end, all carrying the id (docs/ENGINE.md). The engine leaves when its input closes, which happens
+//! however this program ends.
 
 use std::{
     collections::HashMap,
@@ -19,11 +20,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 #[derive(Debug, Clone)]
-pub enum Piece {
+enum Piece {
     Head(u16, String),
-    Chunk(String),
     Bytes(Vec<u8>),
-    End,
+    /// False: the answer stopped short, or never came (the engine ended).
+    End(bool),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -48,7 +49,8 @@ pub struct Engine {
     waiters: Waiters,
     next: AtomicU64,
     pub ready: Ready,
-    /// Messages the engine sends on its own (not answers): {"restart": folder} when setup has finished.
+    /// Messages the engine sends on its own (not answers): {"restart": folder} when setup has finished, and
+    /// {"job": state} whenever a setup job's state changes (setup.rs, `follow`).
     pub notices: async_channel::Receiver<Value>,
     _child: Mutex<Child>,
 }
@@ -103,33 +105,46 @@ pub fn load_json<T: serde::de::DeserializeOwned + Default>(path: &std::path::Pat
     std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
-/// Writes such a file whole or not at all.
-pub fn store_json<T: serde::Serialize + ?Sized>(path: &std::path::Path, value: &T) {
+/// Writes such a file whole or not at all: to a file beside it, sent to the disk, then renamed over it. What stopped
+/// it is the caller's to show the person: something they saved that is not on the disk must not look saved.
+pub fn store_json<T: serde::Serialize + ?Sized>(path: &std::path::Path, value: &T) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        std::fs::create_dir_all(dir)?;
     }
-    if let Ok(bytes) = serde_json::to_vec(value) {
-        let tmp = path.with_extension("tmp");
-        if std::fs::write(&tmp, bytes).is_ok() {
-            let _ = std::fs::rename(tmp, path);
-        }
+    let bytes = serde_json::to_vec(value)?;
+    let tmp = path.with_extension("tmp");
+    let written = (|| {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);   // nothing half-written is left beside the file
     }
+    written
 }
 
 impl Engine {
-    /// Starts the engine and waits for its ready line (it loads the catalog and opens the indexes first).
+    /// Starts the engine and waits for its ready line (it loads the catalog and opens the indexes first, which takes
+    /// from a moment to many seconds). Never called on the main thread: the window is up before the engine is
+    /// (main.rs).
     pub fn start(data: Option<&str>) -> Result<Arc<Self>, EngineError> {
-        let script = engine_script();
         let mut cmd = python("engine_pipe.py");
         if let Some(d) = data {
             cmd.arg("--data").arg(d);
         }
+        Self::connect(cmd, &engine_script().display().to_string())
+    }
+
+    /// Runs `cmd` as the engine, named `what` in an error, and waits for its ready line.
+    fn connect(mut cmd: Command, what: &str) -> Result<Arc<Self>, EngineError> {
         let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .map_err(|e| EngineError(format!("could not start the engine ({}): {e}", script.display())))?;
+            .map_err(|e| EngineError(format!("could not start the engine ({what}): {e}")))?;
         let stdin = child.stdin.take().expect("piped");
         let mut out = BufReader::new(child.stdout.take().expect("piped"));
         let mut first = String::new();
@@ -155,16 +170,16 @@ impl Engine {
                     let piece = if let Some(s) = msg.get("head").and_then(Value::as_u64) {
                         Piece::Head(s as u16, msg.get("type").and_then(Value::as_str).unwrap_or_default().to_owned())
                     } else if let Some(c) = msg.get("chunk").and_then(Value::as_str) {
-                        Piece::Chunk(c.to_owned())
+                        Piece::Bytes(c.as_bytes().to_vec())
                     } else if let Some(b) = msg.get("b64").and_then(Value::as_str) {
                         use base64::Engine as _;
                         Piece::Bytes(base64::engine::general_purpose::STANDARD.decode(b).unwrap_or_default())
-                    } else if msg.get("end").is_some() {
-                        Piece::End
+                    } else if let Some(ok) = msg.get("end") {
+                        Piece::End(ok.as_bool() == Some(true))
                     } else {
                         continue;
                     };
-                    let end = matches!(piece, Piece::End);
+                    let end = matches!(piece, Piece::End(_));
                     let tx = if end { w.lock().unwrap().remove(&id) } else { w.lock().unwrap().get(&id).cloned() };
                     if let Some(tx) = tx {
                         let _ = tx.send_blocking(piece);
@@ -172,7 +187,7 @@ impl Engine {
                 }
                 // The engine ended: every request still waiting gets an end, so nothing hangs.
                 for (_, tx) in w.lock().unwrap().drain() {
-                    let _ = tx.send_blocking(Piece::End);
+                    let _ = tx.send_blocking(Piece::End(false));
                 }
             })
             .expect("thread");
@@ -192,7 +207,7 @@ impl Engine {
         if self.stdin.lock().unwrap().write_all(line.as_bytes()).is_err()
             && let Some(tx) = self.waiters.lock().unwrap().remove(&id)
         {
-            let _ = tx.send_blocking(Piece::End);
+            let _ = tx.send_blocking(Piece::End(false));
         }
         rx
     }
@@ -223,16 +238,21 @@ impl Engine {
         self.collect("GET", path, None).await
     }
 
-    /// The whole answer to a request: its status, content type and body.
+    /// The whole answer to a request: its status, content type and body. An answer that stopped short has status 0,
+    /// as one that never came does: a cut page must not be shown as if it were whole.
     async fn collect(&self, method: &str, path: &str, body: Option<&Value>) -> (u16, String, Vec<u8>) {
         let rx = self.request(method, path, body);
         let (mut status, mut ctype, mut bytes) = (0, String::new(), Vec::new());
         while let Ok(piece) = rx.recv().await {
             match piece {
                 Piece::Head(s, t) => (status, ctype) = (s, t),
-                Piece::Chunk(c) => bytes.extend_from_slice(c.as_bytes()),
                 Piece::Bytes(b) => bytes.extend_from_slice(&b),
-                Piece::End => break,
+                Piece::End(ok) => {
+                    if !ok {
+                        status = 0;
+                    }
+                    break;
+                }
             }
         }
         (status, ctype, bytes)
@@ -243,4 +263,79 @@ impl Engine {
 pub fn query(path: &str, params: &[(&str, &str)]) -> String {
     let q: Vec<String> = params.iter().map(|(k, v)| format!("{k}={}", urlencoding::encode(v))).collect();
     if q.is_empty() { path.to_owned() } else { format!("{path}?{}", q.join("&")) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stand-in engine: a shell that says `lines` and then reads until its input closes, as the engine does.
+    fn stand_in(lines: &str) -> Command {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(format!("{lines}\ncat >/dev/null"));
+        cmd
+    }
+
+    #[test]
+    fn the_engine_is_connected_once_it_says_it_is_ready() {
+        let engine = Engine::connect(stand_in(r#"sleep 0.1; echo '{"ready":{"setup":true,"version":"9"}}'"#), "test").unwrap();
+        assert!(engine.ready.setup);
+        assert_eq!(engine.ready.version.as_deref(), Some("9"));
+    }
+
+    #[test]
+    fn what_the_engine_says_unasked_arrives_as_a_notice() {
+        let engine = Engine::connect(stand_in(r#"echo '{"ready":{"setup":true}}'; echo '{"job":"done"}'"#), "test").unwrap();
+        assert_eq!(engine.notices.recv_blocking().unwrap(), json!({"job": "done"}));
+    }
+
+    #[test]
+    fn an_answer_is_put_together_and_one_cut_short_is_no_answer() {
+        let engine = Engine::connect(
+            stand_in(concat!(
+                r#"echo '{"ready":{"setup":true}}'; "#,
+                r#"read a; echo '{"id":1,"head":200,"type":"text/html"}'; echo '{"id":1,"chunk":"<p>é"}'; echo '{"id":1,"b64":"IQ=="}'; echo '{"id":1,"end":true}'; "#,
+                r#"read b; echo '{"id":2,"head":200,"type":"text/html"}'; echo '{"id":2,"b64":"IQ=="}'; echo '{"id":2,"end":false}'"#
+            )),
+            "test",
+        )
+        .unwrap();
+        let ctx = gtk::glib::MainContext::new();
+        assert_eq!(ctx.block_on(engine.fetch("/pages/a.html")), (200, "text/html".to_owned(), "<p>é!".as_bytes().to_vec()));
+        assert_eq!(ctx.block_on(engine.fetch("/pages/b.html")).0, 0, "a page that stopped short is not shown as whole");
+    }
+
+    #[test]
+    fn an_engine_that_cannot_open_the_library_says_why() {
+        let Err(e) = Engine::connect(stand_in(r#"echo '{"error":"The library is on a disk that is not here."}'"#), "test") else {
+            panic!("connected to an engine that had no library");
+        };
+        assert_eq!(e.to_string(), "The library is on a disk that is not here.");
+    }
+
+    #[test]
+    fn an_engine_that_ends_before_it_is_ready_is_an_error() {
+        assert!(Engine::connect(Command::new("true"), "test").is_err());
+        let Err(e) = Engine::connect(Command::new("/nonexistent/lastbook-engine"), "the stand-in") else {
+            panic!("started a program that is not there");
+        };
+        assert!(e.to_string().contains("the stand-in"), "{e}");
+    }
+
+    #[test]
+    fn a_saved_file_is_written_whole_and_a_failure_is_told() {
+        let dir = std::env::temp_dir().join(format!("lastbook-store-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("deeper").join("saved.json");
+        store_json(&file, &vec!["a", "b"]).unwrap();
+        assert_eq!(load_json::<Vec<String>>(&file), ["a", "b"]);
+        store_json(&file, &vec!["c"]).unwrap();
+        assert_eq!(load_json::<Vec<String>>(&file), ["c"]);
+        assert!(!file.with_extension("tmp").exists(), "the file written beside it is gone once renamed");
+        // A folder that cannot be made (a file is in its way): the error comes back, and nothing is written.
+        let blocked = file.join("under-a-file").join("saved.json");
+        assert!(store_json(&blocked, &vec!["d"]).is_err());
+        assert_eq!(load_json::<Vec<String>>(&file), ["c"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

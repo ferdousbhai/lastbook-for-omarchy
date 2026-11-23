@@ -1,0 +1,69 @@
+# The Map screen's help points over the made-up street map of dev/seed.py (the town of Mapton, with one help point of
+# each kind): the nearest-help list after finding a town, a row of it centring the map, the legend, the plain answer
+# for a town no street map covers (Testville) and its way to Library and downloads, and the same in a narrow window.
+# native/dev/qa.sh native/dev/qa/map.jsonl [shots-dir]
+
+{"do":"wait","role":"window","name":"Guides — Lastbook","timeout_ms":30000}
+{"do":"resize","width":1000,"height":700}
+{"do":"wait","size":[1000,700]}
+{"do":"select","role":"list-item","name":"Map"}
+{"do":"wait","role":"window","name":"Map — Lastbook"}
+{"do":"type","role":"search-box","name":"Find a town, or LAT,LON","text":"Mapton"}
+{"do":"key","keys":"Return"}
+{"do":"focus","role":"list-item","name":"Mapton"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"label","name":"Around Mapton","visible":true}
+{"do":"wait","role":"list-item","name":"RS Mapton","visible":true}
+{"do":"wait","role":"list-item","name":"Pasar Mapton","visible":true}
+{"do":"shot","path":"map-help.png"}
+# A row centres the map on its point, at street level, and rings it; the map's own keys still move it.
+{"do":"focus","role":"list-item","name":"Klinik Sehat"}
+{"do":"key","keys":"Return"}
+{"do":"focus","role":"generic","name":"Map"}
+{"do":"key","keys":"plus"}
+{"do":"key","keys":"Left"}
+{"do":"shot","path":"map-help-chosen.png"}
+{"do":"click","role":"button","name":"What the marks mean"}
+{"do":"wait","role":"label","name":"Marks show from street level, where a street map of the area is installed. Click one for its name and distance.","visible":true}
+{"do":"shot","path":"map-legend.png"}
+{"do":"key","keys":"Escape"}
+{"do":"wait","role":"label","name":"Marks show from street level, where a street map of the area is installed. Click one for its name and distance.","visible":false}
+{"do":"click","role":"button","name":"Close"}
+{"do":"wait","role":"label","name":"Around Mapton","visible":false}
+
+# A town no street map covers: no far-away points, a plain answer and the way to add the area.
+{"do":"focus","role":"search-box","name":"Find a town, or LAT,LON"}
+{"do":"key","keys":"<Control>a"}
+{"do":"type","text":"Testville"}
+{"do":"key","keys":"Return"}
+{"do":"focus","role":"list-item","name":"Testville"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"label","name":"No street-level map covers this place, so its help points cannot be shown. Add the area's streets in Library and downloads.","visible":true}
+{"do":"shot","path":"map-uncovered.png"}
+
+# A third of a screen: the panel takes the map's width, and the map's centre has its own nearest help.
+{"do":"resize","width":560,"height":700}
+{"do":"wait","size":[560,700]}
+{"do":"click","role":"button","name":"Nearest help around the map centre"}
+{"do":"wait","role":"label","name":"Around Map centre","visible":true}
+{"do":"shot","path":"narrow-map-uncovered.png"}
+{"do":"focus","role":"search-box","name":"Find a town, or LAT,LON"}
+{"do":"key","keys":"<Control>a"}
+{"do":"type","text":"-8.5,115.25"}
+{"do":"key","keys":"Return"}
+{"do":"focus","role":"list-item","name":"-8.5,115.25"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"list-item","name":"RS Mapton","visible":true}
+{"do":"shot","path":"narrow-map-help.png"}
+{"do":"click","role":"button","name":"Close"}
+{"do":"wait","role":"list-item","name":"RS Mapton","visible":false}
+{"do":"shot","path":"narrow-map.png"}
+{"do":"focus","role":"search-box","name":"Find a town, or LAT,LON"}
+{"do":"key","keys":"<Control>a"}
+{"do":"type","text":"Testville"}
+{"do":"key","keys":"Return"}
+{"do":"focus","role":"list-item","name":"Testville"}
+{"do":"key","keys":"Return"}
+{"do":"click","role":"button","name":"Library and downloads"}
+{"do":"wait","role":"window","name":"Library and downloads — Lastbook"}
+{"do":"quit"}

@@ -1,0 +1,20 @@
+# A library with no encyclopedia: the Encyclopedias screen says so and leads to Library and downloads, where one can be
+# added. Before that, a list that could not be read says why and asks again. A stand-in engine (no-encyclopedias.engine).
+# native/dev/qa.sh native/dev/qa/no-encyclopedias.jsonl [shots-dir]
+
+{"do":"wait","role":"window","name":"Guides — Lastbook","timeout_ms":30000}
+{"do":"select","role":"list-item","name":"Encyclopedias"}
+{"do":"wait","role":"window","name":"Encyclopedias — Lastbook"}
+{"do":"wait","role":"group","name":"Lastbook could not read the list of encyclopedias.","visible":true}
+{"do":"wait","role":"label","name":"The stand-in engine could not answer.","visible":true}
+{"do":"click","role":"button","name":"Try again"}
+{"do":"wait","role":"group","name":"No encyclopedia is installed","visible":true}
+{"do":"wait","role":"group","name":"Lastbook could not read the list of encyclopedias.","visible":false}
+{"do":"wait","role":"button","name":"Random article","visible":false}
+{"do":"shot","path":"no-encyclopedias.png"}
+{"do":"resize","width":560,"height":700}
+{"do":"wait","size":[560,700]}
+{"do":"shot","path":"narrow-no-encyclopedias.png"}
+{"do":"click","role":"button","name":"Library and downloads"}
+{"do":"wait","role":"window","name":"Library and downloads — Lastbook"}
+{"do":"quit"}

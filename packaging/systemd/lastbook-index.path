@@ -1,0 +1,12 @@
+# Starts lastbook-index.service whenever Recall for Omarchy's socket appears (Recall was installed, started or restarted),
+# so the index is built without anyone opening Lastbook. PathChanged, not PathExists: it fires when the socket comes or
+# goes, not again every time the service ends while the socket is still there.
+[Unit]
+Description=Lastbook: index when Recall for Omarchy starts
+
+[Path]
+PathChanged=%t/recall-for-omarchy.sock
+Unit=lastbook-index.service
+
+[Install]
+WantedBy=default.target

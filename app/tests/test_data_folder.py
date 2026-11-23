@@ -85,6 +85,25 @@ class Lookup(unittest.TestCase):
         with mock.patch.dict(os.environ, {'LASTBOOK_DATA': str(given)}):
             self.assertEqual(main.data_folder(None), given)
 
+    def test_remembering_replaces_the_settings_whole(self):
+        """The settings are written beside the file and renamed over it: what is there is the old choice or the new one,
+        never a file cut short, and nothing is left beside it."""
+        first, second = library(self.tmp / 'A' / 'LastbookData'), library(self.tmp / 'B' / 'LastbookData')
+        main.remember(first)
+        before = self.settings().stat().st_ino
+        main.remember(second)
+        self.assertEqual(json.loads(self.settings().read_text(encoding='utf-8')), {'library': str(second)})
+        self.assertNotEqual(self.settings().stat().st_ino, before, 'written in place, not renamed over')
+        self.assertEqual([p.name for p in self.settings().parent.iterdir()], ['settings.json'])
+
+    def test_a_failed_write_keeps_the_library_remembered_before(self):
+        first, second = library(self.tmp / 'A' / 'LastbookData'), library(self.tmp / 'B' / 'LastbookData')
+        main.remember(first)
+        with mock.patch.object(os, 'fsync', side_effect=OSError(28, 'No space left on device')), mock.patch('builtins.print'):
+            main.remember(second)      # the disk fills as the new choice is written
+        self.assertEqual(main.remembered(), first)
+        self.assertEqual([p.name for p in self.settings().parent.iterdir()], ['settings.json'])
+
     def test_not_writable_skipped(self):
         locked = library(self.tmp / 'locked' / 'LastbookData')
         main.remember(locked)

@@ -4,7 +4,8 @@
   PYTHONPATH=<deps> python3 -B app/tests/test_cli.py [-v]
 
 Runs the commands as the native program does (a Python process each) against the made-up library the bridge tests use,
-and against a second small one made here with a text, a transcript and a gazetteer. No Recall. Never packaged."""
+and against a second small one made here with a text, a transcript, a gazetteer and a street map of one of its two towns.
+No Recall. Never packaged."""
 import json, os, sqlite3, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
@@ -29,7 +30,8 @@ def run(*args, data=DATA, env=ENV):
 
 
 def small_library():
-    """A PDF's text (two pages), a saved page, a video with captions and one town."""
+    """A PDF's text (two pages), a saved page, a video with captions, and towns: Testville, which has no street map, and
+    Mapton, which has one (its help points); upstream's US map files beside them, which are not read."""
     data = TMP / 'LastbookData'
     lib = data / 'library-data'
     for d in ('text', 'videos', 'documents', 'pages'):
@@ -52,10 +54,39 @@ def small_library():
     con.commit()
     con.close()
     con = sqlite3.connect(data / 'derived' / 'geo' / 'world-places.sqlite')
-    con.executescript('''CREATE TABLE place(id INTEGER PRIMARY KEY, name TEXT, kind TEXT, detail TEXT, lat REAL, lon REAL, rank INTEGER, source TEXT);
+    con.executescript('''PRAGMA user_version = 2;
+        CREATE TABLE place(id INTEGER PRIMARY KEY, name TEXT, kind TEXT, detail TEXT, lat REAL, lon REAL, rank INTEGER, source TEXT);
         CREATE VIRTUAL TABLE place_fts USING fts5(name, detail, content='place', content_rowid='id', tokenize='unicode61 remove_diacritics 2');
         INSERT INTO place VALUES (1, 'Testville', 'town', 'Nowhere', 12.5, 34.25, 1, 'made up');
-        INSERT INTO place_fts(rowid, name, detail) VALUES (1, 'Testville', 'Nowhere');''')
+        INSERT INTO place_fts(rowid, name, detail) VALUES (1, 'Testville', 'Nowhere');
+        INSERT INTO place VALUES (2, 'Mapton', 'town', 'Somewhere', -8.5, 115.25, 1, 'made up');
+        INSERT INTO place_fts(rowid, name, detail) VALUES (2, 'Mapton', 'Somewhere');
+        INSERT INTO place VALUES (3, 'Newbury', 'town', 'Elsewhere', 40.0, 10.0, 3, 'made up');
+        INSERT INTO place_fts(rowid, name, detail) VALUES (3, 'Newbury', 'Elsewhere · Newbury Old Borough');
+        INSERT INTO place VALUES (4, '29 Palms', 'town', 'Desert', 34.1, -116.0, 3, 'made up');
+        INSERT INTO place_fts(rowid, name, detail) VALUES (4, '29 Palms', 'Desert');''')
+    con.commit()
+    con.close()
+    lat, lon = -8.5, 115.25
+    fixture.region_file(data / 'derived' / 'geo' / 'regions-testland.mbtiles', {
+        15: [('hospital', 'RS Mapton', lat + 0.004, lon), ('pharmacy', 'Apotek Satu', lat, lon + 0.002), ('pharmacy', None, lat - 0.01, lon),
+             ('hospital', 'Klinik Utara', lat + 0.05, lon), ('restaurant', 'Warung', lat, lon), ('pharmacy', 'Apotek Jauh', lat, lon + 0.6),
+             ('hospital', 'RS Provinsi', lat, lon - 0.6)]
+            # At 60 N, 25 E, where a degree of longitude is 55.6 km: one pharmacy 1.3 km east, five 1.67 to 2.12 km north.
+            + [('restaurant', 'Kahvila', 60.0, 25.0), ('pharmacy', 'East', 60.0, 25.0 + 1.3 / 55.6)] + [('pharmacy', f'North {i}', 60.0 + (1.67 + 0.1 * i) / 111.2, 25.0) for i in range(5)],
+        14: [('hospital', 'RS Provinsi', lat, lon - 0.6)]})
+    # Upstream's US map files, as a library that has not been cleaned still holds them: a hospital in a `poi` table and a
+    # town in a US gazetteer, neither of which is ever given.
+    con = sqlite3.connect(data / 'derived' / 'geo' / 'map.sqlite')
+    con.executescript('CREATE TABLE poi(id INTEGER PRIMARY KEY, cls TEXT, name TEXT, lon REAL, lat REAL);')
+    con.execute('INSERT INTO poi(cls,name,lon,lat) VALUES (?,?,?,?)', ('hospital', 'County Hospital', lon + 0.02, lat))
+    con.commit()
+    con.close()
+    con = sqlite3.connect(data / 'derived' / 'geo' / 'places.sqlite')
+    con.executescript('''CREATE TABLE place(id INTEGER PRIMARY KEY, name TEXT, kind TEXT, detail TEXT, lat REAL, lon REAL, rank INTEGER, source TEXT);
+        CREATE VIRTUAL TABLE place_fts USING fts5(name, detail, content='place', content_rowid='id');
+        INSERT INTO place VALUES (1, 'Oldtown', 'town', 'Some County, Ohio', -8.5, 115.25, 3, 'GNIS');
+        INSERT INTO place_fts(rowid, name, detail) VALUES (1, 'Oldtown', 'Some County, Ohio');''')
     con.commit()
     con.close()
     return data
@@ -106,9 +137,68 @@ class Shapes(unittest.TestCase):
     def test_place(self):
         out = self.ok('place', 'testville', '--nearby', 'hospital,pharmacy', data=SMALL)
         p = out['places'][0]
-        self.assertEqual((p['name'], p['kind'], p['detail'], p['lat'], p['lon']), ('Testville', 'town', 'Nowhere', 12.5, 34.25))
-        self.assertEqual((out['nearby_of'], out['nearby']), (None, []))           # no street map of it in this library
+        self.assertEqual((p['name'], p['kind'], p['detail'], p['lat'], p['lon'], p['match'], p['onMap']),
+                         ('Testville', 'town', 'Nowhere', 12.5, 34.25, 'exact', False))
+        # No street map of it in this library: nothing is looked up, and the answer says so and what there is.
+        self.assertEqual((out['nearby_of'], out['covered'], out['nearby'], out['regions_installed']), ('Testville', False, [], ['testland']))
+        self.assertIn('No street-level map covers Testville', out['nearby_note'])
         self.assertNotIn('nearby', self.ok('place', 'testville', data=SMALL))
+        self.assertEqual(self.ok('place', 'oldtown', data=SMALL)['places'], [])     # upstream's US gazetteer is not read
+
+    def test_nothing_found_says_which_gazetteer_this_library_has(self):
+        self.assertIn('places of 500 people or more', self.ok('place', 'zzzqqqxxx', '--nearby', 'hospital', data=SMALL)['nearby_note'])
+        db = sqlite3.connect(SMALL / 'derived' / 'geo' / 'world-places.sqlite')
+        try:
+            db.execute('PRAGMA user_version = 0')                                    # as an earlier version made it
+            db.commit()
+            self.assertIn('the older one, of towns of 15,000+ only', self.ok('place', 'zzzqqqxxx', '--nearby', 'hospital', data=SMALL)['nearby_note'])
+        finally:
+            db.execute('PRAGMA user_version = 2')
+            db.commit()
+            db.close()
+
+    def test_how_a_place_was_matched(self):
+        self.assertEqual(self.ok('place', 'Testville, Nowhere', data=SMALL)['places'][0]['match'], 'exact')   # with its region
+        self.assertEqual(self.ok('place', 'old borough', data=SMALL)['places'][0]['match'], 'alternate name')
+        self.assertEqual(self.ok('place', 'Mapt', data=SMALL)['places'][0]['match'], 'partial')               # the start of a name
+        out = self.ok('place', 'mapton harbour', '--nearby', 'hospital', data=SMALL)   # one word left out to find anything
+        self.assertEqual((out['places'][0]['name'], out['places'][0]['match']), ('Mapton', 'partial'))
+        self.assertEqual((out['nearby_of'], out['nearby']), (None, []))
+        self.assertIn('does not match every word', out['nearby_note'])
+        p = self.ok('place', '29 Palms', data=SMALL)['places'][0]                    # a name that starts with a number
+        self.assertEqual((p['name'], p['match']), ('29 Palms', 'exact'))
+
+    def test_a_point_given_by_its_coordinates(self):
+        out = self.ok('place', '-8.5,115.25', '--nearby', 'hospital', data=SMALL)
+        p = out['places'][0]
+        self.assertEqual((p['kind'], p['lat'], p['lon'], p['match'], p['source'], p['onMap']), ('point', -8.5, 115.25, 'coordinates', 'coordinates', True))
+        self.assertEqual(p['detail'], '0 km from Mapton, Somewhere')
+        self.assertEqual((out['nearby_of'], out['covered'], out['nearby'][0]['name']), ('-8.5,115.25', True, 'RS Mapton'))
+        self.assertEqual(self.ok('place', ' 12.5 , 34.25 ', data=SMALL)['places'][0]['detail'], '0 km from Testville, Nowhere')
+
+    def test_the_nearest_is_the_nearest_on_the_ground(self):
+        near = self.ok('place', '60,25', '--nearby', 'pharmacy', data=SMALL)['nearby']
+        self.assertEqual([(p['name'], p['dir']) for p in near][:2], [('East', 'east'), ('North 0', 'north')])
+        self.assertEqual(len(near), 5)
+
+    def test_place_nearby_reads_the_street_map(self):
+        out = self.ok('place', 'mapton', '--nearby', 'hospital,pharmacy', data=SMALL)
+        self.assertEqual((out['places'][0]['name'], out['places'][0]['onMap'], out['nearby_of'], out['covered']), ('Mapton', True, 'Mapton', True))
+        self.assertNotIn('nearby_note', out)
+        near = out['nearby']
+        # Nearest first, from the street map alone (not the US file's `poi` table). RS Provinsi is 66 km away, where the
+        # map is read at a zoom that shows hospitals and not pharmacies (Apotek Jauh, as far, is not found).
+        self.assertEqual([(p['cls'], p['name']) for p in near],
+                         [('pharmacy', 'Apotek Satu'), ('hospital', 'RS Mapton'), ('pharmacy', ''), ('hospital', 'Klinik Utara'),
+                          ('hospital', 'RS Provinsi')])
+        self.assertEqual([p['km'] for p in near], sorted(p['km'] for p in near))
+        first = near[0]
+        self.assertEqual(sorted(first), ['cls', 'dir', 'km', 'label', 'lat', 'lon', 'name'])
+        self.assertEqual((first['label'], first['km'], first['dir']), ('Pharmacy', 0.22, 'east'))
+        self.assertAlmostEqual(first['lat'], -8.5, places=4)
+        self.assertAlmostEqual(first['lon'], 115.252, places=4)
+        self.assertEqual((near[-1]['km'], near[-1]['dir']), (65.98, 'west'))
+        self.assertEqual(self.ok('place', 'mapton', '--nearby', 'police', data=SMALL)['nearby'], [])   # none on the map near it
 
     def test_guides(self):
         listed = self.ok('guides')['guides']
@@ -128,7 +218,8 @@ class Shapes(unittest.TestCase):
         self.assertEqual(out['version'], (ROOT / 'VERSION').read_text().strip())
         self.assertEqual(out['meaning_search']['ready'], False)
         self.assertEqual(out['meaning_search']['recall']['running'], False)
-        self.assertEqual(out['maps'], {'world': False, 'places': True, 'regions': []})
+        size = (SMALL / 'derived/geo/regions-testland.mbtiles').stat().st_size
+        self.assertEqual(out['maps'], {'world': False, 'places': True, 'regions': [{'id': 'testland', 'name': 'testland', 'bytes': size}]})
 
     def test_open_only_says_where_with_dry_run(self):
         for args, route in ((['manual', '2'], 'read:manual:2'), (['manual'], 'read:manual:1'), (['video-a', '70'], 'watch:video-a:70'),
@@ -147,12 +238,15 @@ class ExitCodes(unittest.TestCase):
         self.assertTrue(err.startswith('lastbook: '), err)
         return err
 
-    def test_bad_arguments_are_2(self):
+    def test_bad_arguments_are_1(self):
+        # Omarchy's commands exit 1 on any failure: a script tells a bad argument from a missing page by the line on
+        # standard error, not by the code.
         for args in (['search'], ['search', 'x', '--limit', '0'], ['search', 'x', '--limit', '21'], ['search', 'x', '--kind', 'book'],
                      ['read'], ['read', 'manual', '--pages', 'two'], ['read', 'manual', '--pages', '1-11'], ['read', 'manual', '--pages', '0'],
                      ['page', 'manual'], ['page', 'manual', 'x'], ['page', 'manual', '1', '--width', '9000'], ['transcript'],
-                     ['place', 'testville', '--nearby', 'castle'], ['guide'], ['frobnicate'], [], ['status', 'extra'], ['open', 'manual', 'two']):
-            self.fails(2, *args, data=SMALL)
+                     ['place', 'testville', '--nearby', 'castle'], ['place', 'mapton', '--nearby', 'dam'], ['place', 'mapton', '--nearby', 'embassy'],
+                     ['place', '91,10'], ['place', '-8.5,181', '--nearby', 'hospital'], ['place', '-8.5,115.25,3'], ['place', '12'], ['guide'], ['frobnicate'], [], ['status', 'extra'], ['open', 'manual', 'two']):
+            self.fails(1, *args, data=SMALL)
 
     def test_runtime_errors_are_1(self):
         for args in (['read', 'nope'], ['read', 'manual', '--pages', '3'], ['read', 'video-a'], ['read', 'zim:none.zim/A'],
@@ -164,6 +258,54 @@ class ExitCodes(unittest.TestCase):
         self.assertIn('run `lastbook`', self.fails(1, 'status', data=None))
         self.assertIn('not a Lastbook library', self.fails(1, 'search', 'x', data=TMP / 'home'))
         self.assertFalse((TMP / 'home' / 'data').exists())         # nothing was made on the way
+
+
+class Reading(unittest.TestCase):
+    """read() with a stand-in engine: an article's section that is not there, and PDF pages without text."""
+
+    def setUp(self):
+        sys.path[:0] = [str(ROOT / 'app')]
+        import cli
+        self.cli = cli
+
+        class Enc:
+            def matched(self, doc_id, section):
+                return [1] if 'treat' in section.lower() else []
+
+            def headings(self, doc_id):
+                return ['Signs', 'Treatment', 'History']
+
+            def read(self, doc_id, section, limit):
+                return None, f'text of {section or "the article"}'
+
+        recs = {'zim:t.zim/Burn': {'id': 'zim:t.zim/Burn', 'kind': 'article'}, 'scan': {'id': 'scan', 'kind': 'pdf'}}
+
+        class S:
+            ENC = Enc()
+            record = staticmethod(recs.get)
+            public = staticmethod(lambda r: {'title': r['id'], 'publisher': 'Test', 'year': None, 'trust': None})
+            page_texts = staticmethod(lambda r: ['Page one.', '  ', ''])
+        self.S = S
+
+    def read(self, doc_id, pages=None, section=None):
+        import argparse
+        return self.cli.read(self.S, argparse.Namespace(doc_id=doc_id, pages=pages, section=section))
+
+    def test_a_section_that_is_not_there_is_an_error_naming_the_sections(self):
+        self.assertEqual(self.read('zim:t.zim/Burn', section='treat')['texts'], [{'text': 'text of treat'}])
+        with self.assertRaises(self.cli.Failed) as e:
+            self.read('zim:t.zim/Burn', section='prevention')
+        self.assertEqual(str(e.exception), "No section of zim:t.zim/Burn has a heading containing 'prevention'. Its sections: Signs; Treatment; History.")
+        self.assertEqual(self.read('zim:t.zim/Burn')['texts'], [{'text': 'text of the article'}])
+
+    def test_a_page_without_text_says_so(self):
+        out = self.read('scan', pages=[1, 2])
+        self.assertEqual(out['texts'][0], {'page': 1, 'text': 'Page one.'})
+        self.assertEqual(out['texts'][1], {'page': 2, 'text': '', 'note': 'Page 2 has no text the engine can read: lastbook page scan 2 shows it as a picture.'})
+        for pages in ([3], [2, 3]):
+            with self.assertRaises(self.cli.Failed) as e:
+                self.read('scan', pages=pages)
+            self.assertIn('lastbook page scan', str(e.exception))
 
 
 class Shipped(unittest.TestCase):

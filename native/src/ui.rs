@@ -10,13 +10,14 @@ use std::{
 };
 
 use gtk::{gdk, glib, prelude::*};
-use omui::{Theme, icon_button, icons::name};
+use omui::{ShortcutSection, Theme, icon_button, icons::name, tr};
 
 use crate::{
     cards::encyclopedia_name,
+    encyclopedias::Encyclopedias,
     engine::Engine,
     guides::Guides,
-    library::{Browse, Saved, load_saved, store_saved},
+    library::{Browse, Saved, load_saved, put_back, store_saved},
     map::MapPage,
     reader::Reader,
     search::SearchPage,
@@ -83,24 +84,96 @@ impl Route {
             "map" => {
                 let mut it = rest.splitn(3, ',');
                 let (lat, lon) = (it.next()?.trim().parse().ok()?, it.next()?.trim().parse().ok()?);
-                Route::MapAt { lat, lon, label: it.next().unwrap_or("Here").to_owned() }
+                Route::MapAt { lat, lon, label: it.next().map(str::to_owned).unwrap_or_else(|| tr("Here")) }
             }
-            "section" => Route::Section(SECTIONS.iter().find(|s| s.0 == rest).map(|s| s.0)?),
+            "section" => section_route(SECTIONS.iter().find(|s| s.0 == rest).map(|s| s.0)?),
             _ => return None,
         })
     }
 }
 
 /// The sidebar's screens, in order: (id, label, icon). About is a screen too, but its way in is the sidebar's footer.
+/// The label is English, translated where it is shown.
 pub const SECTIONS: &[(&str, &str, &str)] = &[
-    ("search", "Search", name::SEARCH),
-    ("guides", "Guides", name::INFO),
-    ("library", "Library", name::DOCUMENT),
-    ("videos", "Videos", name::VIDEO),
-    ("map", "Map", name::LOCATION),
-    ("saved", "Saved", name::STARRED),
-    ("about", "About", name::SETTINGS),
+    ("search", n_!("Search"), name::SEARCH),
+    ("guides", n_!("Guides"), name::INFO),
+    ("library", n_!("Library"), name::DOCUMENT),
+    ("encyclopedias", n_!("Encyclopedias"), name::BOOK),
+    ("videos", n_!("Videos"), name::VIDEO),
+    ("map", n_!("Map"), name::LOCATION),
+    ("saved", n_!("Saved"), name::STARRED),
+    ("manage", n_!("Library and downloads"), name::DRIVE),
+    ("about", n_!("About"), name::SETTINGS),
 ];
+
+/// Where a sidebar row leads. Library and downloads is a screen of its own (`Route::Manage`), not a section's list.
+fn section_route(id: &'static str) -> Route {
+    if id == "manage" { Route::Manage } else { Route::Section(id) }
+}
+
+/// Every key of the window, for the shortcuts overlay (`?`, F1), in the language of the moment. Setup (`library`
+/// false) has the general keys alone. README.md's table lists the same.
+pub fn shortcuts(library: bool) -> Vec<ShortcutSection> {
+    let general = ShortcutSection::new(
+        &tr("General"),
+        &[
+            ("? / F1", &tr("Show or hide the shortcuts")),
+            ("Ctrl+W", &tr("Close the window; while a download runs, ask first")),
+            ("Ctrl+Q", &tr("Quit; while a download runs, ask first")),
+            ("Escape", &tr("Answer a question with the choice that loses nothing")),
+        ],
+    );
+    if !library {
+        return vec![general];
+    }
+    vec![
+        ShortcutSection::new(
+            &tr("Moving around"),
+            &[
+                ("Ctrl+K", &tr("Search, with the keyboard in its field")),
+                ("Ctrl+F", &tr("Find in the page or document on show; elsewhere, Search")),
+                ("Ctrl+B", &tr("Show or hide the sidebar")),
+                ("Alt+Left", &tr("Back")),
+                ("Alt+Right", &tr("Forward")),
+                ("Ctrl+D", &tr("Save this, or remove it from Saved")),
+                ("Up, Down", &tr("The screen above or below, in the sidebar")),
+                ("Enter, Space", &tr("Open a card")),
+            ],
+        ),
+        ShortcutSection::new(
+            &tr("Reader"),
+            &[
+                ("Left, Right", &tr("The page before, the page after")),
+                ("Home, End", &tr("The first page, the last page")),
+                ("Up, Down, K, J", &tr("Scroll within the page")),
+                ("Space, Page Down", &tr("Down a screenful, then on to the next page")),
+                ("Shift+Space, Backspace, Page Up", &tr("Up a screenful, then back to the page before")),
+                ("+, -", &tr("Zoom in, zoom out")),
+                ("0", &tr("Fit the page to the window's width")),
+                ("Enter, Shift+Enter", &tr("In the find bar: the next match, the match before")),
+                ("Escape", &tr("Close the find bar")),
+            ],
+        ),
+        ShortcutSection::new(
+            &tr("Map"),
+            &[("+, -", &tr("Zoom in, zoom out")), ("Left, Right, Up, Down", &tr("Move the map"))],
+        ),
+        general,
+    ]
+}
+
+/// What a saved item says under its title, from its key: in the language of the moment, not the one it was saved
+/// in. A saved web page keeps what it was saved with, the line its page shows above itself (`stored`).
+pub fn saved_sub(key: &str, stored: &str) -> String {
+    match key.split(':').next() {
+        Some("read") => tr!("Page {}", key.rsplit(':').next().unwrap_or("1")),
+        Some("wiki") => tr("Encyclopedia article"),
+        Some("watch") => tr("Video"),
+        Some("guide") => tr("Guide"),
+        _ if !stored.is_empty() => stored.to_owned(),
+        _ => tr("Saved page"),
+    }
+}
 
 const SIDEBAR_WIDTH: i32 = 200;
 /// The window width from which the sidebar is beside the screens: under it the widest of them (search, 522 pixels)
@@ -111,9 +184,13 @@ pub struct App {
     pub engine: Arc<Engine>,
     pub theme: Rc<Theme>,
     pub window: gtk::ApplicationWindow,
+    /// The window's content under what is shown over it: toasts (an undo, a file that could not be saved) and questions.
+    pub shell: Rc<omui::Shell>,
     stack: gtk::Stack,
     sidebar: gtk::ListBox,
     split: omui::Split,
+    /// The sidebar's labels, by section id: written again in a language switch.
+    section_labels: Vec<(&'static str, gtk::ListBoxRow, gtk::Label)>,
     /// Whether the person keeps the sidebar beside the screens, where the window has room for both.
     sidebar_beside: Cell<bool>,
     /// Whether the split was collapsed when it last told of a change: see its `connect_changed`.
@@ -139,23 +216,29 @@ pub struct App {
     pub videos: RefCell<Option<Rc<Videos>>>,
     pub web: RefCell<Option<Rc<WebPage>>>,
     pub browse: RefCell<Option<Rc<Browse>>>,
+    pub encyclopedias: RefCell<Option<Rc<Encyclopedias>>>,
     pub map: RefCell<Option<Rc<MapPage>>>,
     pub manage: RefCell<Option<Rc<crate::setup::SetupPage>>>,
 }
 
 impl App {
-    pub fn build(app: &gtk::Application, engine: Arc<Engine>, theme: Rc<Theme>) -> Rc<Self> {
-        let window = gtk::ApplicationWindow::builder().application(app).title("Lastbook").default_width(1280).default_height(820).build();
+    /// Fills `window`, which main.rs has had on screen since before the engine was ready, with the library's screens
+    /// in place of what it showed while waiting.
+    pub fn build(window: gtk::ApplicationWindow, shell: Rc<omui::Shell>, engine: Arc<Engine>, theme: Rc<Theme>) -> Rc<Self> {
 
-        let title = gtk::Label::new(Some("Guides"));
+        let title = gtk::Label::new(Some(&tr("Guides")));
         title.add_css_class("title");
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let header = omui::header(Some(title.upcast_ref()));
-        let toggle = icon_button(name::SIDEBAR, "Show or hide the sidebar (Ctrl+B)");
+        let toggle = icon_button(name::SIDEBAR, "");
+        omui::i18n::bind_tooltip(&toggle, "Show or hide the sidebar (Ctrl+B)");
         toggle.add_css_class("sidebar-toggle");
-        let back = icon_button(name::BACK, "Back (Alt+Left)");
-        let forward = icon_button(name::FORWARD, "Forward (Alt+Right)");
-        let star = icon_button(name::STAR, "Save this (Ctrl+D)");
+        let back = icon_button(name::BACK, "");
+        omui::i18n::bind_tooltip(&back, "Back (Alt+Left)");
+        let forward = icon_button(name::FORWARD, "");
+        omui::i18n::bind_tooltip(&forward, "Forward (Alt+Right)");
+        // Its tooltip says whether what is on screen is saved (`update_star`).
+        let star = icon_button(name::STAR, &tr("Save this (Ctrl+D)"));
         header.pack_start(&toggle);
         header.pack_start(&back);
         header.pack_start(&forward);
@@ -164,8 +247,15 @@ impl App {
 
         let sidebar = gtk::ListBox::new();
         sidebar.set_selection_mode(gtk::SelectionMode::Single);
+        let mut section_labels = Vec::new();
         for (id, label, icon) in SECTIONS {
-            let row = omui::sidebar_row(id, Some(icon), label, None);
+            let row = omui::sidebar_row(id, Some(icon), &omui::i18n::translate(label), None);
+            if let Some(text) = row.child().and_then(|c| c.first_child()).and_then(|i| i.next_sibling()).and_downcast::<gtk::Label>() {
+                // Wrapped, not cut short: "Library and downloads" is longer than the sidebar is wide in English already.
+                text.set_ellipsize(gtk::pango::EllipsizeMode::None);
+                text.set_wrap(true);
+                section_labels.push((*id, row.clone(), text));
+            }
             // About's row is there to hold the selection, unseen: the footer is its way in.
             row.set_visible(*id != "about");
             // A gap opens each group: search, browse, yours.
@@ -177,8 +267,11 @@ impl App {
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         footer.add_css_class("sidebar-footer");
         footer.append(&omui::icon(name::OFFLINE));
-        footer.append(&gtk::Label::new(Some("Works offline")));
-        let about = gtk::Button::with_label("About");
+        let offline = gtk::Label::new(None);
+        omui::i18n::bind_label(&offline, "Works offline");
+        footer.append(&offline);
+        let about = gtk::Button::new();
+        omui::i18n::bind_label(&about, "About");
         about.add_css_class("flat");
         let gap = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         gap.set_hexpand(true);
@@ -200,15 +293,17 @@ impl App {
         // display is narrower than the sidebar and the reader's bar together, and a window that asks for more than
         // its tile is wider than its tile.
         let split = omui::Split::new(&sidebar_shell, &stack, (SIDEBAR_WIDTH, SIDEBAR_WIDTH), Some(SIDEBAR_BESIDE_FROM));
-        window.set_child(Some(&split.widget));
+        shell.overlay.set_child(Some(&split.widget));
 
         let app = Rc::new(Self {
             engine,
             theme,
             window,
+            shell,
             stack,
             sidebar,
             split,
+            section_labels,
             sidebar_beside: Cell::new(true),
             collapsed: Cell::new(false),
             title,
@@ -228,6 +323,7 @@ impl App {
             videos: RefCell::new(None),
             web: RefCell::new(None),
             browse: RefCell::new(None),
+            encyclopedias: RefCell::new(None),
             map: RefCell::new(None),
             manage: RefCell::new(None),
         });
@@ -255,6 +351,9 @@ impl App {
         app.stack.add_named(&browse.saved_root, Some("saved"));
         app.stack.add_named(&browse.about_root, Some("about"));
         app.browse.replace(Some(browse));
+        let encyclopedias = Encyclopedias::build(&app);
+        app.stack.add_named(&encyclopedias.root, Some("encyclopedias"));
+        app.encyclopedias.replace(Some(encyclopedias));
         let map = MapPage::build(&app);
         app.stack.add_named(&map.root, Some("map"));
         app.map.replace(Some(map));
@@ -296,8 +395,7 @@ impl App {
                     let s = a.search.borrow().as_ref().map(|s| s.current()).unwrap_or_default();
                     Route::Search { q: s.0, kind: s.1 }
                 } else {
-                    let id: &'static str = SECTIONS.iter().find(|s| s.0 == id.as_str()).map(|s| s.0).unwrap_or("guides");
-                    Route::Section(id)
+                    section_route(SECTIONS.iter().find(|s| s.0 == id.as_str()).map(|s| s.0).unwrap_or("guides"))
                 };
                 a.navigate(route);
             }
@@ -322,13 +420,20 @@ impl App {
         let a = app.clone();
         app.sidebar.connect_row_activated(move |_, row| {
             if let Some(s) = SECTIONS.iter().find(|s| s.0 == row.widget_name().as_str() && s.0 != "search")
-                && a.current() != Some(Route::Section(s.0))   // a click on another row has just gone there (row-selected)
+                && a.current() != Some(section_route(s.0))   // a click on another row has just gone there (row-selected)
             {
-                a.navigate(Route::Section(s.0));
+                a.navigate(section_route(s.0));
             }
             a.screen_in_view();
         });
         app.keys();
+        // A language switch: what was written from text is written again, and the screen on show drawn anew.
+        let a = Rc::downgrade(&app);
+        omui::i18n::on_change(&app.window, move || {
+            if let Some(a) = a.upgrade() {
+                a.retranslate();
+            }
+        });
         app.navigate(Route::Section("guides"));
         // LASTBOOK_OPEN opens a screen at start: it is how `lastbook open` works (app/cli.py). Any Route::from_key form.
         if let Ok(open) = std::env::var("LASTBOOK_OPEN")
@@ -352,12 +457,53 @@ impl App {
                 gdk::Key::Right if alt => a.go(1),
                 gdk::Key::b if ctrl => a.toggle_sidebar(),
                 gdk::Key::d if ctrl => a.toggle_saved(),
+                gdk::Key::f if ctrl && a.find_in_page() => {}
                 gdk::Key::f | gdk::Key::k if ctrl => a.focus_search(),
                 _ => return glib::Propagation::Proceed,
             }
             glib::Propagation::Stop
         });
         self.window.add_controller(keys);
+    }
+
+    /// Writes again, in the language now chosen, what was built from text: the sidebar, and every screen, the one on
+    /// show at once and the others when they are next shown.
+    fn retranslate(self: &Rc<Self>) {
+        for (id, row, label) in &self.section_labels {
+            let text = SECTIONS.iter().find(|s| s.0 == *id).map(|s| omui::i18n::translate(s.1)).unwrap_or_default();
+            label.set_text(&text);
+            row.update_property(&[gtk::accessible::Property::Label(&text)]);
+        }
+        if let Some(s) = self.search.borrow().as_ref() {
+            s.retranslate();
+        }
+        if let Some(g) = self.guides.borrow().as_ref() {
+            g.retranslate();
+        }
+        if let Some(v) = self.videos.borrow().as_ref() {
+            v.retranslate();
+        }
+        if let Some(b) = self.browse.borrow().as_ref() {
+            b.retranslate();
+        }
+        if let Some(e) = self.encyclopedias.borrow().as_ref() {
+            e.retranslate();
+        }
+        if let Some(m) = self.map.borrow().as_ref() {
+            m.retranslate();
+        }
+        if let Some(m) = self.manage.borrow().as_ref() {
+            m.retranslate();
+        }
+        if let Some(r) = self.reader.borrow().as_ref() {
+            r.retranslate();
+        }
+        // Shown again as a step back would show it: a video carries on where it is.
+        if let Some(route) = self.current() {
+            self.revisiting.set(true);
+            self.show(&route);
+            self.revisiting.set(false);
+        }
     }
 
     /// Beside the screen in a window with room for both, in its place in a narrower one.
@@ -376,6 +522,20 @@ impl App {
         }
     }
 
+    /// Ctrl+F on a reading screen finds in it (reader.rs, web.rs); anywhere else it goes to Search, as Ctrl+K does.
+    /// The screen is cloned out of its cell first: finding can turn the page, which comes back here for the route.
+    fn find_in_page(&self) -> bool {
+        let found = match self.stack.visible_child_name().as_deref() {
+            Some("reader") => self.reader.borrow().clone().is_some_and(|r| r.find()),
+            Some("web") => self.web.borrow().clone().is_some_and(|w| w.find()),
+            _ => false,
+        };
+        if found {
+            self.screen_in_view();
+        }
+        found
+    }
+
     fn focus_search(self: &Rc<Self>) {
         if self.stack.visible_child_name().as_deref() != Some("search") {
             let (q, kind) = self.search.borrow().as_ref().map(|s| s.current()).unwrap_or_default();
@@ -391,29 +551,45 @@ impl App {
         self.history.borrow().get(self.pos.get()).cloned()
     }
 
-    /// Stars or un-stars what is on screen.
+    /// Stars or un-stars what is on screen. Un-starring can be undone for a few seconds, since one key does it; a
+    /// change that could not be written to the disk is said, not left looking saved.
     fn toggle_saved(self: &Rc<Self>) {
         let Some(key) = self.current().and_then(|r| r.key()) else { return };
         let mut items = load_saved();
-        if let Some(i) = items.iter().position(|s| s.key == key) {
-            items.remove(i);
-        } else {
+        let removed = items.iter().position(|s| s.key == key).map(|i| items.remove(i));
+        if removed.is_none() {
             let title = self.title.text().to_string();
-            let sub = match key.split(':').next() {
-                Some("read") => format!("Page {}", key.rsplit(':').next().unwrap_or("1")),
-                Some("wiki") => "Encyclopedia article".into(),
-                Some("watch") => "Video".into(),
-                Some("guide") => "Guide".into(),
-                // A saved web page keeps whose it is: the line the page shows above itself.
-                _ => match self.current() {
-                    Some(Route::Web { meta, .. }) if !meta.is_empty() => meta,
-                    _ => "Saved page".into(),
-                },
+            // A saved web page keeps whose it is: the line the page shows above itself.
+            let meta = match self.current() {
+                Some(Route::Web { meta, .. }) => meta,
+                _ => String::new(),
             };
+            let sub = saved_sub(&key, &meta);
             items.push(Saved { key, title, sub, at: glib::real_time() / 1_000_000 });
         }
-        store_saved(&items);
+        let stored = self.store(&items);
         self.update_star();
+        if let (true, Some(item)) = (stored, removed) {
+            let me = Rc::downgrade(self);
+            self.shell.toast_action(&tr("Removed from Saved."), &tr("Undo"), 8, move || {
+                let Some(me) = me.upgrade() else { return };
+                let mut items = load_saved();
+                put_back(&mut items, item.clone());
+                me.store(&items);
+                me.update_star();
+            });
+        }
+    }
+
+    /// Writes the saved items, and says so in the window if they could not be written. Whether they were.
+    fn store(&self, items: &[Saved]) -> bool {
+        match store_saved(items) {
+            Ok(()) => true,
+            Err(e) => {
+                self.shell.toast(&tr!("Lastbook could not write your saved items: {}", e));
+                false
+            }
+        }
     }
 
     pub fn update_star(&self) {
@@ -421,7 +597,9 @@ impl App {
         self.star.set_visible(key.is_some());
         let saved = key.is_some_and(|k| load_saved().iter().any(|s| s.key == k));
         self.star.set_icon_name(if saved { name::STARRED } else { name::STAR });
-        self.star.set_tooltip_text(Some(if saved { "Saved — click to remove (Ctrl+D)" } else { "Save this (Ctrl+D)" }));
+        let tip = if saved { tr("Saved — click to remove (Ctrl+D)") } else { tr("Save this (Ctrl+D)") };
+        self.star.set_tooltip_text(Some(&tip));
+        self.star.update_property(&[gtk::accessible::Property::Label(&tip)]);
     }
 
     /// Shows `route` and records it, dropping anything ahead of the current place (as a browser does).
@@ -471,7 +649,7 @@ impl App {
                 if let Some(s) = self.search.borrow().as_ref() {
                     s.run(q, kind);
                 }
-                ("search", "search", "Search".to_owned())
+                ("search", "search", tr("Search"))
             }
             Route::Read { doc, page } => {
                 if let Some(r) = self.reader.borrow().as_ref() {
@@ -480,7 +658,7 @@ impl App {
                 ("reader", "library", String::new())
             }
             Route::Guide(id) => {
-                let title = self.guides.borrow().as_ref().and_then(|g| g.show(id)).unwrap_or_else(|| "Guides".into());
+                let title = self.guides.borrow().as_ref().and_then(|g| g.show(id)).unwrap_or_else(|| tr("Guides"));
                 ("guide", "guides", title)
             }
             Route::Watch { video, t } => {
@@ -492,10 +670,10 @@ impl App {
             Route::Wiki { path } => {
                 let enc = encyclopedia_name(path.split('/').next().unwrap_or_default());
                 if let Some(w) = self.web.borrow().as_ref() {
-                    w.open(&format!("/zim/{path}"), &format!("{enc} · community-written: check safety-critical steps against a manual"), true);
+                    w.open(&format!("/zim/{path}"), &tr!("{} · community-written: check safety-critical steps against a manual", enc), true);
                 }
                 let article = path.rsplit('/').next().unwrap_or_default().replace('_', " ");
-                ("web", "library", urlencoding::decode(&article).map(|s| s.into_owned()).unwrap_or(article))
+                ("web", "encyclopedias", urlencoding::decode(&article).map(|s| s.into_owned()).unwrap_or(article))
             }
             Route::Web { path, meta } => {
                 if let Some(w) = self.web.borrow().as_ref() {
@@ -507,20 +685,20 @@ impl App {
                 if let Some(m) = self.map.borrow().as_ref() {
                     m.show_at(*lat, *lon, label);
                 }
-                ("map", "map", "Map".to_owned())
+                ("map", "map", tr("Map"))
             }
             Route::Shelf(id) => {
                 let name = id.replace('-', " ");
                 if let Some(b) = self.browse.borrow().as_ref() {
                     b.show_shelf(id, &name);
                 }
-                ("shelf", "library", "Library".to_owned())
+                ("shelf", "library", tr("Library"))
             }
             Route::Manage => {
                 if let Some(m) = self.manage.borrow().as_ref() {
                     m.refresh();
                 }
-                ("manage", "about", "Library and downloads".to_owned())
+                ("manage", "manage", tr("Library and downloads"))
             }
             Route::Section(id) => {
                 match *id {
@@ -543,9 +721,14 @@ impl App {
                             m.show();
                         }
                     }
+                    "encyclopedias" => {
+                        if let Some(e) = self.encyclopedias.borrow().as_ref() {
+                            e.show();
+                        }
+                    }
                     _ => {}
                 }
-                (*id, *id, SECTIONS.iter().find(|s| s.0 == *id).map(|s| s.1).unwrap_or("").to_owned())
+                (*id, *id, SECTIONS.iter().find(|s| s.0 == *id).map(|s| omui::i18n::translate(s.1)).unwrap_or_default())
             }
         };
         self.stack.set_visible_child_name(page);
@@ -623,7 +806,7 @@ impl App {
             self.titles.borrow_mut().insert(k, title.to_owned());
         }
         self.title.set_text(title);
-        self.window.set_title(Some(&format!("{title} — Lastbook")));
+        self.window.set_title(Some(&tr!("{} — Lastbook", title)));
     }
 }
 
@@ -643,6 +826,7 @@ mod tests {
         }
         assert_eq!(Route::Search { q: "x".into(), kind: "any".into() }.key(), None, "a search is not saved");
         assert_eq!(Route::from_key("section:map"), Some(Route::Section("map")));
+        assert_eq!(Route::from_key("section:manage"), Some(Route::Manage));
         assert_eq!(Route::from_key("nonsense"), None);
     }
 }

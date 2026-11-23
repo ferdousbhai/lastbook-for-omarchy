@@ -7,7 +7,7 @@ The test server lives only in this file: it serves a small fake pack and a large
 for the run, and can cut the connection mid-file, send wrong bytes, change the file's ETag, ignore Range, or redirect anywhere.
 The product's allowlist is not touched: tests pass their own `allowed` and TLS context to the downloader. Never packaged.
 """
-import hashlib, http.server, io, json, os, shutil, signal, socketserver, ssl, subprocess, sys, tempfile, threading, time, unittest, zipfile
+import hashlib, http.server, io, json, os, shutil, signal, socketserver, sqlite3, ssl, subprocess, sys, tempfile, threading, time, unittest, zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -15,7 +15,7 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path[:0] = [str(HERE.parent), str(ROOT)]
-from engine.setup import api, download, hardware, install, manifest  # noqa: E402
+from engine.setup import api, download, hardware, install, manifest, maps  # noqa: E402
 
 ALLOWED = {'127.0.0.1'}     # an address, not 'localhost': the system may try ::1 first, which the test server does not listen on
 MiB = 1024 * 1024
@@ -25,7 +25,7 @@ MiB = 1024 * 1024
 def make_pack(path, files=None, extra=None):
     """A zip shaped like a real pack: everything under LastbookData/, stored."""
     files = files or {'library-data/catalog.json': b'{"records": []}', 'pack.json': b'{"name": "small"}',
-                      'library-data/big.bin': os.urandom(3 * MiB), 'derived/geo/map.sqlite': os.urandom(MiB)}
+                      'library-data/big.bin': os.urandom(3 * MiB), 'library-data/search.sqlite': os.urandom(MiB)}
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_STORED) as z:
         z.writestr('LastbookData/', b'')
         for name, data in files.items():
@@ -233,7 +233,7 @@ def fast_backoff():
 class Allowlist(unittest.TestCase):
     def test_product_hosts(self):
         ok = ['https://downloads.lastbook.org/1.0.0/Lastbook-Small.zip', 'https://build.protomaps.com/20261119.pmtiles',
-              'https://build-metadata.protomaps.dev/builds.json', 'https://download.geonames.org/export/dump/cities15000.zip']
+              'https://build-metadata.protomaps.dev/builds.json', 'https://download.geonames.org/export/dump/cities500.zip']
         bad = ['http://downloads.lastbook.org/x', 'https://downloads.lastbook.org:8443/x', 'https://evil.com/x', 'https://protomaps.com.evil.com/x',
                'https://user:pw@downloads.lastbook.org/x', 'https://lastbook.org/x', 'https://other.r2.dev/x', 'https://pub-28c3cc06eb774c5cac057e6c9343efbd.r2.dev/x.zip', 'ftp://downloads.lastbook.org/x',
                'https://x.downloads.lastbook.org/x', 'https://localhost/x', 'https://127.0.0.1/x', 'file:///etc/passwd', 'https://downloads.lastbook.org.evil.com/x']
@@ -264,6 +264,22 @@ class Allowlist(unittest.TestCase):
         m = manifest.validate(json.loads((ROOT / 'packaging' / 'arch' / 'manifest-v1.json').read_text()))
         self.assertIsNotNone(m)
         self.assertTrue(m['packs'])
+
+    def test_opening_setup_reaches_nothing(self):
+        """Reading setup's state makes no request; only the person's own Check for newer libraries fetches the manifest."""
+        calls = []
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        s = api.Setup('first-run', tmp / 'settings', tmp / 'parent', manifest=manifest.Manifest(bundled=manifest.load_bundled()))
+        with mock.patch.object(download, 'fetch_small', lambda *a, **k: calls.append(a) or None):
+            s.state()
+            s.state()
+            self.assertIsNone(s.manifest.fetching)
+            self.assertEqual(calls, [])
+            self.assertEqual(s.check()['manifest']['source'], 'bundled')      # nothing came back: the bundled list stays
+            self.assertEqual(len(calls), 1)
+            s.check()                                                       # asked again: tried again
+            self.assertEqual(len(calls), 2)
 
     def test_fetched_manifest_keeps_bundled_entries(self):
         bundled = manifest.validate({'version': 1, 'published': '2026-11-12', 'packs': [
@@ -538,11 +554,55 @@ class Unpacking(Base):
         lib = install.unpack(p, out, self.installed, Control(), lambda d, t: None)
         big = lib / 'library-data' / 'big.bin'
         t = big.stat().st_mtime_ns
-        (lib / 'derived' / 'geo' / 'map.sqlite').unlink()
-        (lib / 'derived' / 'geo' / 'map.sqlite.partial').write_bytes(b'half')
+        (lib / 'library-data' / 'search.sqlite').unlink()
+        (lib / 'library-data' / 'search.sqlite.partial').write_bytes(b'half')
         install.unpack(p, out, self.installed, Control(), lambda d, t: None)
         self.assertEqual(big.stat().st_mtime_ns, t)
-        self.assertEqual((lib / 'derived' / 'geo' / 'map.sqlite').stat().st_size, MiB)
+        self.assertEqual((lib / 'library-data' / 'search.sqlite').stat().st_size, MiB)
+
+    def test_upstream_map_data_is_not_unpacked(self):
+        """Upstream's US-only map files in a pack are checked like the rest but never written, and not counted as to come."""
+        geo = {f'derived/geo/{n}': os.urandom(1000) for n in ('national.sqlite', 'national-status.json', 'map.sqlite', 'places.sqlite',
+                                                               'water.sqlite', 'terrain.sqlite', 'crops.sqlite', 'socal-cells.json')}
+        geo.update({'derived/geo/addresses/CA.sqlite': b'a', 'library-data/geography/resources/atlas.sqlite': b'b',
+                    'derived/geo/world.mbtiles': b'kept: not upstream\'s', 'library-data/catalog.json': b'{}'})
+        p = self.tmp / 'geo.zip'
+        installed = make_pack(p, geo)
+        self.assertEqual(install.check_zip(p, installed)[1], len(geo['derived/geo/world.mbtiles']) + 2)
+        done = []
+        lib = install.unpack(p, self.tmp / 'out', installed, Control(), lambda d, t: done.append((d, t)))
+        self.assertEqual(sorted(str(f.relative_to(lib)) for f in lib.rglob('*') if f.is_file()),
+                         ['derived/geo/world.mbtiles', 'library-data/catalog.json'])
+        self.assertEqual(done[-1][0], done[-1][1])
+        with self.assertRaises(install.Refused):            # checked all the same: a bad name is refused, dropped or not
+            install.check_zip(self.bad_zip('LastbookData/derived/geo/../../../national.sqlite'))
+
+    def test_dropping_from_a_library_already_installed(self):
+        lib = self.tmp / 'LastbookData'
+        geo = lib / 'derived' / 'geo'
+        (geo / 'addresses').mkdir(parents=True)
+        (lib / 'library-data' / 'geography' / 'resources').mkdir(parents=True)
+        (lib / 'library-data' / 'catalog.json').write_text('{}')
+        for rel in ('derived/geo/national.sqlite', 'derived/geo/national.sqlite-wal', 'derived/geo/water.sqlite', 'derived/geo/addresses/CA.sqlite',
+                    'map-set.json', 'library-data/geography/resources/atlas.sqlite'):
+            (lib / rel).write_bytes(b'x' * 10)
+        for rel in ('derived/geo/world.mbtiles', 'derived/geo/world-places.sqlite', 'derived/geo/regions-x.mbtiles', 'library-data/search.sqlite'):
+            (lib / rel).write_bytes(b'mine')
+        outside = self.tmp / 'outside'
+        outside.mkdir()
+        (outside / 'keep').write_text('x')
+        (geo / 'terrain.sqlite').symlink_to(outside / 'keep')
+        self.assertEqual(install.drop_upstream_maps(lib), 60 + len(str(outside / 'keep')))
+        self.assertEqual(sorted(str(f.relative_to(lib)) for f in lib.rglob('*') if f.is_file() or f.is_symlink()),
+                         ['derived/geo/regions-x.mbtiles', 'derived/geo/world-places.sqlite', 'derived/geo/world.mbtiles',
+                          'library-data/catalog.json', 'library-data/search.sqlite'])
+        self.assertEqual((outside / 'keep').read_text(), 'x')           # a link is removed, never followed
+        self.assertEqual(install.drop_upstream_maps(lib), 0)               # again: nothing left, nothing wrong
+        self.assertEqual(install.drop_upstream_maps(self.tmp / 'not-a-library'), 0)
+        for rel in ('derived/geo/national.sqlite-shm', 'derived/geo/addresses', 'derived/geo/addresses/x', 'map-set.json'):
+            self.assertTrue(install.dropped(rel), rel)
+        for rel in ('derived/geo/world-places.sqlite', 'derived/geo/national.sqlite.bak', 'derived/geo/addressesx', 'library-data/map-set.json'):
+            self.assertFalse(install.dropped(rel), rel)
 
 
 class Jobs(Base):
@@ -622,6 +682,27 @@ class Jobs(Base):
         self.assertEqual(j['error']['code'], 'cancelled')
         self.assertFalse((self.parent / 'LastbookData.setup' / 'downloads').exists())
         self.assertFalse((self.parent / 'LastbookData').exists())
+
+    def test_a_second_engine_cannot_touch_a_running_job(self):
+        """Each window has an engine of its own over the same settings and work folders. The second shows the first one's
+        download as it goes and may not pause, resume, cancel or start anything until the first has stopped."""
+        self.files.pace = 0.01
+        a = self.setup()
+        a.start('small')
+        time.sleep(0.3)
+        b = self.setup()
+        seen = b.public_job()
+        self.assertTrue(seen.get('elsewhere'), seen)
+        self.assertNotEqual(seen['state'], 'paused')
+        for act in (b.cancel, b.resume, b.pause, b.retry, lambda: b.start('small'), lambda: b.use(str(self.parent))):
+            r = act()
+            self.assertEqual((r.get('code'), r.get('error')), ('busy', api.ELSEWHERE))
+        self.assertTrue((self.parent / 'LastbookData.setup' / 'downloads').exists())
+        self.assertEqual(a.public_job()['state'], 'downloading')
+        self.assertEqual(a.pause()['state'], 'paused')       # the first has stopped: the lock is free
+        c = self.setup()
+        self.assertNotIn('elsewhere', c.public_job())
+        self.assertEqual(c.cancel()['error']['code'], 'cancelled')
 
     def test_rate_and_eta(self):
         self.files.pace = 0.06
@@ -847,8 +928,9 @@ class Switching(Base):
 
     def test_upgrade_carries_their_files_and_deletes_the_old_library_once_the_new_one_opens(self):
         cur = self.lib(self.parent / 'LastbookData', 'old')
-        (cur / 'models').mkdir()
-        (cur / 'models' / 'model.gguf').write_bytes(self.blob)
+        (cur / 'derived' / 'geo').mkdir(parents=True)
+        (cur / 'derived' / 'geo' / 'world.mbtiles').write_bytes(self.blob)
+        (cur / 'derived' / 'geo' / 'national.sqlite').write_bytes(b'upstream')      # not carried: nothing reads it
         s = self.setup('manage', current=cur)
         s.start('small')
         j = self.wait(s)
@@ -857,7 +939,8 @@ class Switching(Base):
         self.assertEqual((cur / 'library-data' / 'catalog.json').read_text(), 'old')   # untouched until the restart
         lib, note = api.startup(self.settings)
         self.assertEqual((lib / 'library-data' / 'catalog.json').read_text(), '{"records": []}')
-        self.assertTrue((lib / 'models' / 'model.gguf').is_file())
+        self.assertEqual((lib / 'derived' / 'geo' / 'world.mbtiles').read_bytes(), self.blob)
+        self.assertFalse((lib / 'derived' / 'geo' / 'national.sqlite').exists())
         old = Path(note['old'])
         self.assertTrue(old.name.startswith('LastbookData.old-'))
         self.assertEqual((old / 'library-data' / 'catalog.json').read_text(), 'old')   # kept until the new one has opened
@@ -870,6 +953,29 @@ class Switching(Base):
         self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData'])
         self.assertEqual(json.loads((self.settings / 'setup.json').read_text()), {'old': []})
         self.assertIsNone(api.opened(self.settings, lib, None))     # nothing left to delete at the next start
+
+    def test_a_place_search_of_towns_only_is_offered_again_and_made_alone(self):
+        cur = self.lib(self.parent / 'LastbookData', 'old')
+        geo = cur / 'derived' / 'geo'
+        geo.mkdir(parents=True)
+        (geo / 'world.mbtiles').write_bytes(b'the world')
+        sqlite3.connect(geo / 'world-places.sqlite').execute('CREATE TABLE place(id INTEGER PRIMARY KEY)').connection.close()  # as made before villages
+        s = self.setup('manage', current=cur)
+        st = s.state()
+        self.assertEqual((st['current']['osm']['world'], st['current']['osm']['places'], st['world_bytes']), (True, False, api.PLACES_ESTIMATE))
+
+        def made(dest, control, **kw):
+            db = sqlite3.connect(dest)
+            db.execute(f'PRAGMA user_version = {maps.PLACES_VERSION}')
+            db.close()
+        with mock.patch.object(maps, 'build_places', side_effect=made) as build:
+            s.start(world=True)
+            j = self.wait(s)
+        self.assertEqual((j['state'], [(i['kind'], i['id']) for i in j['items']]), ('done', [('osm', 'places')]), j)    # not the world again
+        self.assertEqual(build.call_args[0][0], geo / 'world-places.sqlite')
+        self.assertEqual((geo / 'world.mbtiles').read_bytes(), b'the world')
+        self.assertTrue(s.state()['current']['osm']['places'])
+        self.assertEqual(s.start(world=True)['code'], 'nothing')
 
     def test_old_library_deleted_only_where_setup_put_it(self):
         lib = self.lib(self.parent / 'LastbookData', 'open')
@@ -896,11 +1002,8 @@ class Switching(Base):
         self.assertEqual((lib / 'library-data' / 'catalog.json').read_text(), 'open')
 
     def staged(self):
-        """An open library holding a model file an earlier version downloaded and the person's world map, and a new one
-        staged to replace it at the next start."""
+        """An open library holding the person's world map, and a new one staged to replace it at the next start."""
         cur = self.lib(self.parent / 'LastbookData', 'old')
-        (cur / 'models').mkdir()
-        (cur / 'models' / 'model.gguf').write_bytes(self.blob)
         (cur / 'derived' / 'geo').mkdir(parents=True)
         (cur / 'derived' / 'geo' / 'world.mbtiles').write_bytes(b'the world')
         new = self.lib(self.parent / 'LastbookData.setup' / 'unpack' / 'LastbookData', 'new')
@@ -909,8 +1012,23 @@ class Switching(Base):
         return cur, new
 
     def theirs(self, lib):
-        return ((lib / 'models' / 'model.gguf').is_file() and (lib / 'models' / 'model.gguf').read_bytes() == self.blob
-                and (lib / 'derived' / 'geo' / 'world.mbtiles').is_file())
+        return (lib / 'derived' / 'geo' / 'world.mbtiles').is_file()
+
+    def test_an_old_library_holding_a_folder_of_theirs_is_kept_and_they_are_told(self):
+        """A models/ folder (an upstream version's local AI download) or any folder no pack ships is not carried and not
+        deleted: the old library stays beside the new one, which opens, and the note says why."""
+        cur, new = self.staged()
+        (cur / 'models').mkdir()
+        (cur / 'models' / 'model.gguf').write_bytes(self.blob)
+        lib, note = api.startup(self.settings)
+        self.assertEqual(((lib / 'library-data' / 'catalog.json').read_text(), self.theirs(lib)), ('new', True))
+        self.assertFalse((lib / 'models').exists())
+        self.assertIn('models', note['error'])
+        self.assertIsNone(note['old'])
+        self.assertIsNone(api.opened(self.settings, lib, note))          # not listed for deletion
+        old = [p for p in self.parent.iterdir() if p.name.startswith('LastbookData.old-')]
+        self.assertEqual(len(old), 1)
+        self.assertEqual((old[0] / 'models' / 'model.gguf').read_bytes(), self.blob)
 
     def test_new_library_that_does_not_open_is_rolled_back(self):
         """The engine cannot open what the switch put in place: the old library goes back, once, with the person's files."""
@@ -998,17 +1116,15 @@ class Switching(Base):
         self.assertEqual(sent, [{'error': 'The engine could not open the library (OSError: no memory).'}])     # the first line: the window shows it
 
     def test_a_failed_library_that_still_holds_their_file_is_not_listed(self):
-        """A rolled-back library keeps a file carry_over could not bring back (the restored one has a file of that name):
+        """A rolled-back library keeps a map carry_over could not bring back (the restored one has a file of that name):
         that folder is not put up for deletion."""
-        kept = []
         folder = self.lib(self.parent / 'LastbookData.failed', 'x')
         self.assertFalse(install._holds_theirs(folder))
-        (folder / 'models').mkdir()
-        (folder / 'models' / 'model.gguf.partial').write_bytes(b'cut short')
-        self.assertFalse(install._holds_theirs(folder), 'a copy cut short is not theirs')
-        (folder / 'models' / 'model.gguf').write_bytes(b'good, new')
+        (folder / 'derived' / 'geo').mkdir(parents=True)
+        (folder / 'derived' / 'geo' / 'national.sqlite').write_bytes(b'upstream')
+        self.assertFalse(install._holds_theirs(folder), 'upstream map data is nobody\'s')
+        (folder / 'derived' / 'geo' / 'regions-x.mbtiles').write_bytes(b'cut here')
         self.assertTrue(install._holds_theirs(folder))
-        self.assertEqual(kept, [])
 
     def test_failed_library_deleted_only_where_roll_back_put_it(self):
         lib = self.lib(self.parent / 'LastbookData', 'open')
@@ -1050,16 +1166,52 @@ class Switching(Base):
                 self.assertEqual(lib, cur)
                 self.assertIn('error', note)
                 self.assertEqual(((cur / 'library-data' / 'catalog.json').read_text(), self.theirs(cur)), ('old', True))
-                api.opened(self.settings, lib, note)                     # clears the work folder: nothing of theirs was in it
+                api.opened(self.settings, lib, note)
                 self.assertTrue(self.theirs(cur))
-                self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData'])
+                # The download is kept, still pending: "try again" has something to try with.
+                self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData', 'LastbookData.setup'])
+                self.assertTrue(install.is_library(new))
+                lib, note = api.startup(self.settings)                   # the next start makes the switch
+                self.assertEqual((lib, note.get('error')), (cur, None))
+                self.assertEqual(((cur / 'library-data' / 'catalog.json').read_text(), self.theirs(cur)), ('new', True))
+
+    def test_a_staged_library_waits_while_its_disk_is_away(self):
+        """A start that cannot see the library's folder (an external drive not plugged in) leaves the staged download and
+        the pending switch alone, and so does opening another library meanwhile; the next start that sees it switches."""
+        cur, new = self.staged()
+        away = self.parent.with_name(self.parent.name + '.away')
+        os.replace(self.parent, away)
+        try:
+            self.assertEqual(api.startup(self.settings), (None, None))
+            other = self.lib(self.tmp / 'other' / 'LastbookData', 'other')
+            api.opened(self.settings, other, None)
+        finally:
+            os.replace(away, self.parent)
+        self.assertTrue(api._pending_file(self.settings).exists())
+        self.assertTrue(install.is_library(new))
+        lib, note = api.startup(self.settings)
+        self.assertEqual((lib, note.get('error')), (cur, None))
+        self.assertEqual((cur / 'library-data' / 'catalog.json').read_text(), 'new')
+
+    def test_no_new_job_while_a_finished_one_waits_to_be_opened(self):
+        """A job started beside a staged library would share its work folder, and cancelling it would delete the staged
+        download: it is refused until the library has been opened."""
+        s = self.setup()
+        s.start('small')
+        self.assertEqual(self.wait(s)['state'], 'done')
+        staged = self.parent / 'LastbookData.setup' / 'unpack' / 'LastbookData'
+        self.assertTrue(install.is_library(staged))
+        r = s.start('small')
+        self.assertEqual(r.get('code'), 'busy', r)
+        self.assertTrue(install.is_library(staged))
+        self.assertTrue(api._pending_file(self.settings).exists())
 
     def test_a_switch_cut_short_is_finished_at_the_next_start(self):
         """The program stops (power, a crash) before, between or after the renames, or half way through bringing the
         person's files across: the next start carries on from what is on disk."""
         class Stop(BaseException):
             pass
-        for at in (1, 2, 3, 4, 5, 6):     # saving the plan, the two renames, the file in models/, the map, saving that it is done
+        for at in (1, 2, 3, 4, 5):     # saving the plan, the two renames, the map, saving that it is done
             with self.subTest(replace_call=at):
                 shutil.rmtree(self.parent, ignore_errors=True)
                 shutil.rmtree(self.settings, ignore_errors=True)
@@ -1110,9 +1262,11 @@ class Manage(Base):
     """Repair."""
 
     def installed_library(self):
-        """A library as setup installs it: the test pack unpacked, with a pack-manifest.tsv of its files, and a model file
-        an earlier version downloaded."""
-        files = {'library-data/catalog.json': b'{"records": []}', 'pack.json': b'{"name": "small"}', 'library-data/big.bin': os.urandom(MiB)}
+        """A library as setup installs it: the test pack unpacked, with a pack-manifest.tsv of its files. Upstream's US map
+        data is in the pack and its manifest, so not in the library."""
+        files = {'library-data/catalog.json': b'{"records": []}', 'pack.json': b'{"name": "small"}', 'library-data/big.bin': os.urandom(MiB),
+                 'derived/geo/national.sqlite': os.urandom(MiB), 'derived/geo/addresses/CA.sqlite': b'addresses',
+                 'library-data/geography/resources/atlas.sqlite': b'atlas'}
         rows = ['path\tbytes\tsha256\thow\tchanges'] + [f'{k}\t{len(v)}\t{sha(v)}\tclone\t' for k, v in files.items()]
         files['pack-manifest.tsv'] = ('\n'.join(rows) + '\n').encode()
         zpath = self.tmp / 'Lastbook-Small.zip'
@@ -1120,8 +1274,7 @@ class Manage(Base):
         self.zip = zpath.read_bytes()
         self.files.data['Lastbook-Small.zip'] = self.zip
         lib = install.unpack(zpath, self.parent, self.installed, Control(), lambda d, t: None)
-        (lib / 'models').mkdir()
-        (lib / 'models' / 'model.gguf').write_bytes(self.blob)
+        self.assertFalse((lib / 'derived' / 'geo' / 'national.sqlite').exists())
         zpath.unlink()
         return lib
 
@@ -1134,16 +1287,7 @@ class Manage(Base):
         self.assertEqual(j['state'], 'done', j)
         self.assertEqual(self.files.log, [])
         self.assertFalse(api._pending_file(self.settings).exists())
-        self.assertEqual((lib / 'models' / 'model.gguf').read_bytes(), self.blob)     # not Lastbook's to check or to touch
-
-    def test_a_copy_cut_short_is_not_carried_to_a_new_library(self):
-        models = self.parent / 'LastbookData' / 'models'
-        models.mkdir(parents=True)
-        (models / 'model.gguf').write_bytes(self.blob)
-        (models / 'other.gguf.partial').write_bytes(b'cut short')
-        new = self.parent / 'New'
-        install.carry_over(models.parent, new)
-        self.assertEqual(sorted(p.name for p in (new / 'models').iterdir()), ['model.gguf'])
+        self.assertEqual(s._check_library({'state': '', 'bytes_done': 0}, lib, Control()), [])   # the dropped files are not missed
 
     def test_repair_damaged_file(self):
         lib = self.installed_library()
@@ -1157,7 +1301,7 @@ class Manage(Base):
         self.assertEqual(j['state'], 'done', j)
         self.assertEqual(sorted(n for n, _, _ in self.files.log), ['Lastbook-Small.zip'])
         new, note = api.startup(self.settings)
-        self.assertEqual((new / 'models' / 'model.gguf').read_bytes(), self.blob)     # theirs: carried to the repaired library
+        self.assertFalse((new / 'derived' / 'geo' / 'national.sqlite').exists())
         self.assertEqual(s._check_library({'state': '', 'bytes_done': 0}, new, Control()), [])
         self.assertTrue(Path(note['old']).exists())        # the damaged copy is kept aside until the repaired one has opened
 
@@ -1169,273 +1313,9 @@ class Manage(Base):
         self.assertEqual(self.setup().start(repair=True)['code'], 'nothing')
 
 
-def make_map(path, state='CA', extra=None):
-    """A state map zip: only map-set files, under LastbookData/, with map-set.json listing them."""
-    files = {'derived/geo/map.sqlite': os.urandom(300_000), 'derived/geo/terrain.sqlite': os.urandom(500_000),
-             'derived/geo/national-status.json': b'{"state":"complete"}', 'derived/geo/socal-cells.json': b'[]',
-             'library-data/geography/resources/atlas.sqlite': os.urandom(100_000)}
-    files['map-set.json'] = json.dumps({'name': state, 'files': {k: len(v) for k, v in files.items()}}).encode()
-    files.update(extra or {})
-    with zipfile.ZipFile(path, 'w', zipfile.ZIP_STORED) as z:
-        for k, v in files.items():
-            z.writestr('LastbookData/' + k, v)
-    return files
-
-
-class Maps(Base):
-    def map_manifest(self, extra=None):
-        files = make_map(self.tmp / 'Lastbook-Map-CA.zip', extra=extra)
-        data = (self.tmp / 'Lastbook-Map-CA.zip').read_bytes()
-        self.files.data['Lastbook-Map-CA.zip'] = data
-        m = self.manifest().current
-        m['maps'] = [{'id': 'CA', 'title': 'California', 'kind': 'state', 'includes': 'x', 'installed_bytes': sum(map(len, files.values())),
-                      'download_bytes': len(data), 'available': True,
-                      'files': [{'name': 'Lastbook-Map-CA.zip', 'url': f'{self.base}/Lastbook-Map-CA.zip', 'size': len(data), 'sha256': sha(data), 'kind': 'zip'}]}]
-        return manifest.Manifest(bundled=m, remote=None, allowed=ALLOWED, context=self.ctx), files
-
-    def test_pack_with_map(self):
-        mf, files = self.map_manifest()
-        s = self.setup(manifest=mf)
-        j = s.start('small', map_id='CA')
-        self.assertEqual([i['kind'] for i in j['items']], ['pack', 'map'])
-        self.assertEqual(self.wait(s)['state'], 'done')
-        lib, _ = api.startup(self.settings)
-        self.assertEqual(install.map_name(lib), 'CA')
-        self.assertEqual((lib / 'derived/geo/map.sqlite').read_bytes(), files['derived/geo/map.sqlite'])   # the state's, not the pack's
-        self.assertTrue((lib / 'library-data/catalog.json').is_file())
-        self.assertEqual(self.setup('manage', current=lib, manifest=mf).current_info()['map'], 'CA')
-
-    def test_map_only_in_manage_mode(self):
-        mf, files = self.map_manifest()
-        cur = self.parent / 'LastbookData'
-        (cur / 'library-data').mkdir(parents=True)
-        (cur / 'library-data/catalog.json').write_text('{}')
-        (cur / 'pack.json').write_text('{"name": "small", "map": "base"}')
-        (cur / 'derived/geo').mkdir(parents=True)
-        for n in ('map.sqlite', 'water.sqlite', 'water.sqlite-wal', 'national.sqlite'):
-            (cur / 'derived/geo' / n).write_bytes(b'old ' + n.encode())
-        s = self.setup('manage', current=cur, manifest=mf)
-        self.assertEqual(s.current_info()['map'], 'base')
-        j = s.start(map_id='CA')
-        self.assertEqual([i['kind'] for i in j['items']], ['map'])
-        self.assertEqual(self.wait(s)['state'], 'done')
-        self.assertEqual((cur / 'derived/geo/water.sqlite').read_bytes(), b'old water.sqlite')    # untouched until the restart
-        lib, note = api.startup(self.settings)
-        self.assertIsNone(note.get('error'))
-        self.assertEqual(install.map_name(lib), 'CA')
-        geo = sorted(p.name for p in (lib / 'derived/geo').iterdir())
-        self.assertEqual(geo, ['map.sqlite', 'national-status.json', 'socal-cells.json', 'terrain.sqlite'])   # the old set, -wal too, went
-        self.assertEqual((Path(note['map_old']) / 'derived/geo/water.sqlite-wal').read_bytes(), b'old water.sqlite-wal')
-        api.opened(self.settings, lib, note)
-        self.assertFalse((self.parent / 'LastbookData.setup').exists())
-        self.assertEqual(self.setup('manage', current=lib, manifest=mf).start(map_id='CA')['code'], 'nothing')
-
-    def test_map_into_a_library_with_another_name(self):
-        """1.1.4: a library opened with --data from a folder not called LastbookData got the map in a nested
-        LastbookData. The job must target the open library as it is."""
-        mf, files = self.map_manifest()
-        cur = self.parent / 'data'
-        (cur / 'library-data').mkdir(parents=True)
-        (cur / 'library-data/catalog.json').write_text('{}')
-        (cur / 'pack.json').write_text('{"name": "small", "map": "base"}')
-        s = self.setup('manage', current=cur, manifest=mf)
-        j = s.start(folder=str(cur), map_id='CA')     # as the window sends it: the shown folder, the library itself
-        self.assertEqual(j['folder'], str(cur))
-        self.assertEqual(self.wait(s)['state'], 'done')
-        self.assertTrue((self.parent / 'data.setup').is_dir())
-        self.assertEqual(api.startup(self.settings, only=self.parent / 'other'), (None, None))   # --data naming another library: not now
-        self.assertEqual(install.map_name(cur), 'base')
-        lib, note = api.startup(self.settings, only=cur)                                       # --data naming this one: switched
-        self.assertEqual((lib, install.map_name(cur)), (cur, 'CA'))
-        self.assertFalse((cur / 'LastbookData').exists())
-        api.opened(self.settings, lib, note)
-        self.assertFalse((self.parent / 'data.setup').exists())
-
-    def test_map_zip_with_other_files_refused(self):
-        mf, _ = self.map_manifest(extra={'library-data/catalog.json': b'{}'})
-        cur = self.parent / 'LastbookData'
-        (cur / 'library-data').mkdir(parents=True)
-        (cur / 'library-data/catalog.json').write_text('{"mine": 1}')
-        s = self.setup('manage', current=cur, manifest=mf)
-        s.start(map_id='CA')
-        j = self.wait(s)
-        self.assertEqual(j['error']['code'], 'unpack')
-        self.assertEqual((cur / 'library-data/catalog.json').read_text(), '{"mine": 1}')
-
-    def test_bad_new_map_leaves_library(self):
-        cur = self.parent / 'LastbookData'
-        (cur / 'library-data').mkdir(parents=True)
-        (cur / 'library-data/catalog.json').write_text('{}')
-        (cur / 'derived/geo').mkdir(parents=True)
-        (cur / 'derived/geo/map.sqlite').write_bytes(b'old')
-        work = self.parent / 'LastbookData.setup'
-        new = work / 'unpack-map' / 'LastbookData'
-        (new / 'derived/geo').mkdir(parents=True)
-        (new / 'map-set.json').write_text(json.dumps({'name': 'CA', 'files': {'derived/geo/map.sqlite': 999}}))
-        (new / 'derived/geo/map.sqlite').write_bytes(b'short')
-        self.settings.mkdir(parents=True)
-        install.stage_switch(api._pending_file(self.settings), new, cur, kind='map')
-        (self.settings / 'setup.json').write_text(json.dumps({'work': str(work)}))
-        lib, note = api.startup(self.settings)
-        self.assertIn('error', note)
-        self.assertEqual((cur / 'derived/geo/map.sqlite').read_bytes(), b'old')
-
-    def test_space_counts_the_map(self):
-        mf, _ = self.map_manifest()
-        s = self.setup(manifest=mf)
-        with mock.patch.object(hardware, 'disk_of', lambda p: (10 ** 9, 10 ** 12)):
-            a = s.start('small')['need_bytes']
-            b = s.start('small', map_id='CA')['need_bytes']
-        self.assertEqual(b - a, mf.map('CA')['download_bytes'] + mf.map('CA')['installed_bytes'])
-        self.assertIn('CA', s.state()['recommend']['map_need_bytes'])
-        self.assertIn('maps', s.state()['manifest'])
-        self.assertEqual(s.start(map_id='CA')['code'], 'nothing')    # first run: a library first
-
-    def test_map_zip_without_top_folder(self):
-        """The real state zips hold derived/geo/... at the top, with no LastbookData/ folder."""
-        flat = self.tmp / 'flat.zip'
-        make_map(self.tmp / 'm.zip')
-        with zipfile.ZipFile(self.tmp / 'm.zip') as a, zipfile.ZipFile(flat, 'w') as b:
-            for i in a.infolist():
-                b.writestr(i.filename[len('LastbookData/'):], a.read(i))
-        lib = install.unpack(flat, self.tmp / 'out', 10 * MiB, Control(), lambda d, t: None, allowed=install.map_member)
-        self.assertEqual(install.map_name(lib), 'CA')
-        with zipfile.ZipFile(self.tmp / 'evil.zip', 'w') as z:
-            z.writestr('../x.sqlite', b'x')
-        with self.assertRaises(install.Refused):
-            install.unpack(self.tmp / 'evil.zip', self.tmp / 'out2', 10 * MiB, Control(), lambda d, t: None, allowed=install.map_member)
-        flatpack = self.tmp / 'flatpack.zip'
-        with zipfile.ZipFile(flatpack, 'w') as z:
-            z.writestr('library-data/catalog.json', b'{}')
-        with self.assertRaises(install.Refused):     # a pack still needs its LastbookData folder
-            install.unpack(flatpack, self.tmp / 'out3', 10 * MiB, Control(), lambda d, t: None)
-
-    def test_pack_map_field(self):
-        m = self.manifest().current
-        raw = {**m, 'packs': [{**m['packs'][0], 'map': 'CA'}, {**m['packs'][0], 'id': 'x', 'map': 'base'}]}
-        v = manifest.validate(raw, ALLOWED)
-        self.assertEqual([p['map'] for p in v['packs']], ['CA', None])
-
-    def test_merge_keeps_bundled_maps(self):
-        mf, _ = self.map_manifest()
-        merged = manifest.merge(mf.current, {**mf.current, 'maps': []})
-        self.assertEqual([x['id'] for x in merged['maps']], ['CA'])
-
-
-class AddressIndexes(Maps):
-    def address_manifest(self, wrong_path=False):
-        mf, maps = self.map_manifest()
-        name = 'Lastbook-Addresses-CA.zip'
-        payload = b'address index fixture' * 1000
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, 'w') as archive:
-            path = 'derived/geo/map.sqlite' if wrong_path else 'derived/geo/addresses/CA.sqlite'
-            archive.writestr(path, payload)
-        data = buf.getvalue()
-        self.files.data[name] = data
-        mf.current['address_indexes'] = [{'id': 'CA', 'title': 'California', 'available': True,
-            'installed_bytes': len(payload), 'download_bytes': len(data),
-            'files': [{'name': name, 'url': f'{self.base}/{name}', 'size': len(data), 'sha256': sha(data), 'kind': 'zip'}]}]
-        return mf, payload
-
-    def test_fresh_map_download_includes_addresses(self):
-        mf, payload = self.address_manifest()
-        setup = self.setup(manifest=mf)
-        job = setup.start('small', map_id='CA')
-        self.assertEqual([item['kind'] for item in job['items']], ['pack', 'map', 'addresses'])
-        self.assertEqual(self.wait(setup)['state'], 'done')
-        library, _ = api.startup(self.settings)
-        self.assertEqual((library / 'derived/geo/addresses/CA.sqlite').read_bytes(), payload)
-        self.assertEqual(self.setup('manage', current=library, manifest=mf).current_info()['address_indexes'], ['CA'])
-
-    def test_existing_map_downloads_only_missing_index(self):
-        mf, payload = self.address_manifest()
-        library = self.parent / 'LastbookData'
-        (library / 'library-data').mkdir(parents=True)
-        (library / 'library-data/catalog.json').write_text('{}')
-        (library / 'pack.json').write_text('{"name":"small","map":"CA"}')
-        (library / 'derived/geo').mkdir(parents=True)
-        (library / 'derived/geo/map.sqlite').write_bytes(b'existing map')
-        setup = self.setup('manage', current=library, manifest=mf)
-        job = setup.start(map_id='CA')
-        self.assertEqual([item['kind'] for item in job['items']], ['addresses'])
-        self.assertIsNotNone(setup._checked_job(json.loads(json.dumps(setup.job))))
-        self.assertEqual(self.wait(setup)['state'], 'done')
-        self.assertEqual((library / 'derived/geo/map.sqlite').read_bytes(), b'existing map')
-        self.assertEqual((library / 'derived/geo/addresses/CA.sqlite').read_bytes(), payload)
-        self.assertEqual(setup.start(address_id='CA')['code'], 'nothing')
-
-    def test_all_library_can_add_one_state_addresses(self):
-        mf, payload = self.address_manifest()
-        library = self.parent / 'LastbookData'
-        (library / 'library-data').mkdir(parents=True)
-        (library / 'library-data/catalog.json').write_text('{}')
-        (library / 'pack.json').write_text('{"name":"all","map":"us"}')
-        setup = self.setup('manage', current=library, manifest=mf)
-        job = setup.start(address_id='CA')
-        self.assertEqual([item['kind'] for item in job['items']], ['addresses'])
-        self.assertEqual(self.wait(setup)['state'], 'done')
-        self.assertEqual(install.map_name(library), 'us')
-        self.assertEqual((library / 'derived/geo/addresses/CA.sqlite').read_bytes(), payload)
-
-    def test_index_cannot_replace_map_files(self):
-        mf, _ = self.address_manifest(wrong_path=True)
-        setup = self.setup(manifest=mf)
-        setup.start('small', address_id='CA')
-        self.assertEqual(self.wait(setup)['error']['code'], 'unpack')
-
-    def test_addresses_survive_pack_upgrade(self):
-        old = self.tmp / 'old'
-        new = self.tmp / 'new'
-        (old / 'derived/geo/addresses').mkdir(parents=True)
-        source = old / 'derived/geo/addresses/CA.sqlite'
-        source.write_bytes(b'address index')
-        new.mkdir()
-        install.carry_over(old, new)
-        self.assertEqual((new / 'derived/geo/addresses/CA.sqlite').read_bytes(), b'address index')
-        self.assertFalse(source.exists())
-
-    def test_unavailable_address_index_does_not_block_map(self):
-        mf, _ = self.address_manifest()
-        mf.current['address_indexes'][0]['available'] = False
-        setup = self.setup(manifest=mf)
-        job = setup.start('small', map_id='CA')
-        self.assertEqual([item['kind'] for item in job['items']], ['pack', 'map'])
-        self.assertEqual(self.wait(setup)['state'], 'done')
-        library, _ = api.startup(self.settings)
-        self.assertEqual(install.map_name(library), 'CA')
-
-    def test_missing_address_index_does_not_block_map(self):
-        mf, _ = self.address_manifest()
-        mf.current['address_indexes'][0]['id'] = 'RI'
-        setup = self.setup(manifest=mf)
-        job = setup.start('small', map_id='CA')
-        self.assertEqual([item['kind'] for item in job['items']], ['pack', 'map'])
-        self.assertEqual(self.wait(setup)['state'], 'done')
-
-    def test_explicit_unavailable_address_index_is_rejected(self):
-        mf, _ = self.address_manifest()
-        mf.current['address_indexes'][0]['available'] = False
-        setup = self.setup(manifest=mf)
-        self.assertEqual(setup.start('small', address_id='CA')['code'], 'unavailable')
-        self.assertEqual(setup.start('small', address_id='HI')['code'], 'unavailable')
-
-    def test_address_manifest_validation_and_pinning(self):
-        mf, _ = self.address_manifest()
-        validated = manifest.validate(mf.current, ALLOWED)
-        self.assertIsNotNone(validated)
-        bad = json.loads(json.dumps(mf.current))
-        bad['address_indexes'][0]['id'] = '../CA'
-        self.assertIsNone(manifest.validate(bad, ALLOWED))
-        fetched = json.loads(json.dumps(validated))
-        fetched['address_indexes'][0]['files'][0]['sha256'] = '0' * 64
-        merged = manifest.merge(validated, fetched)
-        self.assertEqual(merged['address_indexes'][0]['files'], validated['address_indexes'][0]['files'])
-
-
 class ContentRevisions(Base):
     def revised_manifest(self, revision='2026-11-13-small-v2', actual_revision=None):
-        metadata = {'name': 'small', 'map': 'base', 'content_revision': actual_revision or revision}
+        metadata = {'name': 'small', 'map': 'base', 'content_revision': actual_revision or revision}     # 'map': upstream's, unread
         path = self.tmp / 'new-small.zip'
         installed = make_pack(path, {'library-data/catalog.json': b'{}',
                                     'pack.json': json.dumps(metadata).encode(),
@@ -1457,15 +1337,15 @@ class ContentRevisions(Base):
         geo = lib / 'derived/geo'
         geo.mkdir(parents=True)
         (geo / 'map.sqlite').write_bytes(b'my detailed state map')
+        (geo / 'world.mbtiles').write_bytes(b'my world map')
         (lib / 'map-set.json').write_text(json.dumps({'name': 'MI', 'files': {'derived/geo/map.sqlite': 21}}))
-        (lib / 'models').mkdir()
-        (lib / 'models/model.gguf').write_bytes(self.blob)
         (geo / 'addresses').mkdir()
         (geo / 'addresses/MI.sqlite').write_bytes(b'my address index')
         (geo / 'addresses/MI.json').write_text('{"files": {}}')
         return lib
 
-    def test_same_pack_refresh_preserves_map_addresses_and_their_files(self):
+    def test_same_pack_refresh_keeps_their_map_and_leaves_upstreams_behind(self):
+        """An upstream state map and address index in the open library are not carried, and go with the old library."""
         mf = self.revised_manifest()
         library = self.old_library()
         setup = self.setup('manage', current=library, manifest=mf)
@@ -1473,13 +1353,14 @@ class ContentRevisions(Base):
         self.assertEqual([item['kind'] for item in job['items']], ['pack'])
         self.assertEqual(setup.job['plan']['pack']['revision'], '2026-11-13-small-v2')
         self.assertEqual(self.wait(setup)['state'], 'done')
-        opened, _ = api.startup(self.settings)
-        self.assertEqual(opened, library)
-        self.assertEqual((library / 'derived/geo/map.sqlite').read_bytes(), b'my detailed state map')
-        self.assertEqual(install.map_name(library), 'MI')
-        self.assertEqual((library / 'models/model.gguf').read_bytes(), self.blob)
-        self.assertEqual((library / 'derived/geo/addresses/MI.sqlite').read_bytes(), b'my address index')
-        self.assertTrue((library / 'derived/geo/addresses/MI.json').exists())
+        opened, note = api.startup(self.settings)
+        self.assertEqual((opened, note.get('error')), (library, None))
+        self.assertEqual((library / 'derived/geo/world.mbtiles').read_bytes(), b'my world map')
+        self.assertEqual((library / 'library-data/new.txt').read_bytes(), b'new content')
+        for gone in ('derived/geo/map.sqlite', 'derived/geo/addresses', 'map-set.json'):
+            self.assertFalse((library / gone).exists(), gone)
+        api.opened(self.settings, library, note).join(20)
+        self.assertEqual(sorted(p.name for p in self.parent.iterdir()), ['LastbookData'])
         refreshed = self.setup('manage', current=library, manifest=mf)
         self.assertEqual(refreshed.current_info()['content_revision'], '2026-11-13-small-v2')
         self.assertEqual(refreshed.start('small', folder=str(library))['code'], 'nothing')

@@ -160,10 +160,15 @@ fi
 
 # The agent skill (how an AI agent on this computer uses the `lastbook`
 # commands) is the desktop user's own file, ~/.agents/skills/lastbook, so it is
-# written as the user who ran sudo, never as root. The window keeps it current.
+# written as the user who ran sudo (or pkexec), never as root. Lastbook itself
+# also installs it on first use and keeps it current, so this only makes it
+# available before the first run.
 install_skill() {
   local user uid home as_user=()
-  user="${SUDO_USER:-${USER:-$(id -un)}}"
+  user="${SUDO_USER:-}"
+  # pkexec names the caller by number only.
+  [[ -z $user && -n ${PKEXEC_UID:-} ]] && user="$(id -un "$PKEXEC_UID" 2>/dev/null)" || true
+  user="${user:-${USER:-$(id -un)}}"
   uid="$(id -u "$user" 2>/dev/null)" || uid=''
   home="$(getent passwd "$user" | cut -d: -f6)" || home=''
   if [[ -z $uid || $uid == 0 || -z $home ]]; then

@@ -44,12 +44,43 @@ def remembered():
 
 
 def remember(folder):
+    """Written whole or not at all: to a file beside it, sent to the disk, then renamed over it. Written in place, a full
+    disk or a power cut mid-write would leave an empty settings file, and the library chosen before would be forgotten."""
     settings = app_folders()[0] / 'settings.json'
+    tmp = settings.with_name(f'.settings.json.{os.getpid()}')
     try:
         settings.parent.mkdir(parents=True, exist_ok=True)
-        settings.write_text(json.dumps({'library': str(folder)}), encoding='utf-8')
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(json.dumps({'library': str(folder)}))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, settings)
     except OSError as e:   # it still opens this time; it asks again next time
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
         print('could not remember the library:', e, flush=True)
+
+
+def link_library(data):
+    """<app data>/library points at the open library's files (LastbookData/library-data), wherever the library lives: one
+    short, stable path for the person and for an agent's grep, cat and jq. Only ever a link: a real file or folder of
+    that name is left alone. Never stops the app."""
+    link, target = app_folders()[1] / 'library', Path(data) / 'library-data'
+    try:
+        if os.path.lexists(link) and not link.is_symlink():
+            return
+        if link.is_symlink() and os.readlink(link) == str(target):
+            return
+        link.parent.mkdir(parents=True, exist_ok=True)
+        tmp = link.with_name(f'.library.{os.getpid()}')
+        if os.path.lexists(tmp):
+            tmp.unlink()
+        os.symlink(target, tmp)
+        os.replace(tmp, link)
+    except OSError as e:
+        print('could not link the library:', e, flush=True)
 
 
 def places():

@@ -149,7 +149,8 @@ fn value(b: &[u8]) -> Option<Val> {
 }
 
 fn geometry(cmds: &[u64]) -> Vec<Vec<(f32, f32)>> {
-    let (mut parts, mut cur): (Vec<Vec<(f32, f32)>>, Vec<(f32, f32)>) = (Vec::new(), Vec::new());
+    let mut parts: Vec<Vec<(f32, f32)>> = Vec::new();
+    let mut cur: Vec<(f32, f32)> = Vec::new();
     let (mut x, mut y) = (0i64, 0i64);
     let mut i = 0;
     while i < cmds.len() {
@@ -220,8 +221,8 @@ fn layer(b: &[u8]) -> Option<Layer> {
             }
         }
         let mut props = HashMap::new();
-        for pair in tags.chunks_exact(2) {
-            if let (Some(k), Some(v)) = (keys.get(pair[0] as usize), vals.get(pair[1] as usize)) {
+        for [key, val] in tags.as_chunks::<2>().0 {
+            if let (Some(k), Some(v)) = (keys.get(*key as usize), vals.get(*val as usize)) {
                 props.insert(k.clone(), v.clone());
             }
         }

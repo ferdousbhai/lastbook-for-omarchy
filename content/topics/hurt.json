@@ -48,7 +48,6 @@
   "diabetes",
   "low blood sugar",
   "triage",
-  "911",
   "emergency",
   "poison",
   "swallowed",
@@ -212,7 +211,7 @@
     {
      "doc": "video-6eRwgM2Pa4o",
      "label": "Video: hands-only CPR",
-     "note": "American Red Cross demonstration (about 3 minutes, captions) of checking the person, calling 911 and doing compression-only CPR."
+     "note": "American Red Cross demonstration (about 3 minutes, captions) of checking the person, calling the emergency number and doing compression-only CPR."
     },
     {
      "doc": "med-2e83e22162a9a006",

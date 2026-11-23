@@ -28,9 +28,13 @@ with a package scan, and that scan must pass. If you change a guide in `content/
 against a library, so every id, page and encyclopedia path it cites still exists:
 
 ```bash
-python3 tools/validate_topics.py --data /path/to/LastbookData      # or set LASTBOOK_DATA
+PYTHONPATH=$(bin/test-deps) python3 tools/validate_topics.py --data /path/to/LastbookData --allow-absent      # or set LASTBOOK_DATA
 ```
 
+`bin/test-deps` provides libzim, which the encyclopedia paths are checked with. The guides also cite documents and
+encyclopedias that only the larger packs hold, and the app leaves those out of a smaller pack; `--allow-absent` lists
+them under "NOT IN THIS LIBRARY" without counting them, so on Small the run ends `ERRORS 0` and a new error is yours. A
+mistyped id is listed there too, so read that list for anything you added. Leave out `--allow-absent` on the All pack.
 It reads the library's files directly and needs no server. `tools/libq.py` takes the same `--data` and finds and reads
 the page you mean to cite: `python3 tools/libq.py --data /path/to/LastbookData search "boil water"`.
 

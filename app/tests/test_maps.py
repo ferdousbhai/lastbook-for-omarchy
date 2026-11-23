@@ -1,14 +1,19 @@
-"""The map made in setup (engine/setup/maps.py): PMTiles addressing, directory parsing, and keeping the person's map."""
+"""The map made in setup (engine/setup/maps.py): PMTiles addressing, directory parsing, and keeping the person's map. And the
+help points `lastbook place --nearby` reads back out of a street map (engine/map_pois.py)."""
 import functools
 import gzip
-import json
 import sqlite3
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from engine import map_pois
 from engine.setup import download, install, maps
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fixture  # noqa: E402
 
 
 def varint(n):
@@ -135,10 +140,8 @@ class MapsTests(unittest.TestCase):
             old, new = Path(t, 'old'), Path(t, 'new')
             for lib in (old, new):
                 (lib / 'derived' / 'geo').mkdir(parents=True)
-            for name in ('world.mbtiles', 'world-places.sqlite', 'regions-monaco.mbtiles', 'CA.sqlite'):
+            for name in ('world.mbtiles', 'world-places.sqlite', 'regions-monaco.mbtiles'):
                 (old / 'derived' / 'geo' / name).write_bytes(b'x')
-            (old / 'map-set.json').write_text(json.dumps({'name': 'CA', 'files': {'derived/geo/CA.sqlite': 1}}))
-            self.assertEqual(sorted(install.map_files(old)), ['derived/geo/CA.sqlite', 'map-set.json'])   # a map swap leaves ours alone
             install.carry_over(old, new)
             self.assertEqual(sorted(p.name for p in (new / 'derived' / 'geo').iterdir()),
                              ['regions-monaco.mbtiles', 'world-places.sqlite', 'world.mbtiles'])
@@ -318,6 +321,121 @@ class CutTests(unittest.TestCase):
         self.bytes = self.bytes[:96] + b'\x00' + self.bytes[97:]
         with self.assertRaises(download.Failed):
             self.cut(None).measure()
+
+
+
+class HelpPointTests(unittest.TestCase):
+    """A made-up town at 12.5 N, 34.25 E with a street map of its own (fixture.region_file)."""
+    LAT, LON = 12.5, 34.25
+
+    def region(self, t, points, **more):
+        geo = Path(t, 'derived', 'geo')
+        geo.mkdir(parents=True, exist_ok=True)
+        fixture.region_file(geo / 'regions-test.mbtiles', points, **more)
+        return geo
+
+    def test_a_tile_gives_its_help_points_and_nothing_else(self):
+        tile = fixture.map_tile({
+            'buildings': [({'kind': 'hospital', 'name': 'Not a point of help'}, (5, 5))],
+            'pois': [({'name': 'RS Test', 'name:en': 'Test Hospital', 'kind': 'hospital', 'min_zoom': 13}, (2048, 1024)),
+                     ({'kind': 'pharmacy', 'min_zoom': 15}, (4095, 0)),                      # no name
+                     ({'name': 'Warung', 'kind': 'restaurant'}, (100, 100)),
+                     ({'name': 'Next door', 'kind': 'hospital'}, (-8, 300)),                 # the tile's margin: the neighbour's
+                     ({'name': 'hospital', 'kind': 'school'}, (7, 7))]})
+        want = [('hospital', 'RS Test', 0.5, 0.25), ('pharmacy', '', 4095 / 4096, 0.0)]
+        self.assertEqual(map_pois.pois(tile, {'hospital', 'pharmacy'}), want)
+        self.assertEqual(map_pois.pois(gzip.decompress(tile), {'hospital', 'pharmacy'}), want)   # not compressed: the same
+        self.assertEqual(map_pois.pois(tile, {'castle'}), [])
+        for damaged in (tile[:40], b'\x1f\x8b nothing', gzip.compress(b'\x1a\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff'), gzip.compress(b'\x1a\x7fpois')):
+            with self.assertRaises((ValueError, IndexError, map_pois.zlib.error)):
+                map_pois.pois(damaged, {'hospital'})
+        with mock.patch.object(map_pois, 'MAX_TILE', 1000), self.assertRaises(ValueError):
+            map_pois.pois(gzip.compress(bytes(100_000)), {'hospital'})                          # unpacks to far more than it may
+        # A `pois` layer whose feature or value is a number where a message should be: refused as a tile that is not one.
+        f, v = fixture._field, fixture._varint
+        kind, hospital = f(3, b'kind'), f(4, f(1, b'hospital'))
+        for layer in (f(1, b'pois') + v(2 << 3) + v(5) + kind + hospital, f(1, b'pois') + f(2, b'') + kind + v(4 << 3) + v(7)):
+            with self.assertRaises(ValueError):
+                map_pois.pois(gzip.compress(f(3, layer)), {'hospital'})
+
+    def test_the_points_around_a_place(self):
+        lat, lon = self.LAT, self.LON
+        near = [('hospital', 'Town Hospital', lat + 0.01, lon), ('pharmacy', 'Corner Pharmacy', lat, lon - 0.015),
+                ('hospital', 'Second Hospital', lat - 0.03, lon + 0.03), ('pharmacy', 'Far Pharmacy', lat + 0.5, lon),
+                ('hospital', 'Regional Hospital', lat, lon + 0.5), ('toilets', None, lat + 0.001, lon), ('water_point', 'Standpipe', lat, lon + 0.001)]
+        with tempfile.TemporaryDirectory() as t:
+            geo = self.region(t, {15: near, 14: [near[4]]})
+            with map_pois.Regions(geo, ['hospital', 'pharmacy', 'toilet', 'drinking_water']) as r:
+                def names(cls, km, inner=0.0):
+                    return [name for _, name, _, _ in r.box(lat, lon, cls, km, inner)]
+                (cls, name, x, y), = r.box(lat, lon, 'hospital', 2.2)
+                self.assertEqual((cls, name), ('hospital', 'Town Hospital'))
+                self.assertAlmostEqual(x, lon, places=4)       # within a tile unit, about 0.3 m
+                self.assertAlmostEqual(y, lat + 0.01, places=4)
+                self.assertEqual(names('pharmacy', 2.2), ['Corner Pharmacy'])
+                self.assertEqual(names('hospital', 4.4, 2.2), ['Second Hospital'])         # the ring only: not Town Hospital again
+                self.assertEqual(sorted(names('hospital', 4.4)), ['Second Hospital', 'Town Hospital'])
+                # Farther than FULL_KM the map is read a zoom coarser, where it shows the hospital and not the pharmacy.
+                self.assertEqual(names('hospital', 70, 35), ['Regional Hospital'])
+                self.assertEqual(names('pharmacy', 70, 35), [])
+                self.assertEqual(names('hospital', 70), ['Regional Hospital'])
+                # What --nearby calls a kind and what the map does.
+                self.assertEqual([p[:2] for p in r.box(lat, lon, 'toilet', 2.2)], [('toilet', '')])
+                self.assertEqual(names('drinking_water', 2.2), ['Standpipe'])
+                self.assertEqual(r.box(lat, lon, 'police', 2.2), [])                       # not asked for when it was opened
+                self.assertTrue(r.covers(lat, lon))
+                self.assertFalse(r.covers(lat + 1, lon))
+                self.assertFalse(r.covers(-lat, lon))
+
+    def test_a_damaged_tile_or_file_gives_nothing(self):
+        lat, lon = self.LAT, self.LON
+        with tempfile.TemporaryDirectory() as t:
+            x, y = map_pois._tile_xy(lat, lon, 15)
+            geo = self.region(t, {15: [('hospital', 'Next Tile Hospital', lat + 0.012, lon)]}, tiles={(15, x, y): b'\x1f\x8b not a tile'})
+            (geo / 'regions-broken.mbtiles').write_bytes(b'not SQLite')
+            (geo / 'world.mbtiles').write_bytes(b'not read for help points')
+            with map_pois.Regions(geo, ['hospital']) as r:
+                self.assertEqual(len(r.files), 1)
+                self.assertTrue(r.covers(lat, lon))
+                self.assertEqual([p[1] for p in r.box(lat, lon, 'hospital', 2.2)], ['Next Tile Hospital'])
+            with map_pois.Regions(Path(t, 'no-such-folder'), ['hospital']) as r:
+                self.assertEqual((r.covers(lat, lon), r.box(lat, lon, 'hospital', 2.2)), (False, []))
+
+    def test_a_tile_of_the_wrong_shape_is_left_out(self):
+        lat, lon = self.LAT, self.LON
+        f, v = fixture._field, fixture._varint
+        bad = gzip.compress(f(3, f(1, b'pois') + v(2 << 3) + v(5) + f(3, b'kind') + f(4, f(1, b'hospital'))))
+        with tempfile.TemporaryDirectory() as t:
+            x, y = map_pois._tile_xy(lat, lon, 15)
+            geo = self.region(t, {15: [('hospital', 'Next Tile Hospital', lat + 0.012, lon)]}, tiles={(15, x, y): bad})
+            with map_pois.Regions(geo, ['hospital']) as r:
+                self.assertEqual([p[1] for p in r.box(lat, lon, 'hospital', 2.2)], ['Next Tile Hospital'])
+
+    def test_across_the_antimeridian(self):
+        """Taveuni, Fiji, is cut by the 180th meridian: a hospital 1 km east of a place at 179.995 E is at -179.996."""
+        lat = -16.85
+        with tempfile.TemporaryDirectory() as t:
+            geo = self.region(t, {15: [('hospital', 'Across', lat, -179.996), ('hospital', 'Same side', lat, 179.72)]})
+            with map_pois.Regions(geo, ['hospital']) as r:
+                self.assertEqual([p[1] for p in r.box(lat, 179.995, 'hospital', 2.2)], ['Across'])
+                self.assertEqual(sorted(p[1] for p in r.box(lat, 179.995, 'hospital', 35)), ['Across', 'Same side'])
+                self.assertEqual([p[1] for p in r.box(lat, -179.99, 'hospital', 35, 2.2)], ['Same side'])   # and from the other side
+
+    def test_a_box_is_square_on_the_ground(self):
+        """At 60 N a degree of longitude is half as long: a point 20 km east is 0.36 degrees away, in a 35 km box."""
+        lat, lon = 60.0, 25.0
+        with tempfile.TemporaryDirectory() as t:
+            geo = self.region(t, {15: [('pharmacy', 'East', lat, lon + 0.36), ('pharmacy', 'Too far east', lat, lon + 0.7)]})
+            with map_pois.Regions(geo, ['pharmacy']) as r:
+                self.assertEqual([p[1] for p in r.box(lat, lon, 'pharmacy', 35)], ['East'])
+
+    def test_the_most_detailed_file_with_a_tile_is_read_once(self):
+        lat, lon = self.LAT, self.LON
+        with tempfile.TemporaryDirectory() as t:
+            geo = self.region(t, {15: [('police', 'Town Police', lat, lon)]})
+            fixture.region_file(geo / 'regions-test-again.mbtiles', {15: [('police', 'Town Police', lat, lon), ('police', 'Harbour Police', lat + 0.03, lon)]})
+            with map_pois.Regions(geo, ['police']) as r:   # two overlapping regions: a point is not given twice
+                self.assertEqual(sorted(p[1] for p in r.box(lat, lon, 'police', 4.4)), ['Harbour Police', 'Town Police'])
 
 
 if __name__ == '__main__':

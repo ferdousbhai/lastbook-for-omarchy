@@ -4,14 +4,19 @@
     Protomaps daily build of OpenStreetMap (https://docs.protomaps.com/basemaps/downloads), a PMTiles archive read over
     HTTPS range requests through download.py, the one way out: only the tiles wanted are fetched. They are written as
     MBTiles (SQLite) files the window draws: derived/geo/world.mbtiles and derived/geo/regions-<id>.mbtiles.
-  - Place search for the whole world is built from GeoNames (CC BY 4.0): every country, first-level region, and town of
-    15,000 people or more, with alternate names: derived/geo/world-places.sqlite.
+  - Place search for the whole world is built from GeoNames (CC BY 4.0): every country, first-level region, and place of
+    500 people or more (villages too, and the seats of local governments), the larger ones with alternate names:
+    derived/geo/world-places.sqlite.
   - The regions offered are Geofabrik's (countries, and parts of large countries), listed with their bounding boxes in
     map-regions.json, bundled with the app (packaging/arch/map-regions.json; tools/make_region_list.py makes it).
 
-Files are built beside their final name and moved into place when complete, so a stopped download leaves nothing half
-made. Integrity comes from HTTPS to the allow-listed hosts with the pinned roots (there is no published checksum for a
-cut of a daily build), and every tile directory and the gazetteer are parsed before anything is kept.
+Files are built beside their final name (<name>.part) and moved into place when complete, so the map never reads a half
+made one. A cut that is paused or loses the network keeps its part file and carries on from it when the same cut of the
+same daily build is run again; anything else that stops it removes the part file, and whatever a killed process or a
+dropped job left behind is removed when the next map file is made here (sweep). Integrity comes from HTTPS to the
+allow-listed hosts with the pinned roots (there is no published checksum for a cut of a daily build); every tile
+directory and the gazetteer are parsed before anything is kept, and an archive whose tiles are packed in a way the map
+cannot read is refused before any are fetched (the tiles themselves are copied as they are).
 """
 import bisect
 import csv
@@ -80,10 +85,46 @@ def file_id(rid):
     return rid.replace('/', '-')
 
 
-def installed(geo):
-    """What map files this library has: {world: bool, places: bool, regions: [{id, name, bytes}]}."""
+def _part_files(part):
+    """A part file and what SQLite may keep beside it."""
+    return [part] + [part.with_name(part.name + s) for s in ('-journal', '-wal', '-shm')]
+
+
+def sweep(geo, keep=None):
+    """Removes the half-made map files in a library's derived/geo: <our file>.part and SQLite's files beside it, but
+    not those of `keep` (a map file's final path). One setup job runs at a time and makes one map file at a time, so
+    any other part file was left by a job that was killed, failed or dropped. Returns the bytes freed."""
+    freed = 0
     geo = Path(geo)
-    out = {'world': (geo / WORLD_FILE).is_file(), 'places': (geo / PLACES_FILE).is_file(), 'regions': []}
+    for p in sorted(geo.glob('*.part*')) if geo.is_dir() else []:
+        name, _, tail = p.name.partition('.part')
+        if not ours(name) or tail not in ('', '-journal', '-wal', '-shm') or (keep is not None and name == Path(keep).name):
+            continue
+        try:
+            size = p.stat().st_size
+            p.unlink()
+            freed += size
+        except OSError:
+            pass
+    return freed
+
+
+def places_current(path):
+    """Whether the gazetteer is there and made the way this version makes it (PLACES_VERSION, kept as SQLite's
+    user_version). An older one (towns of 15,000+ only) still works, but counts as missing, so setup offers place search
+    again. The file's header is read rather than opened as a database, which would take a lock."""
+    try:
+        with open(path, 'rb') as f:
+            head = f.read(64)
+    except OSError:
+        return False
+    return head[:16] == b'SQLite format 3\0' and int.from_bytes(head[60:64], 'big') >= PLACES_VERSION
+
+
+def installed(geo):
+    """What map files this library has: {world: bool, places: bool (and current: places_current), regions: [{id, name, bytes}]}."""
+    geo = Path(geo)
+    out = {'world': (geo / WORLD_FILE).is_file(), 'places': places_current(geo / PLACES_FILE), 'regions': []}
     by_file = {file_id(r['id']): r for r in regions()}
     for p in sorted(geo.glob('regions-*.mbtiles')) if geo.is_dir() else []:
         fid = p.name[len('regions-'):-len('.mbtiles')]
@@ -261,6 +302,7 @@ class Archive:
 
     def __init__(self, url, control, allowed=None, context=None):
         self.url, self.control, self.allowed, self.context = url, control, allowed, context
+        self.watch = download.Watch()       # one for the whole archive: a map that is getting nowhere ends, part by part or not
         head = self.get(0, 16384)
         if head[:7] != b'PMTiles' or head[7] != 3:
             raise download.Failed('network', 'The map server sent something that is not a map archive.')
@@ -270,14 +312,18 @@ class Archive:
         self.clustered, self.compression, self.tile_type = head[96] == 1, head[97], head[99]
         if self.tile_type != 1:
             raise download.Failed('network', 'The map archive does not hold vector tiles.')
+        if head[98] not in (1, 2):      # tiles as they are, or gzip: all the map and --nearby read (brotli and zstd they do not)
+            raise download.Failed('network', 'The map on the server is packed in a way this version of Lastbook cannot read. '
+                                             'Update Lastbook, then try again.')
         if self.root_len > MAX_DIRECTORY:
             raise download.Failed('network', BAD_INDEX)
         whole = self.root_off + self.root_len <= len(head)
         self.root = self._read(head[self.root_off:self.root_off + self.root_len] if whole else self.get(self.root_off, self.root_len))
         self._leaves = OrderedDict()
 
-    def get(self, start, length):
-        return download.fetch_range(self.url, start, length, self.control, allowed=self.allowed, context=self.context)
+    def get(self, start, length, got=None):
+        return download.fetch_range(self.url, start, length, self.control, allowed=self.allowed, context=self.context,
+                                    watch=self.watch, got=got)
 
     def _read(self, data):
         """One directory as sent, parsed. Whatever is wrong with it is one plain failure."""
@@ -322,8 +368,8 @@ class Archive:
             i += 1
 
 
-def newest_build(allowed=None, context=None):
-    raw = download.fetch_small(BUILDS, limit=4 << 20, allowed=allowed, context=context, timeout=30)
+def newest_build(allowed=None, context=None, control=None):
+    raw = download.fetch_small(BUILDS, limit=4 << 20, allowed=allowed, context=context, timeout=30, control=control)
     try:
         return BUILD_BASE + json.loads(raw)[-1]['key']
     except (TypeError, ValueError, KeyError, IndexError):
@@ -339,6 +385,7 @@ KEPT_BYTES = 32 * 1024 * 1024   # tiles used again far from where they are store
 # space check also leaves DISK_SLACK.
 ROW_BYTES = 40
 DISK_SLACK = 1.4
+MARK = 'lastbook-cut'           # the metadata row of a part file: which cut it is and how far it has got
 
 
 def _full(e):
@@ -363,11 +410,15 @@ class Cut:
         self.control, self.allowed, self.context = control, allowed, context
         self.ranges, self.total, self.tiles, self.disk, self.build = None, 0, 0, 0, None
 
-    def _entries(self):
+    def _entries(self, since=0):
         """(first id, one past the last, box or None, length, offset) for each archive entry holding wanted tile ids, in
-        id order. One entry is one stored tile, or one tile's bytes used for a run of ids (open sea, empty land)."""
+        id order. One entry is one stored tile, or one tile's bytes used for a run of ids (open sea, empty land).
+        since: only the ids from that one on (where an earlier run of this cut got to)."""
         seen = 0
         for lo, hi, box in self.ranges:
+            if hi <= since:
+                continue
+            lo = max(lo, since)
             for tid, run, length, offset in self.archive.entries(lo, hi):
                 seen += 1
                 if not seen & 1023:
@@ -377,7 +428,7 @@ class Cut:
     def measure(self):
         """The bytes run() will fetch (and sets .tiles, the number of tiles it will write, and .disk, about the bytes the
         file takes: one row a tile, each with its own copy of the bytes, however many tiles share them in the archive)."""
-        self.build = newest_build(self.allowed, self.context)
+        self.build = newest_build(self.allowed, self.context, self.control)
         self.archive = Archive(self.build, self.control, self.allowed, self.context)
         if not self.archive.clustered:      # tiles stored in id order: every Protomaps build is, and reading in one pass needs it
             raise download.Failed('network', 'The map archive is not in the order Lastbook reads. Try again later.')
@@ -413,53 +464,110 @@ class Cut:
         self.total, self.tiles, self.disk = total, tiles, disk
         return self.total
 
+    def _identity(self):
+        """What makes two cuts the same: a part file of another build, region or zoom range is not carried on from."""
+        return json.dumps([1, self.build, self.minzoom, self.maxzoom, self.boxes])
+
+    def _kept(self, part):
+        """{'next': the first tile id not yet written, 'done': bytes fetched} from a part file of this same cut, else None."""
+        if not part.is_file():
+            return None
+        try:
+            db = sqlite3.connect(part)      # a transaction cut short by a kill or a power cut is undone here (its journal)
+            try:
+                row = db.execute('SELECT value FROM metadata WHERE name = ?', (MARK,)).fetchone()
+            finally:
+                db.close()
+            state = json.loads(row[0])
+            if state['cut'] != self._identity():
+                return None
+            return {'next': int(state['next']), 'done': int(state['done'])}
+        except (sqlite3.Error, OSError, TypeError, ValueError, KeyError):
+            return None
+
+    def kept_bytes(self):
+        """The size on disk of a part file run() will carry on from (0: none), for whoever checks the free space first.
+        After measure()."""
+        part = self.dest.with_name(self.dest.name + '.part')
+        try:
+            return part.stat().st_size if self._kept(part) else 0
+        except OSError:
+            return 0
+
+    def _mark(self, db, nxt, done):
+        db.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)', (MARK, json.dumps({'cut': self._identity(), 'next': nxt, 'done': done})))
+
     def run(self, progress=lambda done, total: None):
-        """Fetches the tiles into <dest>.part and moves it into place. There is no carrying on from a part file: whatever
-        stops it (cancel, pause, the network, a full disk) removes the part file, and the next run starts the cut over."""
+        """Fetches the tiles into <dest>.part and moves it into place. A pause or a network failure leaves the part file,
+        marked with how far it got (in the same transaction as the tiles, so the mark is never ahead of them), and the
+        next run of the same cut of the same build carries on from there. Anything else that stops it (cancel, a full
+        disk, an error) removes the part file, and so does a run that finds a part file of another build or cut."""
         if self.ranges is None:
             self.measure()
         part = self.dest.with_name(self.dest.name + '.part')
-        sides = [part] + [part.with_name(part.name + s) for s in ('-journal', '-wal', '-shm')]
-        for p in sides:
-            p.unlink(missing_ok=True)
+        sides = _part_files(part)
+        sweep(self.dest.parent, keep=self.dest)
+        state = self._kept(part)
+        if state is None:
+            for p in sides:
+                p.unlink(missing_ok=True)
+        else:
+            print(f'setup: carrying on with {self.dest.name} from {state["done"]} of {self.total} bytes', flush=True)
         try:
             db = sqlite3.connect(part)
             try:
-                db.executescript('''CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT);
-                    CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER, tile_data BLOB);
-                    CREATE UNIQUE INDEX tile_index ON tiles (zoom_level, tile_column, tile_row);''')
-                self._fill(db, progress)
+                if state is None:
+                    db.executescript('''CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT);
+                        CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER, tile_data BLOB);
+                        CREATE UNIQUE INDEX tile_index ON tiles (zoom_level, tile_column, tile_row);''')
+                    state = {'next': 0, 'done': 0}
+                    self._mark(db, 0, 0)
+                    db.commit()
+                self._fill(db, progress, state)
                 meta = {'name': self.name, 'format': 'pbf', 'type': 'baselayer', 'minzoom': str(self.minzoom if self.bbox else 0),
                         'maxzoom': str(self.maxzoom), 'attribution': '© OpenStreetMap contributors (ODbL), Protomaps',
                         'source': self.build.rsplit('/', 1)[-1], 'made': time.strftime('%Y-%m-%d')}
                 if self.boxes:
                     meta['bounds'] = ','.join(f'{v:.4f}' for v in (min(b[0] for b in self.boxes), min(b[1] for b in self.boxes),
                                                                     max(b[2] for b in self.boxes), max(b[3] for b in self.boxes)))
+                db.execute('DELETE FROM metadata WHERE name = ?', (MARK,))
                 db.executemany('INSERT OR REPLACE INTO metadata VALUES (?,?)', meta.items())
                 db.commit()
             finally:
-                db.close()
+                db.close()      # what was not committed is undone: the part file is as its mark says
             os.replace(part, self.dest)
         except BaseException as e:
-            for p in sides:
-                try:
-                    p.unlink(missing_ok=True)
-                except OSError:
-                    pass
+            carry_on = (isinstance(e, download.Stopped) and e.why == 'paused') or (isinstance(e, download.Failed) and e.code == 'network')
+            if not carry_on:
+                for p in sides:
+                    try:
+                        p.unlink(missing_ok=True)
+                    except OSError:
+                        pass
             if _full(e):
                 raise download.Failed('no_space', 'The disk filled up while the map was being made. Free some space, then try again.') from None
             raise
         return self.dest
 
-    def _fill(self, db, progress):
+    def _fill(self, db, progress, state=None):
         insert = 'INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)'
-        done = 0
+        since, done = (state['next'], state['done']) if state else (0, 0)
+        last = since            # one past the last tile id dealt with: written, or waiting in `batch`
+        if done:
+            progress(min(done, self.total), self.total)
 
         def fetch(start, length):
             nonlocal done
-            data = self.archive.get(self.archive.data_off + start, length)
-            done += length
-            progress(min(done, self.total), self.total)
+            told = 0
+
+            def got(n):         # as the bytes arrive, so a large piece on a slow line still shows it is moving
+                nonlocal done, told
+                told, done = told + n, done + n
+                progress(min(done, self.total), self.total)
+            data = self.archive.get(self.archive.data_off + start, length, got)
+            if told != length:
+                done += length - told
+                progress(min(done, self.total), self.total)
             return data
 
         def rows(a, b, box, blob):
@@ -475,11 +583,13 @@ class Cut:
                 data = fetch(start, end - start)
                 for a, b, box, length, offset in batch:
                     db.executemany(insert, rows(a, b, box, data[offset - start:offset - start + length]))
-                db.commit()
                 batch.clear()
-        for entry in self._entries():
+            self._mark(db, last, done)      # every tile id below `last` is in the file now: where another run carries on
+            db.commit()
+        for entry in self._entries(since):
             a, b, box, length, offset = entry
             if box is not None and next(_tiles(a, b, box), None) is None:
+                last = b
                 continue
             if batch and offset >= end and offset - end <= GAP and offset + length - start <= PIECE and len(batch) < BATCH:
                 batch.append(entry)
@@ -500,30 +610,92 @@ class Cut:
                 else:
                     kept.move_to_end((offset, length))
                 db.executemany(insert, rows(a, b, box, blob))
+            last = b
         flush()
 
 
 # ------------------------------------------------------------------------------------------------------ gazetteer --
+PLACES_ZIP, PLACES_TXT = 'cities500.zip', 'cities500.txt'
+MAX_PLACES_ZIP = 64 * 1024 * 1024     # cities500.zip as sent (it is about 14 MB)
+MAX_PLACES = 256 * 1024 * 1024        # cities500.txt unpacked (it is about 42 MB): what the zip may unpack to
+MIN_PLACES = 100_000                  # rows a whole cities500.txt has at least (it has about 237,000)
+PLACES_VERSION = 2                    # 2: places of 500+. Files made from cities15000 before it have 0.
+ALTERNATES_FROM = 15_000              # the people a place needs for its alternate names to be searched (see _write_places)
+GONE = ('PPLH', 'PPLQ', 'PPLW')       # historical, abandoned and destroyed places: no place to look for help around
+BAD_PLACES = 'The place names downloaded could not be read. Try again later.'
+
+
+def _unzipped(data, name, most):
+    """One member of a zip held in memory, unpacked to at most `most` bytes: whatever its header says of its size."""
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        info = z.getinfo(name)
+        if info.file_size > most:
+            raise ValueError('too large')
+        with z.open(info) as f:
+            out = f.read(most + 1)
+    if len(out) > most:
+        raise ValueError('too large')
+    return out
+
+
+def _city(r):
+    """(name, ascii name, alternate names, lat, lon, feature code, country, admin1, population) of one row of
+    cities500.txt, or None for a row that is not one (cut short, a number that is not one, a place off the globe).
+    geonameid name asciiname alternatenames lat lon fclass fcode cc cc2 admin1 admin2 admin3 admin4 population ..."""
+    try:
+        name, lat, lon, pop = r[1], float(r[4]), float(r[5]), int(r[14] or 0)
+        if not name or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            return None
+        return name, r[2], r[3], lat, lon, r[7], r[8], r[10], pop
+    except (IndexError, ValueError):
+        return None
+
+
+def _rank(pop, fcode):
+    """Where a place comes among others its name matches as well (server.py sorts by it): capitals and cities over a
+    million 1, over 100,000 2, over 15,000 3, over 1,000 4, the rest 5. Countries are 0 and regions 1."""
+    if pop >= 1_000_000 or fcode == 'PPLC':
+        return 1
+    return next(r for r, least in ((2, 100_000), (3, 15_000), (4, 1_000), (5, 0)) if pop >= least)
+
+
 def build_places(dest, control, allowed=None, context=None):
     """The world gazetteer from GeoNames, same tables as places.sqlite (place, place_fts), so the engine searches it the
-    same way. rank: countries 0, regions and cities over a million 1, over 100,000 2, the rest 3."""
+    same way; rank as _rank gives it.
+    A row that cannot be read is left out; too few left, or files that are not what they should be, is one plain failure."""
     csv.field_size_limit(10_000_000)
 
     def get(name, limit):
-        data = download.fetch_small(GEONAMES + name, limit=limit, allowed=allowed, context=context, timeout=60)
+        data = download.fetch_small(GEONAMES + name, limit=limit, allowed=allowed, context=context, timeout=60, control=control)
         if data is None:
             raise download.Failed('network', 'Lastbook could not download the place names. Try again later.')
         return data
 
-    def rows(text):
-        return [r for r in csv.reader(io.StringIO(text), delimiter='\t', quoting=csv.QUOTE_NONE) if r and not r[0].startswith('#')]
+    def rows(data):
+        # Decoded as read: cities500.txt as one string would take four bytes a character for its names in other scripts.
+        text = io.TextIOWrapper(io.BytesIO(data), encoding='utf-8-sig', newline='')
+        return (r for r in csv.reader(text, delimiter='\t', quoting=csv.QUOTE_NONE) if r and not r[0].startswith('#'))
     control.check()
-    countries = {r[0]: r[4] for r in rows(get('countryInfo.txt', 1 << 20).decode('utf-8'))}
-    admin1 = {r[0]: r[1] for r in rows(get('admin1CodesASCII.txt', 4 << 20).decode('utf-8'))}
-    control.check()
-    cities = rows(zipfile.ZipFile(io.BytesIO(get('cities15000.zip', 16 << 20))).read('cities15000.txt').decode('utf-8'))
-    if len(cities) < 10_000 or len(countries) < 200:
+    try:
+        countries = {r[0]: r[4] for r in rows(get('countryInfo.txt', 1 << 20)) if len(r) > 4 and r[0] and r[4]}
+        admin1 = {r[0]: r[1] for r in rows(get('admin1CodesASCII.txt', 4 << 20)) if len(r) > 1 and r[0] and r[1]}
+        control.check()
+        listed, cities = 0, []
+        for r in rows(_unzipped(get(PLACES_ZIP, MAX_PLACES_ZIP), PLACES_TXT, MAX_PLACES)):     # one row at a time: all of them as lists would take several hundred MB
+            listed += 1
+            c = _city(r)
+            if c:
+                cities.append(c)
+    except (zipfile.BadZipFile, zlib.error, csv.Error, KeyError, ValueError, EOFError, NotImplementedError, RuntimeError) as e:
+        # not a zip, no such member, a size past the limit, not UTF-8, a line csv cannot take, a zip made in a way zipfile cannot read
+        print(f'setup: the place names could not be read: {type(e).__name__}: {e}', flush=True)
+        raise download.Failed('network', BAD_PLACES) from None
+    if len(cities) < listed:
+        print(f'setup: {listed - len(cities)} of {listed} place name rows could not be read and were left out', flush=True)
+    if len(cities) < MIN_PLACES or len(countries) < 200:
         raise download.Failed('network', 'The place names downloaded incomplete. Try again later.')
+    control.check()
+    sweep(Path(dest).parent, keep=dest)
     part = Path(str(dest) + '.part')
     part.unlink(missing_ok=True)
     try:
@@ -543,7 +715,8 @@ def build_places(dest, control, allowed=None, context=None):
 
 def _write_places(part, countries, admin1, cities):
     db = sqlite3.connect(part)
-    db.executescript('''CREATE TABLE place(id INTEGER PRIMARY KEY, name TEXT, kind TEXT, detail TEXT, lat REAL, lon REAL, rank INTEGER, source TEXT);
+    db.executescript(f'''PRAGMA user_version = {PLACES_VERSION};
+        CREATE TABLE place(id INTEGER PRIMARY KEY, name TEXT, kind TEXT, detail TEXT, lat REAL, lon REAL, rank INTEGER, source TEXT);
         CREATE VIRTUAL TABLE place_fts USING fts5(name, detail, content='place', content_rowid='id', tokenize='unicode61 remove_diacritics 2');''')
     src = 'GeoNames (CC BY 4.0)'
     capital, largest = {}, {}
@@ -551,14 +724,17 @@ def _write_places(part, countries, admin1, cities):
     def add(name, kind, detail, lat, lon, rank, search_detail=None):
         cur = db.execute('INSERT INTO place(name,kind,detail,lat,lon,rank,source) VALUES (?,?,?,?,?,?,?)', (name, kind, detail, lat, lon, rank, src))
         db.execute('INSERT INTO place_fts(rowid,name,detail) VALUES (?,?,?)', (cur.lastrowid, name, search_detail or detail))
-    for r in cities:
-        # geonameid name asciiname alternatenames lat lon fclass fcode cc cc2 admin1 admin2 admin3 admin4 population ...
-        name, ascii_, alts, lat, lon, fcode, cc, a1, pop = r[1], r[2], r[3], float(r[4]), float(r[5]), r[7], r[8], r[10], int(r[14] or 0)
+    # Largest first, so among places of one rank the id says which is larger (server.py sorts by it last).
+    for name, ascii_, alts, lat, lon, fcode, cc, a1, pop in sorted(cities, key=lambda c: -c[8]):        # as _city gives them
+        if fcode in GONE:
+            continue
         detail = ', '.join(x for x in (admin1.get(f'{cc}.{a1}', ''), countries.get(cc, cc)) if x)
-        others = [a for a in dict.fromkeys(alts.split(',')) if a and a not in (name, ascii_) and len(a) < 40][:12]
+        # A smaller place's other names are mostly the same name in other scripts, and each more name is another way
+        # for a query to land on the wrong village as an "alternate name": only larger places keep them, up to 30 (the
+        # Latin ones come first, so old names such as Madras for Chennai are among them).
+        others = [a for a in dict.fromkeys(alts.split(',')) if a and a not in (name, ascii_) and len(a) < 40][:30] if pop >= ALTERNATES_FROM else []
         kind = 'city' if pop >= 100_000 or fcode in ('PPLC', 'PPLA') else 'town'
-        rank = 1 if pop >= 1_000_000 or fcode == 'PPLC' else 2 if pop >= 100_000 else 3
-        add(name, kind, detail, lat, lon, rank, detail + ' · ' + ' '.join([ascii_] + others))
+        add(name, kind, detail, lat, lon, _rank(pop, fcode), detail + ' · ' + ' '.join([ascii_] + others))
         if fcode == 'PPLC':
             capital[cc] = (lat, lon)
         if pop > largest.get(f'{cc}.{a1}', (-1,))[0]:
@@ -574,4 +750,5 @@ def _write_places(part, countries, admin1, cities):
     db.commit()
     db.execute("INSERT INTO place_fts(place_fts) VALUES('optimize')")
     db.commit()
+    db.execute('VACUUM')        # the merge leaves the index's earlier pieces as free pages: about a tenth of the file
     db.close()

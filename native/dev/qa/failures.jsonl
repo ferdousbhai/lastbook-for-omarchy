@@ -1,0 +1,41 @@
+# Each screen that asks the engine and gets an error says so in the window, with the engine's words and a button that
+# asks again: a stand-in engine (failures.engine) answers every request with an error, except the list of shelves the
+# second time it is asked.
+# native/dev/qa.sh native/dev/qa/failures.jsonl [shots-dir]
+
+{"do":"wait","role":"window","name":"Guides — Lastbook","timeout_ms":30000}
+
+# The library's shelves: the reason, then the shelves once Try again has asked again.
+{"do":"select","role":"list-item","name":"Library"}
+{"do":"wait","role":"window","name":"Library — Lastbook"}
+{"do":"wait","role":"group","name":"Lastbook could not read the library's shelves.","visible":true}
+{"do":"wait","role":"label","name":"The stand-in engine could not answer.","visible":true}
+{"do":"shot","path":"library-failed.png"}
+{"do":"click","role":"button","name":"Try again"}
+{"do":"wait","role":"grid-cell","name":"Water","visible":true}
+{"do":"wait","role":"group","name":"Lastbook could not read the library's shelves.","visible":false}
+
+# A shelf that cannot be read.
+{"do":"focus","role":"grid-cell","name":"Water"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"group","name":"Lastbook could not read this shelf.","visible":true}
+
+# The videos, and a search of them.
+{"do":"select","role":"list-item","name":"Videos"}
+{"do":"wait","role":"window","name":"Videos — Lastbook"}
+{"do":"wait","role":"group","name":"Lastbook could not read the library's videos.","visible":true}
+{"do":"focus","role":"search-box","name":"Search video titles"}
+{"do":"type","text":"water"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"group","name":"Lastbook could not search the videos.","visible":true}
+{"do":"shot","path":"videos-failed.png"}
+
+# The library's downloads.
+{"do":"focus","role":"button","name":"About"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"window","name":"About — Lastbook"}
+{"do":"focus","role":"generic","name":"Library and downloads"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"window","name":"Library and downloads — Lastbook"}
+{"do":"wait","role":"group","name":"Lastbook could not read what there is to download.","visible":true}
+{"do":"quit"}

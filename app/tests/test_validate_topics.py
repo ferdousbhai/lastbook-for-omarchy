@@ -98,6 +98,30 @@ class Validate(unittest.TestCase):
                      'ERRORS 4'):
             self.assertIn(line, out)
 
+    def test_allow_absent_lists_what_a_larger_pack_holds_and_still_fails_real_mistakes(self):
+        """Against Small the guides cite ids and ZIM files only larger packs hold, and the app leaves those items out.
+        --allow-absent lists them without counting them; a wrong page or a missing label is still an error."""
+        larger = [{'doc': 'doc-in-all-only', 'label': 'x'},
+                  {'zim': 'zim/wikipedia_en_all.zim/Boil_water', 'title': 'Boil water', 'label': 'x'}]
+        f = self.topic('small.json', learn=larger)
+        code, out = self.run_tool('--data', str(self.data), f)                  # without the option: errors, as before
+        self.assertEqual(code, 1, out)
+        self.assertIn('ERRORS 2', out)
+        code, out = self.run_tool('--data', str(self.data), '--allow-absent', f)
+        self.assertEqual(code, 0, out)
+        self.assertIn('small.json learn: unknown doc doc-in-all-only (listed, not counted)', out)
+        self.assertIn('wikipedia_en_all.zim is not in this library (listed, not counted)', out)
+        self.assertIn('NOT IN THIS LIBRARY 2', out)
+        self.assertIn('ERRORS 0', out)
+        f = self.topic('small-bad.json', learn=larger + [{'doc': 'doc-water', 'page': 11, 'label': 'x'},
+                                                          {'zim': 'zim/../x.zim/Boil_water', 'title': 'Outside', 'label': 'x'}])
+        code, out = self.run_tool('--data', str(self.data), '--allow-absent', f)
+        self.assertEqual(code, 1, out)
+        self.assertIn('page 11 out of range for doc-water (10)', out)
+        self.assertIn('ZIM path fails zim/../x.zim/Boil_water: not of the form', out)
+        self.assertIn('NOT IN THIS LIBRARY 2', out)
+        self.assertIn('ERRORS 2', out)
+
     def test_no_library_says_so(self):
         empty = Path(self.dir.name) / 'empty'
         empty.mkdir(exist_ok=True)
@@ -109,7 +133,8 @@ class Validate(unittest.TestCase):
 
     def test_zim_entry_found_without_a_server(self):
         if not self.zim:
-            self.skipTest('no libzim here to write the small ZIM file')
+            # In CI a missing tool fails the run: a check that was skipped proved nothing, and a green run would hide that.
+            (self.fail if os.environ.get('CI') else self.skipTest)('no libzim here to write the small ZIM file')
         f = self.topic('zim.json', learn=[
             {'zim': f'zim/{ZIM}/Boil_water', 'title': 'Boil water', 'label': 'x'},
             {'zim': f'zim/{ZIM}/Not_here', 'title': 'Missing', 'label': 'x'},

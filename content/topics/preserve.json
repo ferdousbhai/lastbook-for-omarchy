@@ -175,7 +175,7 @@
   {
    "doc": "4d6322e80565247b",
    "label": "Freezer management and keeping an inventory",
-   "note": "NCHFP (So Easy to Preserve): filling and rotating the freezer, posting an inventory, and keeping it at 0 °F with a thermometer."
+   "note": "NCHFP (So Easy to Preserve): filling and rotating the freezer, posting an inventory, and keeping it at 0 °F (−18 °C) with a thermometer."
   }
  ],
  "learn": [
@@ -348,7 +348,7 @@
     {
      "doc": "67c78e9ae6862f0e",
      "label": "How long frozen foods keep their quality",
-     "note": "NCHFP table of approximate freezer storage times at 0 °F by food type."
+     "note": "NCHFP table of approximate freezer storage times at 0 °F (−18 °C) by food type."
     },
     {
      "doc": "d34b594740923db4",

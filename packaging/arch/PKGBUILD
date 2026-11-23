@@ -54,7 +54,7 @@ package() {
   install -m644 app/engine_pipe.py app/main.py app/bridge.py app/cli.py "$lib/app/"
   install -Dm644 skills/lastbook/SKILL.md "$lib/skills/lastbook/SKILL.md"
   install -m644 server.py retrieval.py encyclopedia.py VERSION "$lib/"
-  install -m644 engine/__init__.py engine/paths.py engine/library.py engine/saved_pages.py engine/address_search.py "$lib/engine/"
+  install -m644 engine/__init__.py engine/paths.py engine/library.py engine/saved_pages.py engine/map_pois.py "$lib/engine/"
   install -m644 engine/setup/*.py engine/setup/roots.pem "$lib/engine/setup/"
   install -m644 packaging/arch/manifest-v1.json packaging/arch/map-regions.json "$lib/setup/"
   # The guides and nothing else of content/ (scan_package.py checks that).
@@ -69,7 +69,14 @@ package() {
   python -I -m compileall -q -j 0 -s "$pkgdir" -p / "$lib" >/dev/null
 
   install -Dm755 "$srcdir/target/release/lastbook" "$pkgdir/usr/bin/lastbook"
-  install -Dm644 packaging/linux/io.github.ferdousbhai.Lastbook.desktop "$pkgdir/usr/share/applications/io.github.ferdousbhai.Lastbook.desktop"
+  # One name, as Omarchy has it: the command, the desktop entry, the icon and the window's app id are all `lastbook`.
+  install -Dm644 packaging/linux/lastbook.desktop "$pkgdir/usr/share/applications/lastbook.desktop"
+  # The meaning-search indexer as a user service (`lastbook index`), on for every user through the drop-in: no symlink, nothing to enable.
+  install -Dm644 packaging/systemd/lastbook-index.service "$pkgdir/usr/lib/systemd/user/lastbook-index.service"
+  install -Dm644 packaging/systemd/lastbook-index.path "$pkgdir/usr/lib/systemd/user/lastbook-index.path"
+  install -Dm644 packaging/systemd/default.target.d/lastbook-index.conf "$pkgdir/usr/lib/systemd/user/default.target.d/lastbook-index.conf"
+  # The icon exists only as a 1024-pixel picture (packaging/icon/tile-1024.png), with no vector source to install as
+  # scalable/apps/*.svg, so each size a launcher asks for is made from it here.
   python -I - packaging/icon/tile-1024.png "$pkgdir/usr/share/icons/hicolor" <<'PY'
 import sys
 from pathlib import Path
@@ -78,7 +85,7 @@ src, out = Image.open(sys.argv[1]).convert('RGBA'), Path(sys.argv[2])
 for n in (16, 24, 32, 48, 64, 128, 256, 512):
     d = out / f'{n}x{n}' / 'apps'
     d.mkdir(parents=True, exist_ok=True)
-    src.resize((n, n), Image.LANCZOS).save(d / 'io.github.ferdousbhai.Lastbook.png', optimize=True)
+    src.resize((n, n), Image.LANCZOS).save(d / 'lastbook.png', optimize=True)
 PY
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 THIRD_PARTY_NOTICES.md "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES.md"

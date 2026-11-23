@@ -3,7 +3,7 @@
 # and a wider window has both again.
 # native/dev/qa.sh native/dev/qa/narrow.jsonl [shots-dir]
 
-{"do":"wait","role":"window","name":"Guides — Lastbook"}
+{"do":"wait","role":"window","name":"Guides — Lastbook","timeout_ms":30000}
 {"do":"resize","width":840,"height":700}
 {"do":"wait","size":[840,700]}
 {"do":"wait","role":"grid-cell","name":"Get safe drinking water","visible":true}
@@ -59,8 +59,8 @@
 {"do":"wait","role":"window","name":"Library — Lastbook"}
 {"do":"wait","role":"list-item","name":"Library","visible":true,"selected":true,"focused":true}
 {"do":"key","keys":"Down"}
-{"do":"wait","role":"window","name":"Videos — Lastbook"}
-{"do":"wait","role":"list-item","name":"Videos","visible":true,"selected":true,"focused":true}
+{"do":"wait","role":"window","name":"Encyclopedias — Lastbook"}
+{"do":"wait","role":"list-item","name":"Encyclopedias","visible":true,"selected":true,"focused":true}
 {"do":"shot","path":"narrow-sidebar-walked.png"}
 {"do":"key","keys":"Up"}
 {"do":"wait","role":"list-item","name":"Library","visible":true,"selected":true,"focused":true}

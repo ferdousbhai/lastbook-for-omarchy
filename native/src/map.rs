@@ -6,6 +6,10 @@
 //! the regions a person chose (setup makes both: engine/setup/maps.py). Each tile comes from the most detailed file that has
 //! it, and a less detailed tile is scaled up where nothing finer exists. Tiles are drawn once into images (at screen
 //! scale) and kept; labels for places and help points are placed each frame, without overlapping.
+//!
+//! Help points (HELP) are marked where a street-level map has them, and a click on a mark names it. The nearest of each
+//! kind around the place found (or the map centre) is the engine's answer (`/api/near`, near() in server.py), the one
+//! `lastbook place --nearby` gives: measured on the ground there, never here.
 
 use std::{
     cell::{Cell, RefCell},
@@ -22,12 +26,29 @@ use serde_json::Value;
 use crate::{
     engine::query,
     mvt::{self, Feature, Geom, Layer},
-    ui::App,
+    ui::{App, Route},
 };
 
 const TILE: f64 = 256.0;
 const MAX_ZOOM: f64 = 19.0;
 const DRAW_PER_FRAME: usize = 4;
+/// How many points of a kind the nearest-help list shows: enough for a choice, few enough to see every kind.
+const PER_GROUP: usize = 4;
+
+/// The help points the map marks, by the `kind` of the tiles' pois layer and the engine's name for the same (server.py
+/// HELP and MAP_HELP): the kinds, the mark, whether it is drawn in the theme's colour for danger, and the heading the
+/// legend and the nearest-help list give it. Medical help is one heading: in much of the world a small place has only a
+/// clinic or a doctor, and that is where to go.
+const HELP: &[(&[&str], &str, bool, &str)] = &[
+    (&["hospital", "clinic", "doctors"], "H", true, n_!("Medical help")),
+    (&["pharmacy"], "+", true, n_!("Pharmacy")),
+    (&["fire_station"], "F", true, n_!("Fire station")),
+    (&["police"], "P", false, n_!("Police")),
+    (&["drinking_water", "water_point"], "W", false, n_!("Drinking water")),
+    (&["shelter"], "S", false, n_!("Shelter: a roof, not an emergency shelter")),
+    (&["toilets", "toilet"], "T", false, n_!("Public toilet")),
+    (&["supermarket", "marketplace"], "M", false, n_!("Food shop or market")),
+];
 
 // --------------------------------------------------------------------------------------------------------- sources --
 struct Source {
@@ -105,18 +126,24 @@ struct Style {
 }
 
 impl Style {
-    fn from(t: &Tokens) -> Self {
+    /// The map in the theme's colours: its green for what grows, its text colour for what is built.
+    fn from(theme: &Theme) -> Self {
+        Self::of(&theme.tokens(), &theme.color("green").unwrap_or_else(|| theme.tokens().success))
+    }
+
+    fn of(t: &Tokens, green: &str) -> Self {
         let bg = &t.background;
         Self {
             water: blend(bg, &t.accent, if t.light { 0.22 } else { 0.18 }),
             land: bg.clone(),
-            park: blend(bg, "#4caf50", 0.16),
-            farm: blend(bg, "#9ccc65", 0.08),
+            park: blend(bg, green, 0.16),
+            farm: blend(bg, green, 0.08),
             urban: blend(bg, &t.text, 0.04),
             building: blend(bg, &t.text, 0.13),
             minor: blend(bg, &t.text, 0.24),
             major: blend(bg, &t.text, 0.40),
             highway: blend(bg, &t.accent, 0.55),
+            // A road's edge is a shade of the ground, darker in every theme: a shadow, not one of the theme's colours.
             casing: blend(bg, "#000000", 0.25),
             rail: blend(bg, &t.text, 0.30),
             boundary: blend(bg, &t.text, 0.40),
@@ -147,6 +174,19 @@ fn world_to_lonlat(x: f64, y: f64) -> (f64, f64) {
 }
 
 // ------------------------------------------------------------------------------------------------------ the widget --
+/// A help point drawn in the last frame: where on screen, what it is, and where in the world (0..1).
+#[derive(Clone)]
+struct Mark {
+    x: f64,
+    y: f64,
+    kind: String,
+    name: String,
+    world: (f64, f64),
+}
+
+/// A tile's decoded layers, shared by every tile drawn from it (a coarser tile is drawn scaled up for the finer ones).
+type Layers = Rc<Vec<Layer>>;
+
 struct Cached {
     image: Option<cairo::ImageSurface>,
     layers: Rc<Vec<Layer>>,
@@ -166,7 +206,7 @@ pub struct MapPage {
     zoom: Cell<f64>,
     tiles: RefCell<HashMap<(u32, u32, u32), Cached>>,
     order: RefCell<VecDeque<(u32, u32, u32)>>,
-    decoded: RefCell<HashMap<(u32, u32, u32), Rc<Vec<Layer>>>>,
+    decoded: RefCell<HashMap<(u32, u32, u32), Layers>>,
     pin: RefCell<Option<(f64, f64, String)>>,
     drag_from: Cell<(f64, f64)>,
     status: gtk::Label,
@@ -174,6 +214,20 @@ pub struct MapPage {
     results: gtk::ListBox,
     results_pop: gtk::Popover,
     found: RefCell<Vec<Value>>,
+    /// The help points drawn, for a click; the one a click or the list chose, ringed.
+    marks: RefCell<Vec<Mark>>,
+    chosen: Cell<Option<(f64, f64)>>,
+    /// A clicked help point's name, kind and distance.
+    info: gtk::Popover,
+    info_text: (gtk::Label, gtk::Label, gtk::Label),
+    /// The nearest help around the pin: a panel over the map's right side (all of its width in a narrow window).
+    panel: gtk::Box,
+    panel_around: gtk::Label,
+    panel_note: gtk::Label,
+    panel_manage: gtk::Button,
+    help_list: gtk::ListBox,
+    /// The points of the list's rows, by index (None for a heading).
+    help_rows: RefCell<Vec<Option<Value>>>,
     /// The map files open now (names and sizes): a download that adds or finishes one opens them again.
     loaded: RefCell<String>,
 }
@@ -184,9 +238,9 @@ impl MapPage {
         area.set_hexpand(true);
         area.set_vexpand(true);
         area.set_focusable(true);
-        area.update_property(&[gtk::accessible::Property::Label("Map")]);
+        omui::i18n::bind(&area, |a| a.update_property(&[gtk::accessible::Property::Label(&omui::tr("Map"))]));
         let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some("Find a place, town or address"));
+        omui::i18n::bind(&search, |s| s.set_placeholder_text(Some(&omui::tr("Find a town, or LAT,LON"))));
         search.set_width_chars(22);
         let results = gtk::ListBox::new();
         results.add_css_class("map-results");
@@ -195,8 +249,15 @@ impl MapPage {
         results_pop.set_parent(&search);
         results_pop.set_autohide(true);
         results_pop.set_has_arrow(false);
-        let zoom_in = omui::icon_button(omui::icons::name::ZOOM_IN, "Zoom in (+)");
-        let zoom_out = omui::icon_button(omui::icons::name::ZOOM_OUT, "Zoom out (-)");
+        let zoom_in = omui::icon_button(omui::icons::name::ZOOM_IN, "");
+        omui::i18n::bind_tooltip(&zoom_in, "Zoom in (+)");
+        let zoom_out = omui::icon_button(omui::icons::name::ZOOM_OUT, "");
+        omui::i18n::bind_tooltip(&zoom_out, "Zoom out (-)");
+        let help = omui::icon_button(omui::icons::name::LOCATE, "");
+        omui::i18n::bind_tooltip(&help, "Nearest help");
+        let legend = gtk::MenuButton::builder().icon_name(omui::icons::name::INFO).has_frame(false).build();
+        legend.add_css_class("header-action");
+        omui::i18n::bind_tooltip(&legend, "What the marks mean");
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         top.add_css_class("map-bar");
         top.set_halign(gtk::Align::Start);
@@ -206,6 +267,8 @@ impl MapPage {
         top.append(&search);
         top.append(&zoom_out);
         top.append(&zoom_in);
+        top.append(&help);
+        top.append(&legend);
         let status = gtk::Label::new(None);
         status.add_css_class("map-status");
         status.set_halign(gtk::Align::End);
@@ -217,12 +280,79 @@ impl MapPage {
         overlay.add_overlay(&top);
         overlay.add_overlay(&status);
 
+        let info = gtk::Popover::new();
+        info.set_autohide(false);   // the map keeps the keyboard and the pointer; moving it closes this
+        // On the overlay, where the map's place is (0, 0): GTK closes a popover of the drawing area as soon as it opens.
+        info.set_parent(&overlay);
+        let info_text = (gtk::Label::new(None), gtk::Label::new(None), gtk::Label::new(None));
+        let info_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        for (l, class) in [(&info_text.0, "result-title"), (&info_text.1, "meta"), (&info_text.2, "meta")] {
+            l.set_xalign(0.0);
+            l.set_wrap(true);
+            l.set_max_width_chars(36);
+            l.add_css_class(class);
+            info_box.append(l);
+        }
+        info.set_child(Some(&info_box));
+
+        let panel = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        panel.add_css_class("map-panel");
+        panel.set_width_request(300);
+        panel.set_halign(gtk::Align::End);
+        panel.set_valign(gtk::Align::Start);   // as tall as its rows, and no taller than the map
+        panel.set_margin_top(64);
+        panel.set_margin_bottom(34);
+        panel.set_margin_start(12);
+        panel.set_margin_end(12);
+        panel.set_visible(false);
+        let head = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let titles = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        titles.set_hexpand(true);
+        let heading = gtk::Label::new(None);
+        omui::i18n::bind_label(&heading, "Nearest help");
+        heading.add_css_class("heading");
+        heading.set_xalign(0.0);
+        let panel_around = gtk::Label::new(None);
+        panel_around.add_css_class("meta");
+        panel_around.set_xalign(0.0);
+        panel_around.set_ellipsize(pango::EllipsizeMode::End);
+        titles.append(&heading);
+        titles.append(&panel_around);
+        let here = omui::icon_button(omui::icons::name::LOCATION, "");
+        omui::i18n::bind_tooltip(&here, "Nearest help around the map centre");
+        let close = omui::icon_button(omui::icons::name::CLOSE, "");
+        omui::i18n::bind_tooltip(&close, "Close");
+        head.append(&titles);
+        head.append(&here);
+        head.append(&close);
+        let panel_note = gtk::Label::new(None);
+        panel_note.set_wrap(true);
+        panel_note.set_max_width_chars(30);
+        panel_note.set_xalign(0.0);
+        let panel_manage = gtk::Button::new();
+        omui::i18n::bind_label(&panel_manage, "Library and downloads");
+        panel_manage.set_halign(gtk::Align::Start);
+        let help_list = gtk::ListBox::new();
+        help_list.add_css_class("map-results");
+        let foot = gtk::Label::new(None);
+        omui::i18n::bind_label(&foot, "Offline map data: it may be out of date and shows no closures or damage. Distances are straight lines.");
+        foot.set_wrap(true);
+        foot.set_max_width_chars(30);
+        foot.set_xalign(0.0);
+        foot.add_css_class("meta");
+        panel.append(&head);
+        panel.append(&panel_note);
+        panel.append(&panel_manage);
+        panel.append(&gtk::ScrolledWindow::builder().child(&help_list).vexpand(true).propagate_natural_height(true).hscrollbar_policy(gtk::PolicyType::Never).build());
+        panel.append(&foot);
+        overlay.add_overlay(&panel);
+
         let page = Rc::new(Self {
             root: overlay.upcast(),
             app: Rc::downgrade(app),
             area,
             sources: RefCell::new(Vec::new()),
-            style: RefCell::new(Style::from(&app.theme.tokens())),
+            style: RefCell::new(Style::from(&app.theme)),
             cx: Cell::new(0.5),
             cy: Cell::new(0.42),
             zoom: Cell::new(2.0),
@@ -236,6 +366,16 @@ impl MapPage {
             results,
             results_pop,
             found: RefCell::new(Vec::new()),
+            marks: RefCell::new(Vec::new()),
+            chosen: Cell::new(None),
+            info,
+            info_text,
+            panel,
+            panel_around,
+            panel_note,
+            panel_manage,
+            help_list,
+            help_rows: RefCell::new(Vec::new()),
             loaded: RefCell::new(String::new()),
         });
         let me = Rc::downgrade(&page);
@@ -245,16 +385,239 @@ impl MapPage {
             }
         });
         let me = Rc::downgrade(&page);
-        app.theme.on_change(&page.area, move |t| {
+        let theme = app.theme.clone();
+        app.theme.on_change(&page.area, move |_| {
             if let Some(me) = me.upgrade() {
-                me.style.replace(Style::from(t));
+                me.style.replace(Style::from(&theme));
                 me.tiles.borrow_mut().clear();
                 me.order.borrow_mut().clear();
                 me.area.queue_draw();
             }
         });
         page.controls(&zoom_in, &zoom_out);
+        page.help_controls(&help, &here, &close);
+        legend.set_popover(Some(&page.legend()));
         page
+    }
+
+    /// The legend: each mark as the map draws it, with what it stands for.
+    fn legend(self: &Rc<Self>) -> gtk::Popover {
+        let grid = gtk::Grid::builder().row_spacing(4).column_spacing(8).build();
+        for (row, &(_, mark, danger, heading)) in HELP.iter().enumerate() {
+            let swatch = gtk::DrawingArea::builder().content_width(18).content_height(18).build();
+            let me = Rc::downgrade(self);
+            swatch.set_draw_func(move |_, cr, w, h| {
+                if let Some(me) = me.upgrade() {
+                    let layout = pangocairo::functions::create_layout(cr);
+                    layout.set_font_description(Some(&label_font()));
+                    draw_mark(cr, &layout, mark, danger, (f64::from(w) / 2.0, f64::from(h) / 2.0), &me.style.borrow());
+                }
+            });
+            let text = gtk::Label::new(None);
+            omui::i18n::bind(&text, move |l| l.set_text(&omui::i18n::translate(heading)));
+            text.set_xalign(0.0);
+            grid.attach(&swatch, 0, row as i32, 1, 1);
+            grid.attach(&text, 1, row as i32, 1, 1);
+        }
+        let note = gtk::Label::new(None);
+        omui::i18n::bind_label(&note, "Marks show from street level, where a street map of the area is installed. Click one for its name and distance.");
+        note.set_wrap(true);
+        note.set_max_width_chars(34);
+        note.set_xalign(0.0);
+        note.add_css_class("meta");
+        grid.attach(&note, 0, HELP.len() as i32, 2, 1);
+        let pop = gtk::Popover::new();
+        pop.set_child(Some(&grid));
+        pop
+    }
+
+    fn help_controls(self: &Rc<Self>, help: &gtk::Button, here: &gtk::Button, close: &gtk::Button) {
+        let me = Rc::downgrade(self);
+        help.connect_clicked(move |_| {
+            if let Some(m) = me.upgrade() {
+                if m.panel.is_visible() {
+                    m.panel.set_visible(false);
+                } else {
+                    let unpinned = m.pin.borrow().is_none();
+                    m.nearest(unpinned);
+                    m.help_list.grab_focus();
+                }
+            }
+        });
+        let me = Rc::downgrade(self);
+        here.connect_clicked(move |_| if let Some(m) = me.upgrade() { m.nearest(true) });
+        let me = Rc::downgrade(self);
+        close.connect_clicked(move |_| {
+            if let Some(m) = me.upgrade() {
+                m.panel.set_visible(false);
+                m.area.grab_focus();
+            }
+        });
+        let me = Rc::downgrade(self);
+        self.panel_manage.connect_clicked(move |_| {
+            if let Some(app) = me.upgrade().and_then(|m| m.app.upgrade()) {
+                app.navigate(Route::Manage);
+            }
+        });
+        let me = Rc::downgrade(self);
+        self.help_list.connect_row_activated(move |_, row| {
+            if let Some(m) = me.upgrade()
+                && let Some(Some(p)) = m.help_rows.borrow().get(row.index() as usize)
+                && let (Some(lat), Some(lon)) = (p["lat"].as_f64(), p["lon"].as_f64())
+            {
+                // Over a narrow map the panel hides what the row is for: it gives way to the map.
+                if m.panel.halign() != gtk::Align::End {
+                    m.panel.set_visible(false);
+                }
+                m.center(lat, lon, m.zoom.get().max(16.0), None);
+                m.chosen.set(Some(lonlat_to_world(lon, lat)));
+            }
+        });
+        // In a narrow window the panel takes the map's width: beside a third of it, its rows would not be readable.
+        let me = Rc::downgrade(self);
+        self.area.connect_resize(move |_, w, _| {
+            if let Some(m) = me.upgrade() {
+                m.panel.set_halign(if w < 640 { gtk::Align::Fill } else { gtk::Align::End });
+            }
+        });
+        let click = gtk::GestureClick::new();
+        let me = Rc::downgrade(self);
+        click.connect_released(move |_, n, x, y| {
+            if n == 1
+                && let Some(m) = me.upgrade()
+            {
+                m.info.popdown();
+                let off = |k: &Mark| (k.x - x).hypot(k.y - y);
+                let hit = m.marks.borrow().iter().filter(|k| off(k) <= 12.0).min_by(|a, b| off(a).total_cmp(&off(b))).cloned();
+                if let Some(hit) = hit {
+                    m.show_mark(&hit);
+                }
+            }
+        });
+        self.area.add_controller(click);
+    }
+
+    /// Where distances are measured from: the pin (the place found), else the map centre.
+    fn anchor(&self) -> (f64, f64, String) {
+        self.pin.borrow().clone().unwrap_or_else(|| {
+            let (x, y) = self.seen_centre();
+            (x, y, omui::tr("Map centre"))
+        })
+    }
+
+    /// How far (in world units) the middle of what can be seen is left of the map's centre: half the panel, where it is
+    /// beside the map.
+    fn shift(&self) -> f64 {
+        let beside = self.panel.is_visible() && self.panel.halign() == gtk::Align::End;
+        if beside { f64::from(self.panel.width().max(300) + 12) / 2.0 / (TILE * 2f64.powf(self.zoom.get())) } else { 0.0 }
+    }
+
+    /// The map centre as the person sees it: the middle of the map left of the panel.
+    fn seen_centre(&self) -> (f64, f64) {
+        ((self.cx.get() - self.shift()).rem_euclid(1.0), self.cy.get())
+    }
+
+    /// Names a clicked help point, and asks the engine how far it is from the anchor.
+    fn show_mark(self: &Rc<Self>, Mark { x, y, kind, name, world }: &Mark) {
+        let Some(app) = self.app.upgrade() else { return };
+        let kind_text = kind_name(kind);
+        self.info_text.0.set_text(if name.is_empty() { &kind_text } else { name });
+        self.info_text.1.set_text(&kind_text);
+        self.info_text.1.set_visible(!name.is_empty());
+        self.info_text.2.set_text("");
+        self.info.set_pointing_to(Some(&gdk::Rectangle::new(*x as i32 - 8, *y as i32 - 8, 16, 16)));
+        self.info.popup();
+        self.chosen.set(Some(*world));
+        self.area.queue_draw();
+        let (ax, ay, from) = self.anchor();
+        let ((alon, alat), (lon, lat)) = (world_to_lonlat(ax, ay), world_to_lonlat(world.0, world.1));
+        let (a, b, to) = (format!("{alat:.6}"), format!("{alon:.6}"), format!("{lat:.6},{lon:.6}"));
+        let (engine, me) = (app.engine.clone(), Rc::downgrade(self));
+        glib::spawn_future_local(async move {
+            let r = engine.get(&query("/api/near", &[("lat", &a), ("lon", &b), ("to", &to)])).await;
+            if let Some(me) = me.upgrade()
+                && let Ok(v) = r
+                && let Some(km) = v["km"].as_f64()
+            {
+                let (far, dir) = (distance(km), direction(v["dir"].as_str().unwrap_or_default()));
+                // The centre is no name: a sentence of its own, as a translator needs it.
+                me.info_text.2.set_text(&if from == omui::tr("Map centre") { omui::tr!("{} {} of the map centre", far, dir) } else { omui::tr!("{} {} of {}", far, dir, from) });
+            }
+        });
+    }
+
+    /// Shows the panel with the nearest help around the pin; `here` moves the pin to the map centre first.
+    fn nearest(self: &Rc<Self>, here: bool) {
+        let Some(app) = self.app.upgrade() else { return };
+        if here {
+            self.panel.set_visible(true);
+            let (x, y) = self.seen_centre();
+            self.pin.replace(Some((x, y, omui::tr("Map centre"))));
+            self.area.queue_draw();
+        }
+        let (ax, ay, label) = self.anchor();
+        let (lon, lat) = world_to_lonlat(ax, ay);
+        self.panel_around.set_text(&omui::tr!("Around {}", label));
+        self.panel.set_visible(true);
+        let (engine, me, a, b) = (app.engine.clone(), Rc::downgrade(self), format!("{lat:.6}"), format!("{lon:.6}"));
+        glib::spawn_future_local(async move {
+            let r = engine.get(&query("/api/near", &[("lat", &a), ("lon", &b)])).await;
+            if let Some(me) = me.upgrade() {
+                me.fill_help(r.ok());
+            }
+        });
+    }
+
+    fn fill_help(&self, r: Option<Value>) {
+        omui::clear(&self.help_list);
+        let mut rows = Vec::new();
+        let points = r.as_ref().and_then(|v| v["points"].as_array()).cloned().unwrap_or_default();
+        let covered = r.as_ref().is_some_and(|v| v["covered"].as_bool() == Some(true));
+        let note = match &r {
+            None => omui::tr("The map's help points could not be read."),
+            Some(_) if !covered => omui::tr("No street-level map covers this place, so its help points cannot be shown. Add the area's streets in Library and downloads."),
+            Some(_) if points.is_empty() => omui::tr("No help points on the map near this place."),
+            Some(_) => String::new(),
+        };
+        self.panel_note.set_text(&note);
+        self.panel_note.set_visible(!note.is_empty());
+        self.panel_manage.set_visible(r.is_some() && !covered);
+        for &(kinds, _, _, heading) in HELP {
+            let mine: Vec<&Value> = points.iter().filter(|p| kinds.contains(&p["cls"].as_str().unwrap_or_default())).take(PER_GROUP).collect();
+            if mine.is_empty() {
+                continue;
+            }
+            let h = gtk::Label::new(Some(&omui::i18n::translate(heading)));
+            h.set_wrap(true);
+            h.set_max_width_chars(30);
+            h.add_css_class("heading");
+            h.set_xalign(0.0);
+            h.set_margin_top(6);
+            let row = gtk::ListBoxRow::builder().child(&h).activatable(false).selectable(false).focusable(false).build();
+            self.help_list.append(&row);
+            rows.push(None);
+            for p in mine {
+                let kind = kind_name(p["cls"].as_str().unwrap_or_default());
+                let far = format!("{} {}", distance(p["km"].as_f64().unwrap_or_default()), direction(p["dir"].as_str().unwrap_or_default()));
+                // A point the map gives no name is called by its kind, which is then not said twice.
+                let (name, meta) = match p["name"].as_str().filter(|n| !n.is_empty()) {
+                    Some(n) => (n, format!("{kind} · {far}")),
+                    None => (kind.as_str(), far),
+                };
+                let b = gtk::Box::new(gtk::Orientation::Vertical, 1);
+                for (text, class) in [(name, "result-title"), (meta.as_str(), "meta")] {
+                    let l = gtk::Label::new(Some(text));
+                    l.set_xalign(0.0);
+                    l.set_ellipsize(pango::EllipsizeMode::End);
+                    l.set_max_width_chars(30);
+                    l.add_css_class(class);
+                    b.append(&l);
+                }
+                self.help_list.append(&b);
+                rows.push(Some(p.clone()));
+            }
+        }
+        self.help_rows.replace(rows);
     }
 
     fn controls(self: &Rc<Self>, zoom_in: &gtk::Button, zoom_out: &gtk::Button) {
@@ -267,6 +630,7 @@ impl MapPage {
         drag.connect_drag_begin(move |_, _, _| {
             if let Some(m) = me.upgrade() {
                 m.drag_from.set((m.cx.get(), m.cy.get()));
+                m.info.popdown();
                 m.area.grab_focus();
             }
         });
@@ -319,6 +683,7 @@ impl MapPage {
                 gdk::Key::Down => m.cy.set((m.cy.get() + step).clamp(0.0, 1.0)),
                 _ => return glib::Propagation::Proceed,
             }
+            m.info.popdown();
             m.area.queue_draw();
             glib::Propagation::Stop
         });
@@ -339,12 +704,21 @@ impl MapPage {
                 let z = match p["kind"].as_str().unwrap_or_default() {
                     "country" => 5.0,
                     "region" | "state" => 7.0,
+                    // Help points are marked from 13, where a street map has them.
+                    "city" | "town" | "locality" if p["onMap"].as_bool() == Some(true) => 13.0,
                     "city" | "town" | "locality" => 12.0,
                     _ => 14.0,
                 };
-                m.center(lat, lon, z, Some(p["name"].as_str().unwrap_or("Place").to_owned()));
+                m.panel.set_visible(true);   // before centring, which leaves room for it
+                m.center(lat, lon, z, Some(p["name"].as_str().map(str::to_owned).unwrap_or_else(|| omui::tr("Place"))));
+                m.nearest(false);
             }
         });
+    }
+
+    /// After a language switch: the line in the corner is written again as ui.rs shows the map again.
+    pub fn retranslate(&self) {
+        self.loaded.replace(String::new());
     }
 
     /// Opens the map files when the map is shown, and again whenever they have changed (setup adds maps while Lastbook runs).
@@ -362,9 +736,9 @@ impl MapPage {
             let srcs = open_sources(&geo);
             let names: Vec<String> = srcs.iter().map(|s| s.name.clone()).collect();
             self.status.set_text(&if srcs.is_empty() {
-                "No map in this library yet: About → Library and downloads".to_owned()
+                omui::tr("No map in this library yet: add one in Library and downloads")
             } else {
-                format!("© OpenStreetMap contributors · {}", names.join(", "))
+                omui::tr!("© OpenStreetMap contributors · {}", names.join(", "))
             });
             self.sources.replace(srcs);
         }
@@ -374,16 +748,23 @@ impl MapPage {
     pub fn show_at(self: &Rc<Self>, lat: f64, lon: f64, label: &str) {
         self.show();
         self.center(lat, lon, 15.0, Some(label.to_owned()));
+        if self.panel.is_visible() {
+            self.nearest(false);
+        }
     }
 
+    /// Puts a point in the middle of what can be seen of the map: left of the panel, where it is beside the map.
     fn center(&self, lat: f64, lon: f64, zoom: f64, pin: Option<String>) {
         let (x, y) = lonlat_to_world(lon, lat);
-        self.cx.set(x);
+        let zoom = zoom.clamp(0.0, MAX_ZOOM);
+        self.zoom.set(zoom);
+        self.cx.set((x + self.shift()).rem_euclid(1.0));
         self.cy.set(y);
-        self.zoom.set(zoom.clamp(0.0, MAX_ZOOM));
         if let Some(p) = pin {
             self.pin.replace(Some((x, y, p)));
+            self.chosen.set(None);
         }
+        self.info.popdown();
         self.area.queue_draw();
     }
 
@@ -391,6 +772,8 @@ impl MapPage {
         let (w, h) = (f64::from(self.area.width()), f64::from(self.area.height()));
         let old = self.zoom.get();
         let new = (old + dz).clamp(1.0, MAX_ZOOM);
+        // From the keys and buttons: about the middle of what can be seen, left of the panel where it is beside the map.
+        let at = at.or_else(|| (self.shift() > 0.0).then(|| (w / 2.0 - self.shift() * TILE * 2f64.powf(old), h / 2.0)));
         if let Some((px, py)) = at {
             // Keep the point under the pointer where it is.
             let (s0, s1) = (TILE * 2f64.powf(old), TILE * 2f64.powf(new));
@@ -400,6 +783,7 @@ impl MapPage {
             self.cy.set((wy - (py - h / 2.0) / s1).clamp(0.0, 1.0));
         }
         self.zoom.set(new);
+        self.info.popdown();
         self.area.queue_draw();
     }
 
@@ -429,7 +813,7 @@ impl MapPage {
                 me.results.append(&row);
             }
             if list.is_empty() {
-                let l = gtk::Label::new(Some("No place by that name."));
+                let l = gtk::Label::new(Some(&omui::tr("No place by that name.")));
                 l.add_css_class("dim-label");
                 me.results.append(&l);
             }
@@ -440,7 +824,7 @@ impl MapPage {
 
     // ------------------------------------------------------------------------------------------------- tiles --
     /// The decoded data for tile (z, x, y): its own, or the nearest coarser tile any source has.
-    fn data(&self, z: u32, x: u32, y: u32) -> Option<(Rc<Vec<Layer>>, (u32, u32, u32))> {
+    fn data(&self, z: u32, x: u32, y: u32) -> Option<(Layers, (u32, u32, u32))> {
         for dz in 0..=z {
             let (pz, px, py) = (z - dz, x >> dz, y >> dz);
             if let Some(l) = self.decoded.borrow().get(&(pz, px, py)) {
@@ -545,14 +929,23 @@ impl MapPage {
         }
         let mut taken: Vec<(f64, f64, f64, f64)> = Vec::new();
         let layout = pangocairo::functions::create_layout(cr);
-        // The interface font, at the size labels need (the default would be a serif).
-        let font = format!("JetBrains Mono {}px", (11.0 * Theme::text_scale()).round());
-        layout.set_font_description(Some(&pango::FontDescription::from_string(&font)));
+        layout.set_font_description(Some(&label_font()));
+        let mut marks = Vec::new();
         for pass in 0..2 {
             for (key, sx, sy) in &visible {
                 let Some(c) = tiles.get(key) else { continue };
-                labels(cr, &layout, c, *key, *sx, *sy, size, zoom, &st, &mut taken, pass);
+                labels(cr, &layout, c, *key, (*sx, *sy), size, zoom, &st, &mut taken, pass, &mut marks);
             }
+        }
+        self.marks.replace(marks);
+        if let Some((wx, wy)) = self.chosen.get() {
+            // Nearest the centre of the copies of the world side by side, as the tiles are.
+            let sx = ((wx - self.cx.get() + 0.5).rem_euclid(1.0) - 0.5) * world + w / 2.0;
+            rgb(cr, &st.text, 1.0);
+            cr.set_line_width(2.0);
+            cr.new_path();   // the pin's label leaves a current point, which the ring would be joined to
+            cr.arc(sx, wy * world - cy + h / 2.0, 12.0, 0.0, 2.0 * PI);
+            let _ = cr.stroke();
         }
         if let Some((px_, py_, label)) = self.pin.borrow().as_ref() {
             let (sx, sy) = (px_ * world - cx + w / 2.0, py_ * world - cy + h / 2.0);
@@ -570,7 +963,8 @@ impl MapPage {
             glib::idle_add_local_once(move || area.queue_draw());
         }
         let (lon, lat) = world_to_lonlat(self.cx.get(), self.cy.get());
-        self.area.set_tooltip_text(Some(&format!("{lat:.4}, {lon:.4} · zoom {zoom:.1}")));
+        let number = omui::i18n::format_number;
+        self.area.set_tooltip_text(Some(&omui::tr!("{}, {} · zoom {}", number(lat, 4), number(lon, 4), number(zoom, 1))));
     }
 }
 
@@ -695,23 +1089,69 @@ fn draw_layers(cr: &cairo::Context, layers: &[Layer], st: &Style, z: f64, lw: f6
     }
 }
 
-/// Help points worth showing on a survival map, and their mark.
-fn help_kind(kind: &str) -> Option<&'static str> {
-    Some(match kind {
-        "hospital" | "clinic" | "doctors" => "H",
-        "pharmacy" => "+",
-        "police" => "P",
-        "fire_station" => "F",
-        "drinking_water" | "water_point" => "W",
-        "shelter" => "S",
-        "toilets" => "T",
-        "supermarket" | "marketplace" => "M",
-        _ => return None,
-    })
+/// A help point's mark and colour (HELP), by its kind on the map or in the engine's answer.
+fn help_kind(kind: &str) -> Option<(&'static str, bool)> {
+    HELP.iter().find(|h| h.0.contains(&kind)).map(|h| (h.1, h.2))
+}
+
+/// What a help point is, in words: its own kind where the legend's heading covers several.
+fn kind_name(kind: &str) -> String {
+    match kind {
+        "hospital" => omui::tr("Hospital"),
+        "clinic" => omui::tr("Clinic"),
+        "doctors" => omui::tr("Doctor"),
+        "water_point" => omui::tr("Water point"),
+        "supermarket" => omui::tr("Supermarket"),
+        "marketplace" => omui::tr("Market"),
+        _ => HELP.iter().find(|h| h.0.contains(&kind)).map(|h| omui::i18n::translate(h.3)).unwrap_or_default(),
+    }
+}
+
+/// The engine's eight compass directions (haversine() in server.py), in words.
+fn direction(d: &str) -> String {
+    match d {
+        "north" => omui::tr("north"),
+        "north-east" => omui::tr("north-east"),
+        "east" => omui::tr("east"),
+        "south-east" => omui::tr("south-east"),
+        "south" => omui::tr("south"),
+        "south-west" => omui::tr("south-west"),
+        "west" => omui::tr("west"),
+        "north-west" => omui::tr("north-west"),
+        _ => d.to_owned(),
+    }
+}
+
+/// A distance the engine measured, in km: metres to the nearest ten under one kilometre.
+fn distance(km: f64) -> String {
+    let number = omui::i18n::format_number;
+    if km < 1.0 {
+        omui::tr!("{} m", number((km * 100.0).round() * 10.0, 0))
+    } else {
+        omui::tr!("{} km", number(km, if km < 10.0 { 1 } else { 0 }))
+    }
+}
+
+/// The interface font, at the size labels need (the default would be a serif).
+fn label_font() -> pango::FontDescription {
+    pango::FontDescription::from_string(&format!("JetBrains Mono {}px", (11.0 * Theme::text_scale()).round()))
+}
+
+/// A help point's mark: a disc in its colour, with its letter in the ground's.
+fn draw_mark(cr: &cairo::Context, layout: &pango::Layout, mark: &str, danger: bool, (x, y): (f64, f64), st: &Style) {
+    rgb(cr, if danger { &st.danger } else { &st.accent }, 1.0);
+    cr.arc(x, y, 8.0, 0.0, 2.0 * PI);
+    let _ = cr.fill();
+    layout.set_markup(&format!("<b><span size='small'>{}</span></b>", glib::markup_escape_text(mark)));
+    let (tw, th) = layout.pixel_size();
+    rgb(cr, &st.halo, 1.0);
+    cr.move_to(x - f64::from(tw) / 2.0, y - f64::from(th) / 2.0);
+    pangocairo::functions::show_layout(cr, layout);
+    layout.set_attributes(None);   // the mark's bold must not carry into the next label
 }
 
 #[allow(clippy::too_many_arguments)]
-fn labels(cr: &cairo::Context, layout: &pango::Layout, c: &Cached, key: (u32, u32, u32), sx: f64, sy: f64, size: f64, zoom: f64, st: &Style, taken: &mut Vec<(f64, f64, f64, f64)>, pass: u32) {
+fn labels(cr: &cairo::Context, layout: &pango::Layout, c: &Cached, key: (u32, u32, u32), (sx, sy): (f64, f64), size: f64, zoom: f64, st: &Style, taken: &mut Vec<(f64, f64, f64, f64)>, pass: u32, marks: &mut Vec<Mark>) {
     let (z, x, y) = key;
     let dz = z - c.from.0;
     let k = f64::from(1u32 << dz);
@@ -748,23 +1188,18 @@ fn labels(cr: &cairo::Context, layout: &pango::Layout, c: &Cached, key: (u32, u3
     } else if zoom >= 13.0 {
         // Help points: hospitals, pharmacies, police, fire stations, water, shelters.
         for f in layer(&c.layers, "pois").filter(|f| f.geom == Geom::Point) {
-            let Some(mark) = f.str("kind").and_then(help_kind) else { continue };
+            let kind = f.str("kind").unwrap_or_default();
+            let Some((mark, danger)) = help_kind(kind) else { continue };
             let Some(&(px, py)) = f.parts.first().and_then(|p| p.first()) else { continue };
             let pos = to_screen(px, py);
             if !inside(pos) || taken.iter().any(|r| overlaps(r, &(pos.0 - 8.0, pos.1 - 8.0, 16.0, 16.0))) {
                 continue;
             }
-            let colour = if mark == "H" || mark == "+" || mark == "F" { &st.danger } else { &st.accent };
-            rgb(cr, colour, 1.0);
-            cr.arc(pos.0, pos.1, 8.0, 0.0, 2.0 * PI);
-            let _ = cr.fill();
-            layout.set_markup(&format!("<b><span size='small'>{mark}</span></b>"));
-            let (tw, th) = layout.pixel_size();
-            rgb(cr, &st.halo, 1.0);
-            cr.move_to(pos.0 - f64::from(tw) / 2.0, pos.1 - f64::from(th) / 2.0);
-            pangocairo::functions::show_layout(cr, layout);
-            layout.set_attributes(None);   // the mark's bold must not carry into the next label
+            draw_mark(cr, layout, mark, danger, pos, st);
             taken.push((pos.0 - 8.0, pos.1 - 8.0, 16.0, 16.0));
+            let n = f64::from(1u32 << c.from.0);
+            let world = ((f64::from(c.from.1) + f64::from(px) / extent) / n, (f64::from(c.from.2) + f64::from(py) / extent) / n);
+            marks.push(Mark { x: pos.0, y: pos.1, kind: kind.to_owned(), name: f.str("name").unwrap_or_default().to_owned(), world });
             if zoom >= 15.0
                 && let Some(name) = f.str("name")
                 && let Some(rect) = fit(layout, name, (pos.0 + 6.0, pos.1), false, taken)

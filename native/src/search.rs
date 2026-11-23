@@ -5,12 +5,12 @@
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, VecDeque},
-    path::PathBuf,
     rc::{Rc, Weak},
+    time::{Duration, Instant},
 };
 
 use gtk::{glib, prelude::*};
-use omui::clear;
+use omui::{clear, tr};
 use serde_json::Value;
 
 use crate::{
@@ -20,9 +20,31 @@ use crate::{
     ui::{App, Route},
 };
 
-const KINDS: &[(&str, &str)] = &[("any", "Everything"), ("manual", "Manuals & pages"), ("video", "Videos"), ("encyclopedia", "Encyclopedias")];
+/// The kinds a search can be narrowed to: (kind, label), the label in English and translated where it is shown.
+const KINDS: &[(&str, &str)] = &[("any", n_!("Everything")), ("manual", n_!("Manuals & pages")), ("video", n_!("Videos")), ("encyclopedia", n_!("Encyclopedias"))];
 const THUMB_W: i32 = 64;
 const THUMB_H: i32 = 84;   // the box a page is fitted into: 64 wide for a letter or A4 page
+/// How long the line on how search finds things is kept before the engine is asked again: asking costs Recall a
+/// small embedding, which waits behind the indexer's.
+const ASK_AGAIN: Duration = Duration::from_secs(30);
+/// How Recall for Omarchy is added, as README.md gives it: the window shows the command and runs nothing.
+const RECALL_INSTALL: &str = "curl -fsSL https://ferdousbhai.com/recall/install.sh | sudo bash";
+
+/// The line that says how search finds things (the engine's /api/search-status, what `lastbook status` reports as
+/// meaning_search), and whether to say what Recall is and how to add it.
+fn meaning_line(m: &Value) -> (String, bool) {
+    let percent = omui::i18n::format_int((m["coverage"].as_f64().unwrap_or(0.0) * 100.0).floor() as i64);
+    if m["ready"].as_bool() == Some(true) {
+        return (if m["complete"].as_bool() == Some(true) { tr("Searching by words and by meaning.") } else { tr!("Searching by words, and by meaning in {}% of the library so far.", percent) }, false);
+    }
+    if m["recall"]["installed"].as_bool() == Some(false) {
+        return (tr("Searching by words only: Recall for Omarchy is not installed."), true);
+    }
+    if m["recall"]["running"].as_bool() == Some(false) {
+        return (tr("Searching by words only: Recall for Omarchy is not running."), false);
+    }
+    (tr!("Searching by words only: meaning search is still being prepared ({}%).", percent), false)
+}
 
 pub struct SearchPage {
     pub root: gtk::Widget,
@@ -30,6 +52,10 @@ pub struct SearchPage {
     entry: gtk::SearchEntry,
     chips: Vec<(String, gtk::ToggleButton)>,
     status: gtk::Label,
+    /// How search finds things now (`meaning_line`), and what Recall is when it is not installed.
+    meaning: gtk::Label,
+    recall: gtk::Label,
+    asked: Cell<Option<Instant>>,
     results: gtk::Box,
     shown: RefCell<(String, String)>,
     generation: Cell<u64>,
@@ -41,17 +67,19 @@ pub struct SearchPage {
 impl SearchPage {
     pub fn build(app: &Rc<App>) -> Rc<Self> {
         let (scroll, column) = cards::column(14);
-        let title = gtk::Label::new(Some("Search the library"));
+        let title = gtk::Label::new(None);
+        omui::i18n::bind_label(&title, "Search the library");
         title.add_css_class("page-title");
         title.set_xalign(0.0);
         let entry = gtk::SearchEntry::new();
         entry.add_css_class("search-large");
-        entry.set_placeholder_text(Some("What do you need? A word, a question, a model number…"));
+        omui::i18n::bind(&entry, |e| e.set_placeholder_text(Some(&tr("What do you need? A word, a question, a model number…"))));
         entry.set_hexpand(true);
         let chips_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let mut chips = Vec::new();
         for (kind, label) in KINDS {
-            let b = gtk::ToggleButton::with_label(label);
+            let b = gtk::ToggleButton::new();
+            omui::i18n::bind(&b, |b| b.set_label(&omui::i18n::translate(label)));
             b.add_css_class("chip");
             chips_box.append(&b);
             chips.push((kind.to_string(), b));
@@ -59,10 +87,22 @@ impl SearchPage {
         let status = gtk::Label::new(None);
         status.add_css_class("meta");
         status.set_xalign(0.0);
+        let meaning = gtk::Label::new(None);
+        meaning.add_css_class("meta");
+        meaning.set_xalign(0.0);
+        meaning.set_wrap(true);
+        let recall = gtk::Label::new(None);
+        recall.add_css_class("meta");
+        recall.set_xalign(0.0);
+        recall.set_wrap(true);
+        recall.set_selectable(true);   // the command, to copy into a terminal
+        recall.set_visible(false);
         let results = gtk::Box::new(gtk::Orientation::Vertical, 8);
         column.append(&title);
         column.append(&entry);
         column.append(&chips_box);
+        column.append(&meaning);
+        column.append(&recall);
         column.append(&status);
         column.append(&results);
 
@@ -72,6 +112,9 @@ impl SearchPage {
             entry,
             chips,
             status,
+            meaning,
+            recall,
+            asked: Cell::new(None),
             results,
             shown: RefCell::new((String::from("\u{0}"), String::new())),
             generation: Cell::new(0),
@@ -101,6 +144,12 @@ impl SearchPage {
         page
     }
 
+    /// After a language switch: the results on show are drawn again, in the new language, when ui.rs shows the
+    /// search again.
+    pub fn retranslate(&self) {
+        self.shown.replace((String::from("\u{0}"), String::new()));
+    }
+
     pub fn current(&self) -> (String, String) {
         let kind = self.chips.iter().find(|(_, b)| b.is_active()).map(|(k, _)| k.clone()).unwrap_or_else(|| "any".into());
         (self.entry.text().to_string(), kind)
@@ -118,6 +167,7 @@ impl SearchPage {
 
     /// Shows the results for (q, kind), unless they are already on screen.
     pub fn run(self: &Rc<Self>, q: &str, kind: &str) {
+        self.ask_meaning();
         for (k, chip) in &self.chips {
             chip.set_active(k == kind);
         }
@@ -146,7 +196,7 @@ impl SearchPage {
             self.status.set_text("");
             return;
         }
-        self.status.set_text("Searching…");
+        self.status.set_text(&tr("Searching…"));
         let Some(app) = self.app.upgrade() else { return };
         let engine = app.engine.clone();
         let (q, kind) = (q.to_owned(), kind.to_owned());
@@ -181,7 +231,7 @@ impl SearchPage {
             if relevant.is_err() {
                 // The engine did not answer: say so, and let the same words be searched again.
                 page.shown.replace(Default::default());
-                page.status.set_text("The library did not answer. Try again.");
+                page.status.set_text(&tr("The library did not answer. Try again."));
                 return;
             }
             let slot = page.show_results(relevant.ok(), docs);
@@ -196,17 +246,39 @@ impl SearchPage {
         });
     }
 
+    /// Asks the engine how search finds things as the screen is shown or searched from, at most every ASK_AGAIN:
+    /// Recall may have started, or the meaning index grown, since. Until the first answer the line is empty.
+    fn ask_meaning(self: &Rc<Self>) {
+        let Some(app) = self.app.upgrade() else { return };
+        if self.asked.get().is_some_and(|at| at.elapsed() < ASK_AGAIN) {
+            return;
+        }
+        self.asked.set(Some(Instant::now()));
+        let (engine, page) = (app.engine.clone(), Rc::downgrade(self));
+        glib::spawn_future_local(async move {
+            let m = engine.get("/api/search-status").await;
+            let Some(page) = page.upgrade() else { return };
+            let Ok(m) = m else { return };
+            let (line, offer) = meaning_line(&m);
+            page.meaning.set_text(&line);
+            if offer {
+                page.recall.set_text(&tr!("Recall for Omarchy is optional: with it, search also finds pages by what they mean, not only by the words in them. To add it, run this in a terminal: {}", RECALL_INSTALL));
+            }
+            page.recall.set_visible(offer);
+        });
+    }
+
     /// Encyclopedia articles for an "Everything" search, put in the place kept for them under the library's passages.
     fn show_articles(self: &Rc<Self>, slot: &gtk::Box, found: Option<Value>) {
         let rel: Vec<Value> = found.as_ref().and_then(|v| v["results"].as_array().cloned()).unwrap_or_default();
         if rel.is_empty() {
             if self.results.first_child().is_some_and(|c| c == *slot) && slot.next_sibling().is_none() {
-                self.status.set_text("Nothing in the library matched. Try other words for the same thing.");
+                self.status.set_text(&tr("Nothing in the library matched. Try other words for the same thing."));
             }
             return;
         }
         self.status.set_text("");
-        slot.append(&section("From the encyclopedias"));
+        slot.append(&section(&tr("From the encyclopedias")));
         for r in &rel {
             slot.append(&self.passage_card(r));
         }
@@ -217,15 +289,15 @@ impl SearchPage {
         let rel: Vec<Value> = relevant.as_ref().and_then(|v| v["results"].as_array().cloned()).unwrap_or_default();
         let found: Vec<Value> = docs.as_ref().and_then(|v| v["results"].as_array().cloned()).unwrap_or_default();
         let waiting_for_articles = self.shown.borrow().1 == "any";
-        self.status.set_text(if rel.is_empty() && found.is_empty() && !waiting_for_articles {
-            "Nothing in the library matched. Try other words for the same thing."
+        self.status.set_text(&if rel.is_empty() && found.is_empty() && !waiting_for_articles {
+            tr("Nothing in the library matched. Try other words for the same thing.")
         } else if rel.is_empty() && found.is_empty() {
-            "Searching…"
+            tr("Searching…")
         } else {
-            ""
+            String::new()
         });
         if !rel.is_empty() {
-            self.results.append(&section("Most relevant pages"));
+            self.results.append(&section(&tr("Most relevant pages")));
             for r in &rel {
                 self.results.append(&self.passage_card(r));
             }
@@ -233,7 +305,7 @@ impl SearchPage {
         let slot = gtk::Box::new(gtk::Orientation::Vertical, 8);
         self.results.append(&slot);
         if !found.is_empty() {
-            self.results.append(&section(&format!("Documents ({})", found.len())));
+            self.results.append(&section(&omui::trn!("Documents ({n})", found.len())));
             for d in found.iter().take(30) {
                 self.docs.borrow_mut().insert(d["id"].as_str().unwrap_or_default().to_owned(), d.clone());
                 self.results.append(&self.document_card(d));
@@ -260,13 +332,13 @@ impl SearchPage {
         let hits = d["hits"].as_array().cloned().unwrap_or_default();
         let first_page = hits.iter().find_map(|h| h["page"].as_i64()).unwrap_or(1) as i32;
         let snippet = hits.first().and_then(|h| h["snippet"].as_str()).map(mark_markup).unwrap_or_default();
-        let mut meta = vec![d["kindLabel"].as_str().unwrap_or(kind).to_owned(), d["publisher"].as_str().unwrap_or_default().to_owned()];
+        let mut meta = vec![cards::kind_label(kind), d["publisher"].as_str().unwrap_or_default().to_owned()];
         if let Some(y) = d["year"].as_str() {
             meta.push(y.to_owned());
         }
-        let pages: Vec<String> = hits.iter().filter_map(|h| h["page"].as_i64()).map(|p| p.to_string()).collect();
+        let pages: Vec<String> = hits.iter().filter_map(|h| h["page"].as_i64()).map(omui::i18n::format_int).collect();
         if !pages.is_empty() {
-            meta.push(format!("pages {}", pages.join(", ")));
+            meta.push(omui::trnf("pages {}", pages.len() as i64, &[&pages.join(", ")]));
         }
         let card = card(d["title"].as_str().unwrap_or_default(), &snippet, &meta.join(" · "), d["trust"].as_str());
         if kind == "pdf" {
@@ -312,26 +384,26 @@ impl SearchPage {
         self.thumbs.borrow_mut().push_back((path.to_owned(), page, pic));
     }
 
-    /// Draws queued thumbnails one per idle turn, so a long result list never holds up typing or scrolling.
+    /// Has the queued thumbnails drawn off the main thread, one after another, so a long result list never holds up
+    /// typing or scrolling. A new search empties the queue: only the thumbnail being drawn then is drawn for nothing.
     fn pump_thumbs(self: &Rc<Self>) {
         if self.thumbing.replace(true) {
             return;
         }
         let page = Rc::downgrade(self);
-        glib::idle_add_local(move || {
-            let Some(p) = page.upgrade() else { return glib::ControlFlow::Break };
-            let Some((path, n, pic)) = p.thumbs.borrow_mut().pop_front() else {
-                p.thumbing.set(false);
-                return glib::ControlFlow::Break;
-            };
-            let Some(app) = p.app.upgrade() else { return glib::ControlFlow::Break };
-            let file: PathBuf = app.engine.ready.library.join(&path);
-            if let Some(doc) = pdf::document(&file)
-                && let Some((tex, _)) = pdf::render(&doc, n - 1, THUMB_W * pic.scale_factor())
-            {
-                pic.set_paintable(Some(&tex));
+        glib::spawn_future_local(async move {
+            loop {
+                let Some(p) = page.upgrade() else { return };
+                let Some((path, n, pic)) = p.thumbs.borrow_mut().pop_front() else {
+                    p.thumbing.set(false);
+                    return;
+                };
+                let Some(file) = p.app.upgrade().and_then(|app| crate::reader::library_file(&app.engine.ready.library, &path)) else { continue };
+                drop(p);   // not kept alive by a thumbnail on its way
+                if let Ok(Some(drawn)) = pdf::thumb_later(&file, n - 1, THUMB_W * pic.scale_factor()).recv().await {
+                    pic.set_paintable(Some(&drawn.texture()));
+                }
             }
-            glib::ControlFlow::Continue
         });
     }
 
@@ -347,4 +419,24 @@ async fn futures_join<A: 'static, B: 'static>(a: impl std::future::Future<Output
     let a = glib::spawn_future_local(a);
     let b = glib::spawn_future_local(b);
     (a.await.expect("task"), b.await.expect("task"))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn the_line_says_how_search_finds_things() {
+        let line = |m: Value| meaning_line(&m);
+        assert_eq!(line(json!({"ready": true, "complete": true, "coverage": 1.0})), ("Searching by words and by meaning.".into(), false));
+        assert_eq!(line(json!({"ready": true, "complete": false, "coverage": 0.625})).0, "Searching by words, and by meaning in 62% of the library so far.");
+        let no_recall = json!({"ready": false, "complete": false, "coverage": 0.0, "recall": {"installed": false, "running": false}});
+        assert_eq!(line(no_recall), ("Searching by words only: Recall for Omarchy is not installed.".into(), true));
+        let stopped = json!({"ready": false, "complete": true, "coverage": 1.0, "recall": {"installed": true, "running": false}});
+        assert_eq!(line(stopped).0, "Searching by words only: Recall for Omarchy is not running.");
+        let indexing = json!({"ready": false, "complete": false, "coverage": 0.623, "recall": {"installed": true, "running": true}});
+        assert_eq!(line(indexing), ("Searching by words only: meaning search is still being prepared (62%).".into(), false));
+    }
 }

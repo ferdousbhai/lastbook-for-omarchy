@@ -7,11 +7,10 @@
 use std::{
     cell::{Cell, RefCell},
     rc::{Rc, Weak},
-    time::Duration,
 };
 
 use gtk::{gdk, glib, prelude::*};
-use omui::clear;
+use omui::{clear, tr};
 use serde_json::Value;
 
 use crate::{
@@ -35,6 +34,8 @@ pub struct Videos {
     current: RefCell<Option<String>>,
     seek_to: Cell<f64>,
     loaded: Cell<bool>,
+    /// The video on show could not be played: what its line said before, and GStreamer's reason.
+    unplayable: RefCell<Option<(String, String)>>,
 }
 
 /// A thumbnail from the library folder as a 16:9 tile, or None if it can't be read. The grid lays cards out by the
@@ -45,7 +46,8 @@ fn texture(app: &App, rel: &str) -> Option<gdk::Paintable> {
     if rel.is_empty() {
         return None;
     }
-    let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(app.engine.ready.library.join(rel), 2 * CARD_WIDTH, -1, true).ok()?;
+    let file = crate::reader::library_file(&app.engine.ready.library, rel)?;   // a record names a file inside the library only
+    let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(file, 2 * CARD_WIDTH, -1, true).ok()?;
     let (w, h) = (CARD_WIDTH as f32, CARD_WIDTH as f32 * 9.0 / 16.0);
     let scale = (w / pixbuf.width().max(1) as f32).max(h / pixbuf.height().max(1) as f32);
     let (pw, ph) = (pixbuf.width() as f32 * scale, pixbuf.height() as f32 * scale);
@@ -57,6 +59,12 @@ fn texture(app: &App, rel: &str) -> Option<gdk::Paintable> {
     snapshot.to_paintable(Some(&gtk::graphene::Size::new(w, h)))
 }
 
+/// The transcript line being said `now` seconds in: the last one that has begun, or is about to within a quarter of a
+/// second (the player tells of its place a few times a second). Lines without a time are never the one.
+fn cue_at(times: &[Option<f64>], now: f64) -> Option<usize> {
+    times.iter().rposition(|t| t.is_some_and(|t| t <= now + 0.25))
+}
+
 /// The width of a video card's picture.
 const CARD_WIDTH: i32 = 230;
 
@@ -64,11 +72,12 @@ impl Videos {
     pub fn build(app: &Rc<App>) -> Rc<Self> {
         // The list: search, then rails.
         let (list_scroll, column) = cards::column(12);
-        let t = gtk::Label::new(Some("Videos"));
+        let t = gtk::Label::new(None);
+        omui::i18n::bind_label(&t, "Videos");
         t.add_css_class("page-title");
         t.set_xalign(0.0);
         let entry = gtk::SearchEntry::new();
-        entry.set_placeholder_text(Some("Search video titles"));
+        omui::i18n::bind(&entry, |e| e.set_placeholder_text(Some(&tr("Search video titles"))));
         let rails = gtk::Box::new(gtk::Orientation::Vertical, 10);
         column.append(&t);
         column.append(&entry);
@@ -96,7 +105,8 @@ impl Videos {
         left.append(&meta);
         let cues = gtk::ListBox::new();
         cues.add_css_class("cues");
-        let cue_head = gtk::Label::new(Some("Transcript"));
+        let cue_head = gtk::Label::new(None);
+        omui::i18n::bind_label(&cue_head, "Transcript");
         cue_head.add_css_class("sidebar-heading");
         cue_head.set_xalign(0.0);
         let right = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -122,6 +132,7 @@ impl Videos {
             current: RefCell::new(None),
             seek_to: Cell::new(0.0),
             loaded: Cell::new(false),
+            unplayable: RefCell::new(None),
         });
         let me = Rc::downgrade(&v);
         v.entry.connect_activate(move |e| {
@@ -139,14 +150,22 @@ impl Videos {
                 s.play();
             }
         });
-        // Follow playback in the transcript, four times a second while a video is open.
-        let me = Rc::downgrade(&v);
-        glib::timeout_add_local(Duration::from_millis(250), move || {
-            let Some(me) = me.upgrade() else { return glib::ControlFlow::Break };
-            me.follow();
-            glib::ControlFlow::Continue
-        });
         v
+    }
+
+    /// After a language switch: the list is drawn again when it is next shown. The player carries on; what it wrote
+    /// beside the video's own words follows the language by itself (`i18n::bind`).
+    pub fn retranslate(&self) {
+        self.loaded.set(false);
+        self.say_unplayable();
+    }
+
+    /// Says that the video on show cannot be played here, if it cannot, in the language of the moment.
+    fn say_unplayable(&self) {
+        if let Some((base, why)) = self.unplayable.borrow().as_ref() {
+            self.meta.set_text(&tr!("{} · can't play here: {} (an AV1 video needs gst-plugin-dav1d)", base, why));
+            self.meta.add_css_class("error");
+        }
     }
 
     /// Loads the rails the first time the list is shown.
@@ -160,16 +179,27 @@ impl Videos {
         glib::spawn_future_local(async move {
             let rails = engine.get("/api/videos").await;
             let Some(me) = me.upgrade() else { return };
-            let Ok(rails) = rails else {
-                return me.loaded.set(false);   // the next visit asks again
-            };
             clear(&me.rails);
+            let rails = match rails {
+                Ok(rails) => rails,
+                Err(e) => {
+                    me.loaded.set(false);   // the next visit asks again, as the button does
+                    let again = Rc::downgrade(&me);
+                    me.rails.append(&cards::problem(&tr("Lastbook could not read the library's videos."), &e.to_string(), move || {
+                        if let Some(me) = again.upgrade() {
+                            me.show_list();
+                        }
+                    }));
+                    return;
+                }
+            };
             for rail in rails.as_array().into_iter().flatten() {
                 let items: Vec<Value> = rail["items"].as_array().cloned().unwrap_or_default();
                 if items.is_empty() {
                     continue;
                 }
-                me.rails.append(&section(&format!("{} ({})", rail["title"].as_str().unwrap_or_default(), rail["count"])));
+                let count = omui::i18n::format_int(rail["count"].as_i64().unwrap_or(0));
+                me.rails.append(&section(&tr!("{} ({})", rail["title"].as_str().unwrap_or_default(), count)));
                 me.show_cards(&items);
             }
         });
@@ -185,11 +215,23 @@ impl Videos {
         let (engine, q) = (app.engine.clone(), q.to_owned());
         let me = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let Ok(r) = engine.get(&query("/api/videos/all", &[("q", &q)])).await else { return };
+            let found = engine.get(&query("/api/videos/all", &[("q", &q)])).await;
             let Some(me) = me.upgrade() else { return };
             clear(&me.rails);
+            let r = match found {
+                Ok(r) => r,
+                Err(e) => {
+                    let (again, q) = (Rc::downgrade(&me), q.clone());
+                    me.rails.append(&cards::problem(&tr("Lastbook could not search the videos."), &e.to_string(), move || {
+                        if let Some(me) = again.upgrade() {
+                            me.search(&q);
+                        }
+                    }));
+                    return;
+                }
+            };
             let items: Vec<Value> = r["items"].as_array().cloned().unwrap_or_default();
-            me.rails.append(&section(&format!("{} video{} for “{q}”", r["total"], if r["total"] == 1 { "" } else { "s" })));
+            me.rails.append(&section(&omui::trnf("{n} videos for “{}”", r["total"].as_i64().unwrap_or(0), &[&q])));
             me.show_cards(&items);
         });
     }
@@ -285,15 +327,9 @@ impl Videos {
         glib::spawn_future_local(async move {
             let rec = engine.get(&format!("/api/doc/{}", urlencoding::encode(&id))).await;
             let Some(me) = me.upgrade() else { return };
-            let Ok(rec) = rec else {
-                me.title.set_text("This video is not in the library.");
-                if let Some(app) = me.app.upgrade() {
-                    app.report_title("watch", "Video not found");
-                }
-                me.meta.set_text("");
-                me.video.set_media_stream(gtk::MediaStream::NONE);
-                me.current.replace(None);
-                return;
+            let rec = match rec {
+                Ok(rec) => rec,
+                Err(e) => return me.no_video(&tr("This video is not in the library."), &e.to_string()),
             };
             let Some(app) = me.app.upgrade() else { return };
             let title = rec["title"].as_str().unwrap_or_default().to_owned();
@@ -310,7 +346,10 @@ impl Videos {
                 meta.push(t.to_owned());
             }
             me.meta.set_text(&meta.join(" · "));
-            let file = gtk::gio::File::for_path(app.engine.ready.library.join(rec["path"].as_str().unwrap_or_default()));
+            let Some(path) = crate::reader::library_file(&app.engine.ready.library, rec["path"].as_str().unwrap_or_default()) else {
+                return me.no_video(&tr("This video's file is not in the library."), &tr("The catalog names a file outside the library's folders, which Lastbook does not open."));
+            };
+            let file = gtk::gio::File::for_path(path);
             let stream = gtk::MediaFile::for_file(&file);
             let start = me.seek_to.get();
             if start > 0.0 {
@@ -325,17 +364,38 @@ impl Videos {
                 });
             }
             // A file this computer cannot decode says so instead of staying black.
-            let note = me.meta.clone();
-            let base = me.meta.text().to_string();
+            let (failed, base) = (Rc::downgrade(&me), me.meta.text().to_string());
             stream.connect_error_notify(move |s| {
-                if let Some(e) = s.error() {
-                    note.set_text(&format!("{base} · can't play here: {} (an AV1 video needs gst-plugin-dav1d)", e.message()));
-                    note.add_css_class("error");
+                if let (Some(e), Some(me)) = (s.error(), failed.upgrade()) {
+                    // GStreamer's own message, as it gave it, inside the window's sentence (`say_unplayable`).
+                    me.unplayable.replace(Some((base.clone(), e.message().to_string())));
+                    me.say_unplayable();
+                }
+            });
+            // The transcript follows playback from the player's own word of where it is: no timer, and nothing at all
+            // while the video is paused or the window is put away.
+            let follower = Rc::downgrade(&me);
+            stream.connect_timestamp_notify(move |s| {
+                if let Some(me) = follower.upgrade() {
+                    me.follow(s.upcast_ref());
                 }
             });
             me.meta.remove_css_class("error");
+            me.unplayable.replace(None);
             me.video.set_media_stream(Some(&stream));
-            if let Ok(tx) = engine.get(&format!("/api/transcript/{}", urlencoding::encode(&id))).await {
+            let tx = engine.get(&format!("/api/transcript/{}", urlencoding::encode(&id))).await;
+            if me.current.borrow().as_deref() != Some(id.as_str()) {
+                return;   // another video was opened while this one's transcript was read
+            }
+            if let Err(e) = &tx {
+                let (l, e) = (gtk::Label::new(None), e.to_string());
+                omui::i18n::bind(&l, move |l| l.set_text(&tr!("Lastbook could not read this video's transcript: {}", e)));
+                l.add_css_class("error");
+                l.set_wrap(true);
+                l.set_xalign(0.0);
+                me.cues.append(&l);
+            }
+            if let Ok(tx) = tx {
                 for c in tx["cues"].as_array().into_iter().flatten() {
                     let t = c["t"].as_f64();
                     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -353,7 +413,8 @@ impl Videos {
                     me.cue_times.borrow_mut().push(t);
                 }
                 if tx["cues"].as_array().is_none_or(|c| c.is_empty()) {
-                    let l = gtk::Label::new(Some("This video has no transcript."));
+                    let l = gtk::Label::new(None);
+                    omui::i18n::bind_label(&l, "This video has no transcript.");
                     l.add_css_class("dim-label");
                     me.cues.append(&l);
                 }
@@ -367,19 +428,48 @@ impl Videos {
         }
     }
 
-    fn follow(&self) {
-        let Some(s) = self.video.media_stream() else { return };
-        if !s.is_playing() {
+    /// What the player shows in place of a video it cannot open: `what` in a sentence, and `why` under it.
+    fn no_video(&self, what: &str, why: &str) {
+        self.unplayable.replace(None);
+        self.title.set_text(what);
+        if let Some(app) = self.app.upgrade() {
+            app.report_title("watch", &tr("Video not found"));
+        }
+        self.meta.set_text(why);
+        self.meta.add_css_class("error");
+        self.video.set_media_stream(gtk::MediaStream::NONE);
+        self.current.replace(None);
+    }
+
+    /// Selects the transcript line being said. Called as `stream` tells of its place (`timestamp`), so only while it
+    /// plays; a stream replaced by the next video's tells nothing more that matters.
+    fn follow(&self, stream: &gtk::MediaStream) {
+        if self.video.media_stream().as_ref() != Some(stream) || !stream.is_playing() {
             return;
         }
-        let now = s.timestamp() as f64 / 1e6;
-        let times = self.cue_times.borrow();
-        let idx = times.iter().rposition(|t| t.is_some_and(|t| t <= now + 0.25));
+        let idx = cue_at(&self.cue_times.borrow(), stream.timestamp() as f64 / 1e6);
         if let Some(i) = idx
             && let Some(row) = self.cues.row_at_index(i as i32)
             && self.cues.selected_row().as_ref() != Some(&row)
         {
             self.cues.select_row(Some(&row));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_transcript_follows_the_players_place() {
+        let times = [Some(0.0), Some(4.0), None, Some(9.5)];
+        assert_eq!(cue_at(&times, 0.0), Some(0));
+        assert_eq!(cue_at(&times, 3.7), Some(0));
+        assert_eq!(cue_at(&times, 3.8), Some(1), "a line about to begin is the one");
+        assert_eq!(cue_at(&times, 9.0), Some(1), "a line without a time is never the one");
+        assert_eq!(cue_at(&times, 60.0), Some(3));
+        assert_eq!(cue_at(&[Some(5.0)], 1.0), None);
+        assert_eq!(cue_at(&[None, None], 1.0), None, "a transcript of plain paragraphs has no line to follow");
     }
 }

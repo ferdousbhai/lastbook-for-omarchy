@@ -2,7 +2,7 @@
 # Saved, and un-saved again.
 # native/dev/qa.sh native/dev/qa/search.jsonl [shots-dir]
 
-{"do":"wait","role":"window","name":"Guides — Lastbook"}
+{"do":"wait","role":"window","name":"Guides — Lastbook","timeout_ms":30000}
 {"do":"key","keys":"<Control>f"}
 {"do":"wait","role":"window","name":"Search — Lastbook"}
 {"do":"wait","role":"search-box","name":"What do you need? A word, a question, a model number…","focused":true}

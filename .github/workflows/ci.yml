@@ -1,7 +1,7 @@
 name: CI
+# Every push, on any branch, and every pull request (which also covers those from forks).
 on:
   push:
-    branches: [main]
   pull_request:
 permissions:
   contents: read
@@ -11,7 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     timeout-minutes: 60
+    env:
+      # A test that needs a tool this job lacks (lsof, libzim) fails here where it would skip on a contributor's
+      # computer: a skipped check proves nothing, and a green run would hide it (app/tests, tests/install_test.sh).
+      CI: "true"
     steps:
+      # gtk4 brings gtk4-broadwayd, the display the scripted window QA runs on, and a font for it (adwaita-fonts); lsof
+      # is test_bridge's check that the engine listens on no socket.
       - name: Install Arch packages
         run: |
           pacman -Syu --noconfirm --needed git curl base-devel rust pkgconf gtk4 webkitgtk-6.0 poppler-glib sqlite \
@@ -26,7 +32,14 @@ jobs:
           key: cargo-${{ hashFiles('native/Cargo.lock') }}
           restore-keys: |
             cargo-
-      # The window's tests, then the engine's (README, Tests), with libzim and pypdfium2 from the PKGBUILD's pinned wheels.
+      # What the tests need beyond the packages above: libzim and pypdfium2, from the PKGBUILD's pinned wheels. Fetched
+      # here, so that a wheel that cannot be had fails this step by name and not a test that then has no libzim.
+      - name: Fetch the pinned wheels (libzim, pypdfium2)
+        run: |
+          PYTHONPATH=$(bin/test-deps) python3 -c 'import libzim, pypdfium2'
+          command -v lsof gtk4-broadwayd
+      # The window's tests (cargo test, then every script in native/dev/qa driven on a broadway display, where any GLib
+      # warning or critical fails the run), then the engine's (README, Tests).
       - run: bin/test
   installer:
     runs-on: ubuntu-24.04

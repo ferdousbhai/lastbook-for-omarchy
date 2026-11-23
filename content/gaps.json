@@ -1,7 +1,7 @@
 {
  "water": {
   "missing": [
-   "No current CDC or EPA page on disinfecting drinking water. Every bleach dose here assumes 5–6% bleach, and today's stronger US bleach labels are not covered.",
+   "No current official page on disinfecting drinking water. Every bleach dose here assumes 5–6% bleach; stronger bleach is not covered.",
    "No guidance on choosing certified filters or tablets, storing water in large barrels, or treating pool or spa water.",
    "No local water utility's boil-water notice material.",
    "No source on how tall buildings get their water (roof tanks, booster pumps), or how long taps keep running on upper floors in a blackout.",
@@ -15,15 +15,15 @@
  },
  "sanitation": {
   "missing": [
-   "No US (CDC, FEMA or Red Cross) guide to bucket or bag emergency toilets, or to cleaning up sewage backups. The closest are a Norwegian civil-protection guide, WHO notes written for camps and a 1987 book.",
+   "No public guide to bucket or bag emergency toilets, or to cleaning up sewage backups. The closest are a Norwegian civil-protection guide, WHO notes written for camps and a 1987 book.",
    "Almost no sanitation videos."
   ]
  },
  "food": {
   "missing": [
-   "No USDA FSIS “Keeping Food Safe During an Emergency” or FoodKeeper chart.",
+   "No current guide to keeping food safe in an emergency and no food storage-time chart.",
    "No current guide to long-term bulk storage (grains, oxygen absorbers).",
-   "No CDC carbon monoxide fact sheet in English (the US Fire Administration generator flyer here is in Spanish)."
+   "No carbon monoxide fact sheet from a health agency."
   ]
  },
  "preserve": {
@@ -52,7 +52,7 @@
  },
  "shelter": {
   "missing": [
-   "No EPA or CDC wildfire smoke health guide and no Air Quality Index explainer.",
+   "No official wildfire smoke health guide and no air quality index explainer.",
    "Most outdoor-shelter videos are hobbyist channels without captions.",
    "No city guidance on cooling centers or on heat in apartments without air conditioning."
   ],
@@ -63,10 +63,10 @@
  "power": {
   "missing": [
    "No manual for EcoFlow, Jackery or similar battery power stations.",
-   "Nothing from FDA or health agencies on keeping CPAP or oxygen machines running in an outage beyond Red Cross/FEMA planning advice.",
-   "No local utility's material on gas meters, seismic shut-off valves or planned power shut-offs.",
+   "Nothing from health agencies on keeping CPAP or oxygen machines running in an outage beyond Red Cross/FEMA planning advice.",
+   "No local utility's material on gas meters, gas shut-off valves or planned power cuts.",
    "No power outage guide written for people living in apartment or high-rise buildings, and nothing for residents on being stuck in an elevator.",
-   "Nothing on camp stoves or generators on apartment balconies specifically; the general 20-foot rule is in the FEMA outage sheet. U.S. Fire Administration guidance says not to store or use a grill on a porch or balcony."
+   "Nothing on camp stoves or generators on apartment balconies specifically; the general 20-foot (6 m) rule is in the FEMA outage sheet. U.S. Fire Administration guidance says not to store or use a grill on a porch or balcony."
   ]
  },
  "energy": {
@@ -76,7 +76,7 @@
  },
  "comms": {
   "missing": [
-   "No text of the FCC amateur radio rules (Part 97) or current GMRS licence guidance; the ham study guide covers the 2014–2018 question pool.",
+   "No text of current amateur radio licence rules; the ham study guide covers the US 2014–2018 question pool.",
    "No modern civilian land-navigation manual."
   ],
   "disagree": [
@@ -85,22 +85,20 @@
  },
  "disaster": {
   "missing": [
-   "No California tsunami inundation maps or local tsunami zone guide.",
-   "No EPA/CDC wildfire smoke guide.",
+   "No tsunami inundation maps or local tsunami zone guide.",
+   "No official wildfire smoke health guide.",
    "No guidance on getting out of a subway or other transit during an emergency, or on what to do when transit stops running.",
-   "No fire department guidance on when to stay inside a fire-resistant apartment building during a fire elsewhere in it.",
-   "City guides such as NYC Emergency Management's Ready New York series are not in the library."
+   "No fire department guidance on when to stay inside a fire-resistant apartment building during a fire elsewhere in it."
   ]
  },
  "grow": {
   "missing": [
-   "No current coastal Southern California planting calendar in text form (the UC Ventura chart is a scanned image).",
-   "No extension guides for dry beans, winter squash or home-scale grains; the sweet potato guide is for hotter Sacramento."
+   "No extension guides for dry beans, winter squash or home-scale grains; the sweet potato guide is written for Sacramento, California."
   ]
  },
  "land": {
   "missing": [
-   "No California Geological Survey liquefaction or fault-zone maps, tsunami inundation maps or FEMA flood maps.",
+   "No liquefaction, fault-zone, tsunami inundation or flood maps.",
    "No regional guide to edible or poisonous wild plants."
   ]
  },

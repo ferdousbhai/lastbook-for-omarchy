@@ -1,5 +1,6 @@
-"""A small made-up library for the bridge tests. Built once under derived/app-build/testdata."""
-import hashlib, json, os, sqlite3, sys
+"""A small made-up library for the bridge tests. Built once under derived/app-build/testdata. And a made-up street map
+(region_file) for the tests of the help points read from one."""
+import gzip, hashlib, json, math, os, sqlite3, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -79,6 +80,70 @@ def ensure():
     con.close()
     (DATA / 'ready').write_text('1')
     return DATA
+
+
+# ------------------------------------------------------------------------------------------- a made-up street map --
+def _varint(n):
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        out.append(b | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+
+def _field(number, payload):
+    """A length-delimited field (bytes) or a varint one (int)."""
+    if isinstance(payload, int):
+        return _varint(number << 3) + _varint(payload)
+    return _varint(number << 3 | 2) + _varint(len(payload)) + payload
+
+
+def map_tile(layers, extent=4096):
+    """A vector tile as setup stores it (gzip): {layer name: [(properties, (x, y))]}, each a point in tile units. A text
+    property is a string value, a whole number an unsigned one."""
+    def zigzag(n):
+        return (n << 1) ^ (n >> 63)
+    tile = b''
+    for name, features in layers.items():
+        keys, values, body = [], [], b''
+        for props, (x, y) in features:
+            tags = b''
+            for k, v in props.items():
+                value = _field(1, v.encode()) if isinstance(v, str) else _field(5, v)
+                for seen, item in ((keys, k.encode()), (values, value)):
+                    if item not in seen:
+                        seen.append(item)
+                    tags += _varint(seen.index(item))
+            body += _field(2, _field(2, tags) + _field(3, 1) + _field(4, _varint(9) + _varint(zigzag(x)) + _varint(zigzag(y))))
+        tile += _field(3, _field(1, name.encode()) + body + b''.join(_field(3, k) for k in keys) + b''.join(_field(4, v) for v in values)
+                       + _field(5, extent) + _field(15, 2))
+    return gzip.compress(tile)
+
+
+def region_file(path, points, tiles=None, minzoom=9, maxzoom=15):
+    """A street map as setup makes one (MBTiles), holding these help points: {zoom: [(kind, name or None, lat, lon)]}.
+    Each tile also has a building, which is no help point. `tiles` adds ready-made ones: {(zoom, x, y): bytes}."""
+    by_tile = {}
+    for zoom, found in points.items():
+        for kind, name, lat, lon in found:
+            n = 1 << zoom
+            x, y = (lon + 180) / 360 * n, (1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * n
+            props = {'kind': kind, 'min_zoom': zoom, **({'name': name, 'name:en': name + ' (en)'} if name else {})}
+            by_tile.setdefault((zoom, int(x), int(y)), []).append((props, (round((x - int(x)) * 4096), round((y - int(y)) * 4096))))
+    blobs = {key: map_tile({'buildings': [({'kind': 'hospital', 'name': 'A building'}, (9, 9))], 'pois': features})
+             for key, features in by_tile.items()}
+    blobs.update(tiles or {})
+    db = sqlite3.connect(path)
+    db.executescript('''CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER, tile_data BLOB);
+        CREATE UNIQUE INDEX tile_index ON tiles (zoom_level, tile_column, tile_row);''')
+    db.executemany('INSERT INTO metadata VALUES (?,?)', {'name': 'Test', 'format': 'pbf', 'minzoom': str(minzoom), 'maxzoom': str(maxzoom)}.items())
+    db.executemany('INSERT INTO tiles VALUES (?,?,?,?)', [(z, x, (1 << z) - 1 - y, blob) for (z, x, y), blob in blobs.items()])   # rows from the south
+    db.commit()
+    db.close()
+    return path
 
 
 if __name__ == '__main__':

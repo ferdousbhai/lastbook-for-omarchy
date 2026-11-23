@@ -3,12 +3,13 @@
 //! and About (what this library holds, and credits).
 
 use std::{
+    cell::Cell,
     path::PathBuf,
     rc::{Rc, Weak},
 };
 
 use gtk::{glib, prelude::*};
-use omui::{clear, label};
+use omui::{clear, label, tr};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -26,12 +27,12 @@ fn title(text: &str, sub: &str, into: &gtk::Box) {
 }
 
 fn doc_card(app: &Weak<App>, d: &Value) -> gtk::Widget {
-    let mut meta = vec![d["kindLabel"].as_str().unwrap_or_default().to_owned(), d["publisher"].as_str().unwrap_or_default().to_owned()];
+    let mut meta = vec![cards::kind_label(d["kind"].as_str().unwrap_or_default()), d["publisher"].as_str().unwrap_or_default().to_owned()];
     if let Some(y) = d["year"].as_str() {
         meta.push(y.to_owned());
     }
     if let Some(p) = d["pages"].as_i64() {
-        meta.push(format!("{p} pages"));
+        meta.push(omui::trn!("{n} pages", p));
     }
     let c = card(d["title"].as_str().unwrap_or_default(), "", &meta.into_iter().filter(|m| !m.is_empty()).collect::<Vec<_>>().join(" · "), d["trust"].as_str());
     if let Some(r) = route_of(d) {
@@ -57,8 +58,16 @@ pub fn load_saved() -> Vec<Saved> {
     load_json(&saved_path())
 }
 
-pub fn store_saved(items: &[Saved]) {
-    store_json(&saved_path(), items);
+/// Writes the saved items; the error, if it could not, is for the window to show.
+pub fn store_saved(items: &[Saved]) -> std::io::Result<()> {
+    store_json(&saved_path(), items)
+}
+
+/// Puts back an item un-saved by mistake (the toast's Undo), unless it has been saved again since.
+pub fn put_back(items: &mut Vec<Saved>, item: Saved) {
+    if !items.iter().any(|s| s.key == item.key) {
+        items.push(item);
+    }
 }
 
 pub struct Browse {
@@ -71,6 +80,8 @@ pub struct Browse {
     shelf: gtk::Box,
     saved: gtk::Box,
     about: gtk::Box,
+    /// The shelves did not load: what the Library shows is the reason, and the next visit asks again.
+    library_failed: Cell<bool>,
 }
 
 impl Browse {
@@ -89,21 +100,39 @@ impl Browse {
             shelf,
             saved,
             about,
+            library_failed: Cell::new(false),
         })
     }
 
+    /// After a language switch: every screen here is drawn again when it is next shown (the one on show at once, by
+    /// ui.rs).
+    pub fn retranslate(&self) {
+        clear(&self.library);
+    }
+
     pub fn show_library(self: &Rc<Self>) {
-        if self.library.first_child().is_some() {
+        if self.library.first_child().is_some() && !self.library_failed.replace(false) {
             return;
         }
-        title("Library", "", &self.library);
+        clear(&self.library);
+        title(&tr("Library"), "", &self.library);
         let Some(app) = self.app.upgrade() else { return };
         let (engine, me) = (app.engine.clone(), Rc::downgrade(self));
         glib::spawn_future_local(async move {
             let shelves = engine.get("/api/shelves").await;
             let Some(me) = me.upgrade() else { return };
-            let Ok(shelves) = shelves else {
-                return clear(&me.library);   // empty again, so the next visit asks again
+            let shelves = match shelves {
+                Ok(shelves) => shelves,
+                Err(e) => {
+                    me.library_failed.set(true);
+                    let again = Rc::downgrade(&me);
+                    me.library.append(&cards::problem(&tr("Lastbook could not read the library's shelves."), &e.to_string(), move || {
+                        if let Some(me) = again.upgrade() {
+                            me.show_library();
+                        }
+                    }));
+                    return;
+                }
             };
             let grid = cards::grid(3, 8);
             for s in shelves.as_array().into_iter().flatten() {
@@ -111,7 +140,7 @@ impl Browse {
                 if read + video == 0 {
                     continue;   // nothing on this shelf in this library
                 }
-                let counts = [(read > 0).then(|| format!("{read} to read")), (video > 0).then(|| format!("{video} video{}", if video == 1 { "" } else { "s" }))]
+                let counts = [(read > 0).then(|| omui::trn!("{n} to read", read)), (video > 0).then(|| omui::trn!("{n} videos", video))]
                     .into_iter()
                     .flatten()
                     .collect::<Vec<_>>()
@@ -129,14 +158,26 @@ impl Browse {
         clear(&self.shelf);
         title(name, "", &self.shelf);
         let Some(app) = self.app.upgrade() else { return };
-        let (engine, me, id) = (app.engine.clone(), Rc::downgrade(self), id.to_owned());
+        let (engine, me, id, shown) = (app.engine.clone(), Rc::downgrade(self), id.to_owned(), name.to_owned());
         glib::spawn_future_local(async move {
             // The shelf's answer has no title: the list of shelves does.
             let name = engine.get("/api/shelves").await.ok().and_then(|v| {
                 v.as_array()?.iter().find(|s| s["id"] == id.as_str()).and_then(|s| s["title"].as_str().map(str::to_owned))
             });
-            let Ok(s) = engine.get(&format!("/api/shelf/{}", urlencoding::encode(&id))).await else { return };
+            let shelf = engine.get(&format!("/api/shelf/{}", urlencoding::encode(&id))).await;
             let Some(me) = me.upgrade() else { return };
+            let s = match shelf {
+                Ok(s) => s,
+                Err(e) => {
+                    let (again, id) = (Rc::downgrade(&me), id.clone());
+                    me.shelf.append(&cards::problem(&tr("Lastbook could not read this shelf."), &e.to_string(), move || {
+                        if let Some(me) = again.upgrade() {
+                            me.show_shelf(&id, &shown);
+                        }
+                    }));
+                    return;
+                }
+            };
             if let Some(name) = name {
                 clear(&me.shelf);
                 title(&name, "", &me.shelf);
@@ -145,7 +186,8 @@ impl Browse {
                 }
             }
             for col in s["collections"].as_array().into_iter().flatten() {
-                me.shelf.append(&section(&format!("{} ({})", col["collection"].as_str().unwrap_or_default(), col["count"])));
+                let count = omui::i18n::format_int(col["count"].as_i64().unwrap_or(0));
+                me.shelf.append(&section(&tr!("{} ({})", col["collection"].as_str().unwrap_or_default(), count)));
                 let (list, app) = (gtk::Box::new(gtk::Orientation::Vertical, 12), me.app.clone());
                 me.shelf.append(&list);
                 let items = col["items"].as_array().cloned().unwrap_or_default();
@@ -157,10 +199,10 @@ impl Browse {
 
     pub fn show_saved(self: &Rc<Self>) {
         clear(&self.saved);
-        title("Saved", "", &self.saved);
+        title(&tr("Saved"), "", &self.saved);
         let items = load_saved();
         if items.is_empty() {
-            let l = gtk::Label::new(Some("Nothing saved yet. Star a page, video or guide to keep it here (Ctrl+D)."));
+            let l = gtk::Label::new(Some(&tr("Nothing saved yet. Star a page, video or guide to keep it here (Ctrl+D).")));
             l.add_css_class("status-line");
             l.set_xalign(0.0);
             l.set_wrap(true);
@@ -169,7 +211,7 @@ impl Browse {
         let mut items = items;
         items.sort_by_key(|s| std::cmp::Reverse(s.at));
         for s in items {
-            let c = card(&s.title, "", &s.sub, None);
+            let c = card(&s.title, "", &crate::ui::saved_sub(&s.key, &s.sub), None);
             if let Some(mut r) = Route::from_key(&s.key) {
                 if let Route::Web { meta, .. } = &mut r {
                     *meta = s.sub.clone();
@@ -182,45 +224,52 @@ impl Browse {
 
     pub fn show_about(self: &Rc<Self>) {
         clear(&self.about);
-        title("About this library", "", &self.about);
+        title(&tr("About this library"), "", &self.about);
         let Some(app) = self.app.upgrade() else { return };
         let (engine, me) = (app.engine.clone(), Rc::downgrade(self));
         glib::spawn_future_local(async move {
             let lib = engine.get("/api/library").await.unwrap_or_default();
             let Some(me) = me.upgrade() else { return };
             clear(&me.about);   // opened twice before the answers came: one set of cards
-            title("About this library", "", &me.about);
-            let gb = lib["document_bytes"].as_f64().unwrap_or(0.0) / 1e9;
-            me.about.append(&text_card(
-                "What's in it",
-                &glib::markup_escape_text(&format!(
-                    "{} PDF manuals ({} pages), {} saved web pages, {} videos and {} complete encyclopedias; {gb:.1} GB of documents.",
-                    lib["pdfs"], lib["pdf_pages"], lib["web_pages"], lib["videos"], lib["collections"]
-                )),
-                "",
-            ));
+            title(&tr("About this library"), "", &me.about);
+            let (n, gb) = (|k: &str| lib[k].as_i64().unwrap_or(0), lib["document_bytes"].as_f64().unwrap_or(0.0) / 1e9);
+            // One sentence a count each would glue fragments, which no language but English can take: each count is
+            // a line of its own.
+            let holds = [
+                omui::trn!("{n} PDF manuals", n("pdfs")),
+                omui::trn!("{n} pages in the manuals", n("pdf_pages")),
+                omui::trn!("{n} saved web pages", n("web_pages")),
+                omui::trn!("{n} videos", n("videos")),
+                omui::trn!("{n} complete encyclopedias", n("collections")),
+                tr!("{} GB of documents", omui::i18n::format_number(gb, 1)),
+            ];
+            me.about.append(&text_card(&tr("What's in it"), &glib::markup_escape_text(&holds.join("\n")), ""));
             let ix = &lib["index"];
             let search = if ix["state"] == "waiting for Recall" {
-                "Meaning-based search is off: Recall for Omarchy isn't running.".to_owned()
+                tr("Meaning-based search is off: Recall for Omarchy isn't running.")
             } else {
-                format!("Meaning-based search (through Recall for Omarchy): {} passages from {} documents.", ix["chunks"], ix["docs"])
+                omui::trnf(
+                    "Meaning-based search (through Recall for Omarchy): {n} passages from {} documents.",
+                    ix["chunks"].as_i64().unwrap_or(0),
+                    &[&omui::i18n::format_int(ix["docs"].as_i64().unwrap_or(0))],
+                )
             };
-            me.about.append(&text_card("Search", &glib::markup_escape_text(&search), ""));
+            me.about.append(&text_card(&tr("Search"), &glib::markup_escape_text(&search), ""));
             me.about.append(&text_card(
-                "Privacy",
-                &glib::markup_escape_text("Lastbook sends nothing anywhere. Only setup downloads, and only when you start it."),
+                &tr("Privacy"),
+                &glib::markup_escape_text(&tr("Lastbook sends nothing anywhere. Only setup downloads, and only when you start it.")),
                 "",
             ));
             me.about.append(&text_card(
-                "Credits",
-                &glib::markup_escape_text("Based on Lastbook (lastbook.org), MIT. The look follows Strata (github.com/lgse/strata), MIT; the icons are Lucide's, ISC. Encyclopedias by Kiwix and their contributors. Map data © OpenStreetMap contributors (ODbL), tiles from Protomaps; place names from GeoNames (CC BY 4.0). Each document keeps its own licence: see Sources and permissions in the library."),
-                &format!("Lastbook for Omarchy {}", app_version(&me.app)),
+                &tr("Credits"),
+                &glib::markup_escape_text(&tr("Based on Lastbook (lastbook.org), MIT. The look follows Strata (github.com/lgse/strata), MIT; the icons are Lucide's, ISC. Encyclopedias by Kiwix and their contributors. Map data © OpenStreetMap contributors (ODbL), tiles from Protomaps; place names from GeoNames (CC BY 4.0). Each document keeps its own licence: see Sources and permissions in the library.")),
+                &tr!("Lastbook for Omarchy {}", app_version(&me.app)),
             ));
-            let m = card("Library and downloads", "", "", None);
+            let m = card(&tr("Library and downloads"), "", "", None);
             activate(&m, me.app.clone(), Route::Manage);
             me.about.append(&m);
             if let Some(src) = lib["sources"].as_str() {
-                let c = card("Sources and permissions", "", "Where every document came from, and its licence", None);
+                let c = card(&tr("Sources and permissions"), "", &tr("Where every document came from, and its licence"), None);
                 activate(&c, me.app.clone(), Route::Read { doc: src.to_owned(), page: 1 });
                 me.about.append(&c);
             }
@@ -230,4 +279,37 @@ impl Browse {
 
 fn app_version(app: &Weak<App>) -> String {
     app.upgrade().and_then(|a| a.engine.ready.version.clone()).unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn saved(key: &str, at: i64) -> Saved {
+        Saved { key: key.into(), title: "A page".into(), sub: "Page 3".into(), at }
+    }
+
+    /// The app id became `lastbook` (main.rs); what a person keeps is under the folder named Lastbook, never under
+    /// the app id, so the rename leaves their saved items (and the engine's settings, app/main.py) where they were.
+    #[test]
+    fn saved_items_stay_where_they_were_across_the_rename() {
+        assert!(saved_path().ends_with("Lastbook/saved.json"), "{}", saved_path().display());
+        assert!(!saved_path().to_string_lossy().contains("io.github"));
+    }
+
+    #[test]
+    fn undo_puts_an_unsaved_item_back_as_it_was() {
+        let mut items = vec![saved("read:a:1", 10), saved("guide:water", 20)];
+        let gone = items.remove(0);
+        put_back(&mut items, gone.clone());
+        assert!(items.contains(&gone), "back with the time it was first saved at");
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn undo_does_not_save_twice_what_was_saved_again_meanwhile() {
+        let mut items = vec![saved("read:a:1", 30)];
+        put_back(&mut items, saved("read:a:1", 10));
+        assert_eq!(items, [saved("read:a:1", 30)]);
+    }
 }

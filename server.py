@@ -8,29 +8,32 @@ over in-memory streams. The routes the window uses:
   /api/find?q=&kind=          plain-language search (synonyms, grouping by document, trusted-source ranking)
   /api/retrieve?q=&k=&kind=   the best passages (keyword, meaning-based and encyclopedia lists, fused), with where each came from
   /api/doc/<id>               one catalog record
+  /api/text/<id>              a document's extracted text, one string per page (the reader's find in page)
+  /api/related?doc=|path=     up to five other documents on the same subject (the readers' Related)
+  /api/search-status          where meaning search stands, as `lastbook status` reports it (the Search screen's line)
   /api/transcript/<video id>  timed transcript cues
   /api/videos, /api/videos/all?q=  the Videos screen's rows, and a search of every video
   /api/shelves, /api/shelf/<id>    browse the whole collection by plain-language shelf
-  /api/places?q=              place finder (addresses, ZIP codes, towns, named places; the world's towns from GeoNames)
+  /api/places?q=              place finder (the world's countries, regions and towns from GeoNames, or a point as LAT,LON)
+  /api/near?lat=&lon=[&to=LAT,LON]  the Map screen's nearest help around a point, or how far another point is from it
+  /api/encyclopedias, /api/encyclopedia/random?file=  the encyclopedias with their front pages, and a random article
   /api/library, /api/setup/*
 
 The command line (app/cli.py) calls the helpers here directly (hybrid, places, near, page_texts, transcript).
 Nothing in library-data is written. Caches go to derived/cache.
 """
-import functools, html, io, json, math, os, re, sqlite3, struct, sys, threading, traceback, urllib.parse, zlib
+import functools, html, io, json, math, os, re, sqlite3, struct, sys, threading, traceback, unicodedata, urllib.parse, zlib
 from pathlib import Path
 
 import engine.paths as lastbook_paths  # noqa: E402  (data folder and program folder can differ in the packaged app)
 from engine.paths import ro_uri  # noqa: E402
-from engine import saved_pages, address_search  # noqa: E402
+from engine import saved_pages, map_pois  # noqa: E402
 from engine.setup import api as setup_api  # noqa: E402  (the one module that may download: only when the person asks)
 HERE = lastbook_paths.DATA  # holds derived/
 APP = lastbook_paths.APP  # holds content/
 LIB = lastbook_paths.LIB
 CACHE = HERE / 'derived' / 'cache'
-MAPDB = HERE / 'derived' / 'geo' / 'map.sqlite'
-PLACEDB = HERE / 'derived' / 'geo' / 'places.sqlite'
-WORLD_PLACEDB = HERE / 'derived' / 'geo' / 'world-places.sqlite'   # GeoNames: countries, regions, towns of 15,000+ (engine/setup/maps.py builds it in setup)
+WORLD_PLACEDB = HERE / 'derived' / 'geo' / 'world-places.sqlite'   # GeoNames: countries, regions, places of 500+ (engine/setup/maps.py builds it in setup)
 import engine.library as library  # noqa: E402  (the Handler base, the search index's path, the ZIM reader)
 import retrieval, encyclopedia  # noqa: E402
 INDEX = None  # retrieval.Index, created in init()
@@ -52,6 +55,9 @@ def excluded_videos():
     try:
         m = p.stat().st_mtime
     except FileNotFoundError:
+        if _excl['mtime'] is not None:      # the list was there and has been removed: its videos come back
+            _excl.update(mtime=None, ids=set())
+            _cat['mtime'] = 0
         return set()
     if m != _excl['mtime']:
         try:
@@ -63,6 +69,10 @@ def excluded_videos():
     return _excl['ids']
 
 
+class LibraryError(Exception):
+    """The library itself cannot be read (catalog or keyword index damaged): said as it is, never as "no results"."""
+
+
 def catalog():
     excluded_videos()
     p = LIB / 'catalog.json'
@@ -72,7 +82,11 @@ def catalog():
             if m != _cat['mtime']:
                 try:
                     recs = json.loads(p.read_text(encoding='utf-8'))
-                except ValueError:  # being rewritten by the indexer right now; keep the old copy
+                    if not isinstance(recs, list) or not all(isinstance(r, dict) for r in recs):
+                        raise ValueError('not a list of records')
+                except ValueError:  # being rewritten right now: keep the old copy
+                    if not _cat.get('loaded'):  # there is none (a process that just started): an empty library would be a lie
+                        raise LibraryError('The library catalog (library-data/catalog.json) cannot be read: it is damaged or incomplete.') from None
                     return _cat
                 excl = excluded_videos()
                 if excl:  # rejected videos never appear, even if a catalog rebuild brings them back
@@ -86,14 +100,14 @@ def catalog():
                         tx[r['video_path']] = r
                     if r['kind'] == 'metadata' and r.get('video_path') and r.get('thumbnail_path'):
                         thumbs[r['video_path']] = r['thumbnail_path']
-                _cat.update(mtime=m, by_id=by_id, by_path={r['path']: r for r in recs}, video_tx=tx, thumbs=thumbs)
+                _cat.update(loaded=True, mtime=m, by_id=by_id, by_path={r['path']: r for r in recs}, video_tx=tx, thumbs=thumbs)
     return _cat
 
 
 TRUST = [  # (pattern on publisher+collection, label shown to people, ranking weight)
-    (r'World Health|WHO\b|ICRC|IFRC|Red Cross|Médecins|MSF|UNICEF|Sphere|St John Ambulance|CAWST', 'International health & humanitarian guidance', 1.5),
+    (r'World Health|WHO\b|ICRC|IFRC|Red Cross|Red Crescent|Médecins|Medecins|MSF|UNICEF|UNHCR|United Nations|FAO\b|PAHO|Sphere|St John Ambulance|CAWST', 'International health & humanitarian guidance', 1.5),
     (r'Hesperian|Where There Is No|Where Women|Book for Midwives|Community Guide to Environmental|Health Actions|Workers\' Guide', 'Hesperian community health guide', 1.45),
-    (r'FEMA|Ready\.gov|CDC|Centers for Disease|EPA|Environmental Protection|NOAA|National Weather|USDA|Food Safety|National Park|USGS|Department|Agency|U\.S\.|US Army|Army|Navy|Census|NIOSH|OSHA|NASA|FAA|Cal OES|California|County of|City of', 'Government guidance', 1.4),
+    (r'FEMA|Ready\.gov|CDC|Centers for Disease|EPA|Environmental Protection|NOAA|National Weather|USDA|Food Safety|National Park|USGS|Department|Agency|U\.S\.|US Army|Army|Navy|Census|NIOSH|OSHA|NASA|FAA|Cal OES|County of|City of|Government|Ministry|Minist[eè]r|Directorate|Bureau of|Civil Protection|Public Health|Health Service|NHS\b|Federal', 'Government guidance', 1.4),
     (r'National Center for Home Food Preservation|Extension|University|UC |College|Agricultural|Food Hero|UWyo', 'University / extension service', 1.35),
     (r'MIT|OpenStax|OpenCourseWare|NIST', 'Course or textbook', 1.1),
     (r'Kiwix|Wikipedia|Wikibooks|Appropedia|MDWiki', 'Community-written encyclopedia', 1.0),
@@ -261,14 +275,24 @@ SYN = {
     'carbon': ['monoxide'], 'co': ['carbon monoxide'], 'mold': ['mould'], 'rats': ['rodents', 'rodent'], 'mosquito': ['mosquitoes'],
 }
 CLINICAL = re.compile(r'surg|clinical|district hospital|essential drugs|tuberculosis|obstetric|cholera epidemic|measles epidemic|anaesth|war surgery', re.I)
+
+
+# Collections whose name says "clinical" but which are written for people with no clinician at hand (Hesperian's Where
+# There Is No Doctor / Dentist, A Book for Midwives): general guidance, never put after it.
+LAY_CARE = {'low-resource clinical care'}
+
+
+def for_clinicians(r):
+    """Whether a record is a surgeon's or clinician's text, by its title or its collection's name."""
+    collection = r.get('collection', '')
+    return bool(CLINICAL.search(r['title'] + ' ' + ('' if collection.lower() in LAY_CARE else collection)))
+
+
 GENERAL = re.compile(r'first aid|emergency|basic|household|home|beginner|guide|handbook|where there is no', re.I)
 KIND_FILTERS = {'read': ('pdf', 'html', 'pptx'), 'video': ('video', 'transcript'), 'all': None}
 
 
-def fts_expr(groups):
-    def q(t):
-        return '"' + t.replace('"', '""') + '"'
-    return ' AND '.join('(' + ' OR '.join(q(t) for t in g) + ')' for g in groups)
+fts_expr = encyclopedia.match_expr
 
 
 PHRASES = [  # everyday phrases -> one idea, checked before single words
@@ -310,18 +334,29 @@ _fts_tls = threading.local()
 def fts_rows(groups, limit, marks=('', ''), tokens=40, relax_below=10):
     """Rows from the keyword index: every idea in groups must match; with fewer than relax_below rows, any idea
     may (documents with more of them still rank higher). Rows are (doc_id, page, snippet, bm25), best first."""
-    con = getattr(_fts_tls, 'con', None)
-    if con is None:  # one read-only connection per thread, reused
-        con = _fts_tls.con = sqlite3.connect(ro_uri(library.DB), uri=True, check_same_thread=False)
+    con = _fts_con()
     sql = (f"SELECT doc_id,page,snippet(pages,6,?,?,' … ',{int(tokens)}),bm25(pages,0,6,1,1,0,0,1) "
            "FROM pages WHERE pages MATCH ? ORDER BY bm25(pages,0,6,1,1,0,0,1) LIMIT ?")
     try:
         rows = con.execute(sql, (*marks, fts_expr(groups), limit)).fetchall()
         if len(rows) < relax_below and len(groups) > 1:
             return rows + con.execute(sql, (*marks, ' OR '.join('(' + fts_expr([g]) + ')' for g in groups), limit)).fetchall()
-    except sqlite3.OperationalError:
-        return []
+    except sqlite3.OperationalError as e:
+        if re.search(r'fts5: syntax error|unterminated string|no such column|unknown special query', str(e)):
+            return []  # a question FTS5 cannot parse matches nothing
+        # An index with no table or one that cannot be read is not "no results": the library is damaged, and says so.
+        raise LibraryError(f'The keyword index (library-data/search.sqlite) cannot be searched: {e}.') from None
+    except sqlite3.DatabaseError as e:
+        raise LibraryError(f'The keyword index (library-data/search.sqlite) cannot be read: {e}.') from None
     return rows
+
+
+def _fts_con():
+    """This thread's read-only connection to the keyword index, the pack's own search.sqlite."""
+    con = getattr(_fts_tls, 'con', None)
+    if con is None:
+        con = _fts_tls.con = sqlite3.connect(ro_uri(library.DB), uri=True, check_same_thread=False)
+    return con
 
 
 def find(q, kind='all', limit=30):
@@ -368,7 +403,7 @@ def _find(q, kind, limit, _cat_version, _excl_version):
         s = d['score'] * w * (1 + tb)
         if re.search(r'Spanish|español|\bkit de\b', r['title'] + r.get('notes', ''), re.I):
             s *= 0.5
-        if CLINICAL.search(r['title'] + ' ' + r.get('collection', '')) and not CLINICAL.search(q):
+        if for_clinicians(r) and not CLINICAL.search(q):
             s *= 0.6  # written for surgeons/clinicians; still found, but after general guidance
         if re.search(r'^index$|front matter|table of contents|credits|^contents', clean_title(r), re.I):
             s *= 0.3  # index pages match everything but rarely answer anything
@@ -430,6 +465,15 @@ def hybrid(q, k=8, kind='any', doc=None):
     cat = catalog()
     base = _allowed(kind)
     allowed = (lambda d: d == doc and base(d)) if doc else base
+    qv = INDEX.query_vector(q)  # once: each embedding is a round trip to Recall
+    moments = {}
+
+    def moment(video_id):
+        """(seconds, passage) of the video's best moment for the question by meaning; (None, None) without one."""
+        if video_id not in moments:
+            best = INDEX.semantic(qv, 1, doc=video_id) if qv is not None else []
+            moments[video_id] = (best[0]['t'], best[0]['text']) if best else (None, None)
+        return moments[video_id]
     kw = []
     for doc_id, page, snip in _fts(q, 120):
         r = cat['by_id'].get(doc_id)
@@ -442,12 +486,18 @@ def hybrid(q, k=8, kind='any', doc=None):
             doc_id, page = v['id'], None
         if not allowed(doc_id):
             continue
-        kw.append((doc_id, page if cat['by_id'][doc_id]['kind'] == 'pdf' else None, None, snip))
-    qv = INDEX.query_vector(q)  # once: each embedding is a round trip to Recall
+        t = None
+        if cat['by_id'][doc_id]['kind'] == 'video':
+            # The index knows which video, not when: take the video's best moment now, so that this hit and the same
+            # moment found by meaning are one result (their ranks add up) and not the same passage listed twice.
+            t, passage = moment(doc_id)
+            snip = passage or snip
+        kw.append((doc_id, page if cat['by_id'][doc_id]['kind'] == 'pdf' else None, t, snip))
     sem = INDEX.semantic(qv, 80, allowed) if qv is not None else []
     sem_l = [(s['doc_id'], s['page'] if cat['by_id'][s['doc_id']]['kind'] == 'pdf' else None, s['t'], s['text'], s['sem']) for s in sem]
     content, groups = query_groups(q)
-    enc = ENC.search(content, groups, qv) if ENC and not doc and kind in ('any', 'encyclopedia') else []
+    only_articles = kind == 'encyclopedia'
+    enc = ENC.search(content, groups, qv, k if only_articles else encyclopedia.DEEP) if ENC and not doc and kind in ('any', 'encyclopedia') else []
     recs = {e['doc_id']: e['record'] for e in enc}
     rec = lambda d: cat['by_id'].get(d) or recs[d]
     key = lambda d, p, t: (d, p, None if t is None else int(t // 45))
@@ -464,14 +514,13 @@ def hybrid(q, k=8, kind='any', doc=None):
         e.update(excerpt=chunk, t=t, sem=round(sc, 3))  # the semantic chunk is the fuller passage
     for e in enc:
         text[key(e['doc_id'], None, None)] = {'excerpt': e['text'], 't': None, 'section': e['heading'], 'sem': e['sem']}
-    # videos found only by keyword have no moment yet: borrow the best timed window from the same video
     out = []
     for kkey, e in fused.items():
         d, p, _ = kkey
         r = rec(d)
         _, weight = trust(r)
         score = e['score'] * (0.75 + 0.25 * weight)
-        if CLINICAL.search(r['title'] + ' ' + r.get('collection', '')) and not CLINICAL.search(q):
+        if for_clinicians(r) and not CLINICAL.search(q):
             score *= 0.55  # surgery/clinician texts after general guidance unless asked for
         title = (r['title'] + ' ' + str(r.get('model') or '')).lower()
         if models and any(m in title for m in models):
@@ -480,39 +529,54 @@ def hybrid(q, k=8, kind='any', doc=None):
             score *= 1.3
         out.append((score, kkey, e))
     out.sort(key=lambda x: -x[0])
+    # Library pages are usually found by words and by meaning alike, an article only by the encyclopedia search, so in a
+    # mixed list the pages come first and the articles after them, each in their own order, best first. A list of six or
+    # more keeps its last place for the best article. A search of the encyclopedias alone is simply best first.
+    articles = [] if only_articles else [x for x in out if x[1][0].startswith(encyclopedia.ARTICLE_PREFIX)]
+    if articles:
+        out = [x for x in out if not x[1][0].startswith(encyclopedia.ARTICLE_PREFIX)]
     res, per_doc = [], {}
-    # Library pages are usually found by words and by meaning alike, so they outrank an article found by the encyclopedia
-    # search alone. The best article that cleared its own bar keeps the last place of a full list.
-    best_article = next((x for x in out if x[1][0].startswith(encyclopedia.ARTICLE_PREFIX)), None) if k >= 6 else None
-    if best_article:
-        out = [x for x in out if x is not best_article]
-    for score, kkey, e in out:
-        d, p, _ = kkey
-        if best_article and len(res) == k - 1:
-            score, kkey, e = best_article
+
+    def take(found, places):
+        for score, kkey, e in found:
+            if len(res) >= places:
+                break
             d, p, _ = kkey
-            best_article = None
-        if per_doc.get(d, 0) >= 2:  # variety: at most two passages per document
-            continue
-        per_doc[d] = per_doc.get(d, 0) + 1
-        info = text.get(kkey, {})
-        t = info.get('t')
-        r = rec(d)
-        if r['kind'] == 'video' and t is None and qv is not None:
-            best = INDEX.semantic(qv, 1, doc=d)
-            if best:
-                t = best[0]['t']
-                info = dict(info, excerpt=best[0]['text'])
-        extra = {'section': info['section']} if info.get('section') else {}
-        res.append(_src(r, p, t, info.get('excerpt'), 900, found_by=e['ranks'], score=round(score * 1000, 2), **extra))
-        if len(res) >= k:
-            break
-    if best_article and len(res) < k:  # fewer library results than places: the article still comes
-        score, kkey, e = best_article
-        info = text.get(kkey, {})
-        res.append(_src(rec(kkey[0]), None, None, info.get('excerpt'), 900, found_by=e['ranks'], score=round(score * 1000, 2),
-                        **({'section': info['section']} if info.get('section') else {})))
+            if per_doc.get(d, 0) >= 2:  # variety: at most two passages per document
+                continue
+            per_doc[d] = per_doc.get(d, 0) + 1
+            info = text.get(kkey, {})
+            extra = {'section': info['section']} if info.get('section') else {}
+            res.append(_src(rec(d), p, info.get('t'), info.get('excerpt'), 900, found_by=e['ranks'], score=round(score * 1000, 2), **extra))
+    take(out, k - 1 if articles and k >= 6 else k)
+    take(articles, k)
     return res
+
+
+def related(doc_id='', path='', k=5):
+    """Up to k other documents on the subject of one, named by its id or by the address it is served at (a saved page's,
+    an encyclopedia article's /zim/...). By meaning, those whose passages lie nearest the average of its own
+    (retrieval.Index.centroid), which needs no Recall; for what the meaning index does not hold (an article, a document
+    not embedded yet), the search for its title. Each opens at its start, so no page is named."""
+    path = urllib.parse.unquote(urllib.parse.urlsplit(path).path).lstrip('/')
+    if path.startswith('zim/'):
+        doc_id = encyclopedia.ARTICLE_PREFIX + path[4:]
+    r = record(doc_id) if doc_id else catalog()['by_path'].get(path)
+    if not r:
+        return []
+    base = _allowed('library')
+    v = INDEX.centroid(r['id'])
+    if v is not None:
+        # Best first and no bar: FLOOR and MARGIN were measured for questions, and the nearest documents are related
+        # however near they are.
+        near = INDEX.semantic(v, 200, lambda d: d != r['id'] and base(d), floor=-1, margin=-2)
+        found = [_src(catalog()['by_id'][s['doc_id']]) for s in near]
+    else:
+        found = [s for s in hybrid(clean_title(r), 12) if s['doc_id'] != r['id']]
+    out = {}
+    for s in found:
+        out.setdefault(s['doc_id'], {**s, 'page': None, 't': None, 'excerpt': ''})
+    return list(out.values())[:k]
 
 
 # ------------------------------------------------------------------ shelves ----
@@ -677,11 +741,11 @@ def vtt_cues(path):
     out, last = [], ''
     for at, text in retrieval.cues(LIB / path):
         t = text
-        if t.startswith(last) and last:
+        if last and t.startswith(last):  # a rolling caption: the line before, then the new one
             t = t[len(last):].strip()
         if not t:
             continue
-        last = text
+        last = t  # what was just said, which is what the next cue starts with (retrieval.vtt_windows does the same)
         if out and at - out[-1]['t'] < 12 and len(out[-1]['text']) < 220:
             out[-1]['text'] += ' ' + t
         else:
@@ -709,132 +773,24 @@ def transcript(video_id):
 
 
 # ---------------------------------------------- places and nearby help ----
-# Read from the US map files an upstream pack or state map holds (map.sqlite, national.sqlite, water.sqlite, crops.sqlite,
-# places.sqlite) and from world-places.sqlite, which setup builds. The window draws its own map (native/src/map.rs).
-_tls = threading.local()
+# Places from world-places.sqlite (GeoNames: countries, regions, places of 500+; setup builds it), or a point given as
+# "LAT,LON". Help points from the `pois` layer of the street-level maps the window draws (regions-*.mbtiles,
+# engine/map_pois.py). Upstream's US map files, in a library that still has them, are not read.
+GEO = HERE / 'derived' / 'geo'
 
-
-def mapdb():
-    if not MAPDB.exists():
-        return None
-    if not hasattr(_tls, 'map'):
-        _tls.map = sqlite3.connect(ro_uri(MAPDB), uri=True, check_same_thread=False)
-    return _tls.map
-
-
-def national_mapdb():
-    path = HERE / 'derived/geo/national.sqlite'
-    if not path.exists():
-        return None
-    if not hasattr(_tls, 'national_map'):
-        _tls.national_map = sqlite3.connect(ro_uri(path), uri=True, check_same_thread=False)
-        _tls.national_map.execute('PRAGMA query_only=ON')
-    return _tls.national_map
-
-
-SOCAL_CELL = 0.05
-_socal = {'cells': None}
-
-
-def socal_cells():
-    """0.05° cells holding detailed SoCal features; national rows inside them are duplicates and are skipped."""
-    if _socal['cells'] is None:
-        cache = HERE / 'derived/geo/socal-cells.json'
-        try:
-            _socal['cells'] = set(json.loads(cache.read_text(encoding='utf-8')))
-        except (OSError, ValueError):
-            db = mapdb()
-            cells = set() if db is None else {r[0] for r in db.execute(
-                'SELECT DISTINCT CAST((minx+180)/? AS INT)*100000+CAST((miny+90)/? AS INT) FROM feat_idx WHERE maxx-minx<?',
-                (SOCAL_CELL, SOCAL_CELL, SOCAL_CELL))}
-            cache.write_text(json.dumps(sorted(cells)))
-            _socal['cells'] = cells
-    return _socal['cells']
-
-
-def in_socal(lon, lat):
-    return int((lon + 180) / SOCAL_CELL) * 100000 + int((lat + 90) / SOCAL_CELL) in socal_cells()
-
-
-HELP = {'hospital': 'Hospital', 'clinic': 'Clinic', 'doctors': 'Doctor', 'pharmacy': 'Pharmacy', 'chemist': 'Pharmacy',
-        'dentist': 'Dentist', 'fire_station': 'Fire station', 'police': 'Police', 'drinking_water': 'Drinking water tap',
-        'fountain': 'Fountain (not necessarily drinkable)', 'water_tower': 'Water tower', 'water_works': 'Water works',
-        'spring': 'Spring (untested)', 'toilet': 'Public toilet', 'shelter': 'Shelter (structure)',
+# What `--nearby` takes: the kinds the street-level maps hold (engine/map_pois.py KINDS where the map's word differs).
+HELP = {'hospital': 'Hospital', 'clinic': 'Clinic', 'doctors': 'Doctor', 'pharmacy': 'Pharmacy',
+        'chemist': 'Chemist / drugstore (may not sell medicines)', 'dentist': 'Dentist', 'fire_station': 'Fire station',
+        'police': 'Police', 'drinking_water': 'Drinking water tap', 'fountain': 'Fountain (not necessarily drinkable)',
+        'spring': 'Spring (untested)', 'toilet': 'Public toilet',
+        'shelter': 'Roofed shelter (a bus or rain shelter, hut or post: not an emergency shelter)',
         'community_centre': 'Community centre', 'town_hall': 'Town hall', 'school': 'School', 'library': 'Library',
         'supermarket': 'Supermarket', 'convenience': 'Convenience store', 'doityourself': 'Hardware / DIY store',
         'hardware': 'Hardware store', 'garden_centre': 'Garden centre', 'post_office': 'Post office',
         'camp_site': 'Campsite', 'veterinary': 'Vet', 'nursing_home': 'Care home', 'fuel': 'Fuel station',
-        'car_repair': 'Car repair', 'bicycle_shop': 'Bicycle shop', 'wastewater_plant': 'Wastewater plant',
-        'comms_tower': 'Communications tower', 'park': 'Park', 'courthouse': 'Courthouse',
-        'college': 'College', 'university': 'University', 'kindergarten': 'Kindergarten', 'beach': 'Beach',
-        'embassy': 'Embassy', 'mineral': 'Recorded mineral / mine', 'oil_gas_well': 'Recorded oil / gas well',
-        'boat_launch': 'Boating facility', 'fish_stocking': 'Fish-stocking record',
-        'dam': 'Dam (National Inventory of Dams)', 'reservoir': 'Reservoir', 'lake': 'Lake or pond', 'pond': 'Pond',
-        'orchard': 'Orchard', 'vineyard': 'Vineyard', 'berries': 'Berry field', 'perennial_veg': 'Asparagus field'}
-
-
-CROP_KINDS = {'orchard', 'vineyard', 'berries', 'perennial_veg'}
-RESOURCE_KINDS = {'mineral', 'oil_gas_well', 'boat_launch', 'fish_stocking', 'dam', 'reservoir', 'lake', 'pond'} | CROP_KINDS
-WATERDB = HERE / 'derived/geo/water.sqlite'
-CROPDB = HERE / 'derived/geo/crops.sqlite'
-
-
-def resource_dbs(kinds):
-    """Point databases holding these resource kinds: the library's resource atlas and the derived water inventory."""
-    water = {'dam', 'reservoir', 'lake', 'pond'}
-    out = []
-    if set(kinds) - water - CROP_KINDS and (LIB / 'geography/resources/atlas.sqlite').exists():
-        out.append(LIB / 'geography/resources/atlas.sqlite')
-    if set(kinds) & water and WATERDB.exists():
-        out.append(WATERDB)
-    if set(kinds) & CROP_KINDS and CROPDB.exists():
-        out.append(CROPDB)
-    return out
-
-
-def resource_near(lat, lon, cls, limit):
-    out = []
-    for path in resource_dbs([cls]):
-        with sqlite3.connect(ro_uri(path), uri=True) as db:
-            radius = .15
-            rows = []
-            while radius <= 19.2:
-                rows = db.execute("SELECT r.name,r.lat,r.lon,r.detail,r.source FROM spatial s CROSS JOIN resource r ON r.id=s.id WHERE r.kind=? AND s.minx>=? AND s.maxx<=? AND s.miny>=? AND s.maxy<=?", (cls,lon-radius,lon+radius,lat-radius,lat+radius)).fetchall()
-                if cls == 'fish_stocking':
-                    rows = list({(r[0], round(r[1], 3), round(r[2], 3), json.loads(r[3]).get('FishType')): r for r in rows}.values())
-                if len(rows) >= limit:
-                    break
-                radius *= 2
-            for name, y, x, raw, source in rows:
-                detail = json.loads(raw)
-                summary = _resource_summary(cls, detail) + (' · historical stocking record' if cls == 'fish_stocking' else '')
-                dist, brg = haversine(lat, lon, y, x)
-                out.append({'cls':cls,'label':HELP[cls],'name':name,'lat':y,'lon':x,'km':round(dist,2),'dir':brg,'detail':summary,'source':source})
-    return sorted(out, key=lambda p:p['km'])[:limit]
-
-
-def _resource_summary(cls, detail):
-    keys = {'mineral': ('commod1', 'commod2', 'dev_stat'), 'oil_gas_well': ('WellTypeLabel', 'FieldName', 'API'),
-            'fish_stocking': ('FishType', 'Counties'), 'boat_launch': ('Water_Body', 'Facility_Type'),
-            'dam': ('purpose', 'river', 'county'), 'reservoir': ('reservoir_type', 'water_type', 'state'),
-            'orchard': ('crop',), 'vineyard': ('crop',), 'berries': ('crop',), 'perennial_veg': ('crop',), 'lake': ('water_type', 'state'), 'pond': ('water_type', 'state')}.get(cls, ())
-    out = [str(detail.get(k)) for k in keys if detail.get(k)]
-    if detail.get('not_drinking_water'):
-        out.insert(0, 'NOT drinking water')
-    if detail.get('area_acres'):
-        out.insert(0, f"{detail['area_acres']:,} acres")
-    if detail.get('crop_acres'):
-        out.append(f"about {round(detail['crop_acres']):,} acres in this block")
-    if detail.get('normal_storage_af'):
-        out.append(f"{int(float(detail['normal_storage_af'])):,} acre-ft stored")
-    return ' · '.join(out)
-
-
-@functools.lru_cache(maxsize=1)
-def socal_classes():
-    """Service classes the detailed SoCal map has; for anything else (e.g. fuel) the national points are the only ones."""
-    db = mapdb()
-    return frozenset(r[0] for r in db.execute('SELECT DISTINCT cls FROM poi')) if db else frozenset()
+        'car_repair': 'Car repair', 'bicycle_shop': 'Bicycle shop', 'park': 'Park', 'courthouse': 'Courthouse',
+        'college': 'College', 'university': 'University', 'kindergarten': 'Kindergarten', 'beach': 'Beach'}
+NEAR_KM = map_pois.FULL_KM * 4   # how far --nearby looks: every point out to FULL_KM, larger ones beyond
 
 
 def dedupe_named(rows):
@@ -852,39 +808,55 @@ def dedupe_named(rows):
 
 
 def near(lat, lon, classes, limit=8):
-    db = mapdb()
+    """The nearest points of each kind, nearest first by distance on the ground. The search reaches out in steps, each
+    twice as far, and stops once `limit` points lie within the distance read: none nearer can have been missed. Every
+    point out to map_pois.FULL_KM; beyond it, out to NEAR_KM, the larger ones the map shows at a coarser zoom."""
     limit = max(1, min(limit, 50))
     out = []
-    for cls in classes:
-        if cls in RESOURCE_KINDS:
-            out.extend(resource_near(lat, lon, cls, limit))
-            continue
-        sources = [d for d in (db, national_mapdb()) if d is not None]
-        d = 0.02
-        rows = []
-        while d < 1.5 and len(rows) < limit:
-            rows = []
-            for source in sources:
-                found = source.execute('SELECT cls,name,lon,lat FROM poi WHERE cls=? AND lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?',
-                                       (cls, lon - d, lon + d, lat - d, lat + d)).fetchall()
-                if source is not db and db is not None and cls in socal_classes():
-                    found = [r for r in found if not in_socal(r[2], r[3])]
-                rows.extend(found)
-            rows = list({(r[0],r[1],round(r[2],5),round(r[3],5)):r for r in rows}.values())
-            d *= 2
-        for c, name, x, y in rows:
-            dist, brg = haversine(lat, lon, y, x)
-            out.append({'cls': c, 'label': HELP.get(c, c), 'name': name, 'lat': y, 'lon': x, 'km': round(dist, 2), 'dir': brg})
-    out.sort(key=lambda p: p['km'])
-    out = [p for p in out if p['cls'] in RESOURCE_KINDS] + dedupe_named([p for p in out if p['cls'] not in RESOURCE_KINDS])
-    out.sort(key=lambda p: p['km'])
-    per = {}
-    res = []
+    with map_pois.Regions(GEO, classes) as regions:
+        for cls in classes:
+            found, km, read = {}, NEAR_KM / 64, 0.0
+            while True:
+                for c, name, x, y in regions.box(lat, lon, cls, km, read):   # only the ring this step adds
+                    found[(name, round(x, 5), round(y, 5))] = (c, name, x, y)
+                within = []
+                for c, name, x, y in found.values():
+                    dist, brg = haversine(lat, lon, y, x)
+                    if dist <= km:
+                        within.append({'cls': c, 'label': HELP.get(c, c), 'name': name, 'lat': y, 'lon': x, 'km': dist, 'dir': brg})
+                within = dedupe_named(sorted(within, key=lambda p: p['km']))
+                if len(within) >= limit or km >= NEAR_KM:
+                    break
+                read, km = km, km * 2
+            out += within
+    out = dedupe_named(sorted(out, key=lambda p: p['km']))
+    per, res = {}, []
     for p in out:
         if per.get(p['cls'], 0) < limit:
             per[p['cls']] = per.get(p['cls'], 0) + 1
-            res.append(p)
+            res.append({**p, 'km': round(p['km'], 2)})
     return res
+
+
+def covered(lat, lon):
+    """Whether an installed street-level map covers the point: only there can help points be looked up."""
+    with map_pois.Regions(GEO) as regions:
+        return regions.covers(lat, lon)
+
+
+# What the Map screen lists as nearest help: the kinds its markers show (native/src/map.rs HELP), as `--nearby` names them.
+MAP_HELP = ('hospital', 'clinic', 'doctors', 'pharmacy', 'fire_station', 'police', 'drinking_water', 'shelter', 'toilet', 'supermarket')
+
+
+def near_help(at, to=None):
+    """The Map screen's answer for a point (lat, lon). With `to`, another point: how far it is, {km, dir}. Without:
+    {covered, points}, the nearest of each of MAP_HELP as near() finds them, and none where no installed street-level map
+    covers the point, rather than far-away ones from the map of somewhere else."""
+    if to:
+        km, d = haversine(*at, *to)
+        return {'km': round(km, 2), 'dir': d}
+    on = covered(*at)
+    return {'covered': on, 'points': near(*at, MAP_HELP, 5) if on else []}
 
 
 def haversine(la1, lo1, la2, lo2):
@@ -897,7 +869,18 @@ def haversine(la1, lo1, la2, lo2):
     return d, ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][int((b + 22.5) // 45) % 8]
 
 
-WATER_WORDS = {'lake', 'lakes', 'reservoir', 'res', 'dam', 'pond', 'ponds'}
+COORDS = re.compile(r'\s*([+-]?\d+(?:\.\d+)?)\s*[,;\s]\s*([+-]?\d+(?:\.\d+)?)\s*')
+
+
+def point(q):
+    """(lat, lon) of a query that is a point in decimal degrees ("-8.5069,115.2625"), None for a query that names a place
+    (it has a letter in it, or no number). ValueError for one that is neither: numbers that are no point on Earth."""
+    if re.search(r'[^\W\d_]', q) or not re.search(r'\d', q):
+        return None
+    m = COORDS.fullmatch(q)
+    if not m or not (-90 <= float(m[1]) <= 90 and -180 <= float(m[2]) <= 180):
+        raise ValueError('a point is LAT,LON in decimal degrees: latitude -90 to 90, longitude -180 to 180 (e.g. -8.5069,115.2625)')
+    return float(m[1]), float(m[2])
 
 
 def word_sets(words):
@@ -908,115 +891,112 @@ def word_sets(words):
             yield words[:i] + words[i + 1:]
 
 
-def water_places(q, limit=10):
-    """Named lakes, reservoirs and dams matching the query (generic words like 'lake' only help ranking)."""
-    if not WATERDB.exists():
-        return []
-    words = [w.lower() for w in re.findall(r'\w+', q)]
-    core = [w for w in words if w not in WATER_WORDS]
-    if not core:
-        return []
-    db = sqlite3.connect(ro_uri(WATERDB), uri=True)
-    try:
-        try:
-            rows, full = [], False
-            for ws in word_sets(core):
-                if rows and len(ws) < len(core) and full:
-                    break  # every word matched: no need to loosen
-                if ws:
-                    rows += db.execute('SELECT r.kind,r.name,r.lat,r.lon,r.detail FROM water_fts f JOIN resource r ON r.id=f.rowid WHERE water_fts MATCH ? LIMIT 6000',
-                                       (' '.join('"%s"*' % w.replace('"', '') for w in ws),)).fetchall()
-                    if len(ws) == len(core):
-                        full = bool(rows)
-            rows = list(dict.fromkeys(rows))
-        except sqlite3.OperationalError:  # index not built yet (import still running): slower scan
-            cond = ' AND '.join("(r.name LIKE ? OR (r.kind='dam' AND r.detail LIKE ?))" for _ in core)
-            rows = db.execute(f"SELECT r.kind,r.name,r.lat,r.lon,r.detail FROM resource r WHERE r.kind IN ('dam','reservoir','lake') AND r.name!='' AND {cond} LIMIT 300",
-                              [x for w in core for x in (f'%{w}%', f'%{w}%')]).fetchall()
-    finally:
-        db.close()
-    out = []
-    for kind, name, lat, lon, raw in rows:
-        d = json.loads(raw or '{}')
-        text = (name + ' ' + (d.get('other_names') or '')).lower()
-        score = (sum(w in text for w in words) * 2 + (core[0] in text) + (kind != 'dam') + (name.lower() == q.lower().strip()) * 3
-                 + math.log10(float(d.get('area_acres') or d.get('surface_acres') or 1) + 1) / 3)
-        where = ', '.join(x for x in (d.get('county') and d['county'] + ' County', d.get('state')) if x)
-        extra = f" · also called {d['other_names']}" if d.get('other_names') else ''
-        out.append((score, {'name': name, 'kind': {'dam': 'Dam', 'reservoir': 'Reservoir', 'lake': 'Lake'}[kind],
-                            'detail': (where or 'United States') + extra, 'lat': lat, 'lon': lon, 'source': 'water', 'onMap': True}))
-    out.sort(key=lambda t: -t[0])
-    return [o for _, o in out[:limit]]
+def _fold(t):
+    """A name as compared: lower case, no accents or punctuation, 'saint' as 'st'."""
+    t = ''.join(c for c in unicodedata.normalize('NFKD', t.lower()) if not unicodedata.combining(c))
+    return ' '.join(re.sub(r'\bsaint\b', 'st', re.sub(r'[^\w ]+', ' ', t)).split())
+
+
+def _match(db, q, row_id, name, detail, loosened):
+    """How a place answers the query: 'exact' (its name, maybe with its region or country: "Ubud, Bali"), 'alternate name'
+    (every word, as one of the other names GeoNames knows it by: "Bombay" for Mumbai), or 'partial' (a word of the query
+    left out, or only the start of a longer name: never a place to look around)."""
+    if loosened:
+        return 'partial'
+    words, own, around = _fold(q).split(), _fold(name).split(), set(_fold(detail or '').split())
+    if words[:len(own)] == own and set(words[len(own):]) <= around:
+        return 'exact'
+    if set(words) <= around:
+        return 'partial'   # only the region or country it is in ("Bali" for a town on Bali)
+    try:   # the other names are in the search index alone (engine/setup/maps.py): the whole query as words of one of them
+        hit = db.execute('SELECT 1 FROM place_fts WHERE place_fts MATCH ? AND rowid=?', ('detail : "' + ' '.join(words) + '"', row_id)).fetchone()
+    except sqlite3.OperationalError:
+        hit = None
+    return 'alternate name' if hit else 'partial'
+
+
+def nearest_town(db, lat, lon):
+    """The gazetteer's nearest town to a point, within about 50 km: (name, detail, km), or None."""
+    d = 0.5
+    rows = db.execute("SELECT name, detail, lat, lon FROM place WHERE kind IN ('city','town') AND lat BETWEEN ? AND ? "
+                      "AND lon BETWEEN ? AND ?", (lat - d, lat + d, lon - d / max(math.cos(math.radians(lat)), 0.05), lon + d / max(math.cos(math.radians(lat)), 0.05))).fetchall()
+    best = min(((haversine(lat, lon, y, x)[0], name, detail) for name, detail, y, x in rows), default=None)
+    return (best[1], best[2], best[0]) if best and best[0] <= 50 else None
 
 
 def places(q, limit=20):
-    if address_search.is_address_query(q):
-        return address_search.find_addresses(q, HERE / 'derived' / 'geo', limit=min(limit, 8))
-    dbs = [sqlite3.connect(ro_uri(p), uri=True) for p in (PLACEDB, WORLD_PLACEDB) if p.exists()]
-    if not dbs:
+    """Places for a query, best first: {name, kind, detail, lat, lon, source, match, onMap}. `match` says how the place
+    answers the query (_match; 'coordinates' for a point given as LAT,LON). `onMap`: an installed street-level map covers it,
+    so help points can be looked up around it. A query of numbers that is no point on Earth finds nothing."""
+    try:
+        at = point(q)
+    except ValueError:
         return []
+    db = sqlite3.connect(ro_uri(WORLD_PLACEDB), uri=True) if WORLD_PLACEDB.exists() else None
+    try:
+        if at:
+            town = nearest_town(db, *at) if db else None
+            detail = f'{town[2]:.0f} km from {town[0]}, {town[1]}' if town else 'A point given by its coordinates'
+            out = [{'name': ','.join(f'{v:.6f}'.rstrip('0').rstrip('.') for v in at), 'kind': 'point', 'detail': detail, 'lat': at[0], 'lon': at[1],
+                    'source': 'coordinates', 'match': 'coordinates'}]
+        else:
+            out = _places(db, q, limit) if db else []
+    finally:
+        if db:
+            db.close()
+    with map_pois.Regions(GEO) as regions:
+        for p in out:
+            p['onMap'] = regions.covers(p['lat'], p['lon'])
+    return out
+
+
+def _places(db, q, limit):
     words = re.findall(r'\w+', q)
     if not words:
         return []
-    rows = []
+    def find(match):
+        return db.execute('SELECT p.id,p.name,p.kind,p.detail,p.lat,p.lon,p.rank,p.source FROM place_fts f JOIN place p ON p.id=f.rowid '
+                          'WHERE place_fts MATCH ? ORDER BY p.rank, bm25(place_fts) LIMIT 200', (match,)).fetchall()
+    # The names with the query's words as they are, first: a village called Ama is not lost behind the 200 larger places
+    # whose words only start with them (Amazonas, Amarillo, ...).
+    phrase = '"%s"' % ' '.join(w.replace('"', '') for w in words)
+    rows = [(r, False) for r in find('name : ' + phrase)]
     full = False
     for ws in word_sets(words):
         if full and len(ws) < len(words):
             break  # every word matched somewhere: no need to loosen
-        if not ws:
-            continue
-        for db in dbs:   # the library's own gazetteer (US detail), then the world's
-            rows += db.execute('SELECT p.name,p.kind,p.detail,p.lat,p.lon,p.rank,p.source FROM place_fts f JOIN place p ON p.id=f.rowid '
-                               'WHERE place_fts MATCH ? ORDER BY p.rank, bm25(place_fts) LIMIT 200',
-                               (' '.join('"%s"*' % w.replace('"', '') for w in ws),)).fetchall()
+        found = find(' '.join('"%s"*' % w.replace('"', '') for w in ws))
+        rows += [(r, len(ws) < len(words)) for r in found]
         if len(ws) == len(words):
-            full = bool(rows)
-    rows = list(dict.fromkeys(rows))
-    def norm(t):
-        return ' '.join(re.sub(r'\bsaint\b', 'st', re.sub(r'[^\w ]+', ' ', t.lower())).split())
-    ql = norm(q)
-    nat = national_mapdb()
-    size = {}
+            full = bool(found)
+    ql = _fold(q)
+    # The largest places (countries, regions, capitals, cities over a million: rank 0-1) with the query's words as they
+    # are, not in their name or around it: in their other names. "Bombay" is Mumbai before it is a village called Bombay.
+    big = ','.join(str(r[0][0]) for r in rows if r[0][6] <= 1)
+    known = {i for (i,) in db.execute(f'SELECT rowid FROM place_fts WHERE place_fts MATCH ? AND rowid IN ({big})', (phrase,))} if big else set()
 
-    def importance(r):
-        # GNIS has no population: use OpenStreetMap's city/town tag near the same point so the big Springfield comes first
-        if nat is None or norm(r[0]) != ql or len(size) > 80:
-            return 3
-        k = (round(r[3], 2), round(r[4], 2))
-        if k not in size:
-            hit = nat.execute("SELECT MIN(CASE f.cls WHEN 'city' THEN 0 WHEN 'town' THEN 1 ELSE 2 END) FROM feat_idx i JOIN feat f ON f.id=i.id "
-                              "WHERE i.minx BETWEEN ? AND ? AND i.miny BETWEEN ? AND ? AND i.minz<=10 AND f.layer='place' AND f.name=?",
-                              (r[4] - .08, r[4] + .08, r[3] - .08, r[3] + .08, r[0])).fetchone()
-            size[k] = 2 if hit[0] is None else hit[0]
-        return size[k]
-    rows.sort(key=lambda r: (norm(r[0]) != ql, not norm(r[0]).startswith(ql), r[5] > 2 and norm(r[0]) == ql and importance(r), r[5]))
+    def order(r):
+        (row_id, name, _kind, detail, *_, rank, _src), loosened = r
+        n = _fold(name)
+        known_as = row_id in known and not set(ql.split()) <= set(n.split()) | set(_fold(detail or '').split())
+        # First the places the query names, alone or with their region or country after it ("Lyon, France"), and those
+        # largest ones it names another way; among them the larger first (rank, then id: the gazetteer lists places
+        # largest first), and of one rank a name that starts with the query.
+        return loosened, not (ql == n or ql.startswith(n + ' ') or known_as), rank, not n.startswith(ql), row_id
+    rows.sort(key=order)
     seen, out = set(), []
-    for name, kind, detail, lat, lon, rank, src in rows:
+    for (row_id, name, kind, detail, lat, lon, rank, src), loosened in rows:
         k = (name.lower(), round(lat, 2), round(lon, 2))
         if k in seen:
             continue
         seen.add(k)
         out.append({'name': name, 'kind': kind, 'detail': detail, 'lat': lat, 'lon': lon, 'source': src,
-                    'onMap': bool(pack_info()) or 32.5 < lat < 35.9 and -121.4 < lon < -114.1})
+                    'match': _match(db, q, row_id, name, detail, loosened)})
         if len(out) >= limit:
             break
-    water = water_places(q)
-    if water:  # a query that names a water word puts lakes and dams first; otherwise towns lead
-        out = (water + out) if set(w.lower() for w in re.findall(r'\w+', q)) & WATER_WORDS else (out[:8] + water + out[8:])
-    return out[:limit + len(water)]
+    return out
 
 
-def pack_info():
-    """The open download's own description, or None when this is not a pack. Read once: a pack does not change while it is open."""
-    if 'pack' not in _pack:
-        try:
-            _pack['pack'] = json.loads((HERE / 'pack.json').read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            _pack['pack'] = None
-    return _pack['pack']
-
-
-_pack = {}
 SOURCES_PAGE = 'documents/lastbook/sources-and-permissions.html'   # every pack's own credits page, an ordinary record
 
 
@@ -1040,9 +1020,15 @@ class Handler(library.Handler):
             return False
         if path != '/reader.css' and not path.startswith(self.SERVED_PREFIXES):
             return False
-        if '/..' in path or path.lower().endswith('.info.json'):  # yt-dlp's .info.json can hold request headers
+        if path.lower().endswith('.info.json'):  # yt-dlp's .info.json can hold request headers
             return False
-        if path.startswith(('/api/', '/zim/')):  # /zim/ file names are checked in engine/library.py
+        if path.startswith('/zim/'):
+            # An entry's path is a name inside the archive, never a file path: "...middle..." is a title, not a way up.
+            # Only a part that is exactly ".." is refused. The archive's own file name is checked in engine/library.py.
+            return '..' not in path.split('/')
+        if '/..' in path:
+            return False
+        if path.startswith('/api/'):
             return True
         return self.file_ok(self.translate_path(self.path), folders=True)
 
@@ -1113,7 +1099,7 @@ class Handler(library.Handler):
 
     def handle_post(self):
         rpath = urllib.parse.urlsplit(self.path).path
-        if rpath.startswith('/api/setup/'):  # About → Library and downloads: engine/setup/api.py
+        if rpath.startswith('/api/setup/'):  # Library and downloads: engine/setup/api.py
             return setup_api.handle(self, 'POST', rpath)
         return self.send_json({'error': 'not found'}, 404)
 
@@ -1138,6 +1124,15 @@ class Handler(library.Handler):
                 return self.send_json(t if t is not None else {'error': 'unknown video'}, 200 if t is not None else 404)
             if path == '/api/retrieve':
                 return self.send_json({'q': qs.get('q', ''), 'results': hybrid(qs.get('q', '')[:200], min(20, int(qs.get('k', 8))), qs.get('kind', 'any'))})
+            if path == '/api/related':
+                return self.send_json({'results': related(qs.get('doc', ''), qs.get('path', ''))})
+            if path.startswith('/api/text/'):
+                r = catalog()['by_id'].get(path[10:])
+                texts = page_texts(r) if r and r['kind'] in ('pdf', 'html', 'pptx') else None
+                return self.send_json({'pages': texts} if texts is not None else {'error': 'This item is not in the library catalog.'}, 200 if texts is not None else 404)
+            if path == '/api/search-status':
+                import cli   # app/cli.py: what `lastbook status` says of meaning search, said the same way here
+                return self.send_json(cli.meaning(sys.modules[__name__]))
             if path == '/api/videos':
                 return self.send_json(videos_home())
             if path == '/api/videos/all':
@@ -1148,6 +1143,19 @@ class Handler(library.Handler):
                 return self.send_json(shelf(path[11:]))
             if path == '/api/places':
                 return self.send_json(places(qs.get('q', '')[:100]))
+            if path == '/api/near':
+                try:   # both points as point() reads a query, so a bad one is an error, never a point at 0,0
+                    at, to = point(f"{qs.get('lat', '')},{qs.get('lon', '')}"), point(qs['to']) if qs.get('to') else None
+                except ValueError as e:
+                    return self.send_json({'error': str(e)}, 400)
+                if at is None or (qs.get('to') and to is None):
+                    return self.send_json({'error': 'lat and lon are decimal degrees; to is LAT,LON'}, 400)
+                return self.send_json(near_help(at, to))
+            if path == '/api/encyclopedias':
+                return self.send_json(ENC.installed())
+            if path == '/api/encyclopedia/random':
+                a = ENC.random(qs.get('file'))
+                return self.send_json(a or {'error': 'No article with text was found in the encyclopedias.'}, 200 if a else 404)
             if path == '/api/library':
                 s = json.loads((LIB / 'summary.json').read_text(encoding='utf-8'))
                 sources = (catalog()['by_path'].get(SOURCES_PAGE) or {}).get('id')

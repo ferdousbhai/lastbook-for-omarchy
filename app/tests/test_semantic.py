@@ -129,7 +129,7 @@ class Semantic(unittest.TestCase):
             self.assertEqual(ix.status['state'], 'up to date')
             self.assertEqual((ix.dim, ix.source), (DIM, 'fake-model@1'))
             self.assertEqual(len(ix.mat), 4)
-            hits = ix.semantic('how long do I boil cloudy water', k=3, floor=0.1)
+            hits = ix.semantic('how long do I boil cloudy water', k=3, floor=0.1, margin=-1)
             self.assertEqual(hits[0]['doc_id'], 'water')
             self.assertEqual(hits[0]['page'], 1)
             # One document's passages, even when the question matches other documents far better (searching inside a
@@ -137,24 +137,31 @@ class Semantic(unittest.TestCase):
             inside = ix.semantic('how long do I boil cloudy water', k=2, doc='fire')
             self.assertEqual([h['doc_id'] for h in inside], ['fire'])
             # allowed filters without losing passages further down the ranking
-            only = ix.semantic('how long do I boil cloudy water', k=5, floor=-1, allowed=lambda d: d == 'bleeding')
+            only = ix.semantic('how long do I boil cloudy water', k=5, floor=-1, margin=-1, allowed=lambda d: d == 'bleeding')
             self.assertEqual([h['doc_id'] for h in only], ['bleeding'])
+            # As search calls it (FLOOR, MARGIN): a passage is offered when it stands out from the rest for this question.
+            # Words the library does not hold stand out nowhere, and a question of them gets nothing, not the nearest noise.
+            self.assertEqual(ix.semantic('zebra quantum mortgage', floor=-1), [])
+            self.assertEqual(ix.semantic('xyzzyqqq'), [])
+            self.assertEqual([h['doc_id'] for h in ix.semantic('press firmly on the wound with a clean cloth', floor=0.5)], ['bleeding'])
+            self.assertEqual(ix.semantic('press firmly on the wound with a clean cloth', floor=0.999), [])
             # unchanged documents are not embedded again
             calls = fake.calls
             self.assertEqual(ix.update(), 0)
-            self.assertEqual(fake.calls - calls, 1)   # the capabilities check only
+            self.assertEqual(fake.calls - calls, 2)   # which model, and how wide its vectors are: nothing of the library
             # the question is embedded once, then cached
             calls = fake.calls
-            ix.semantic('store the water', floor=-1)
-            ix.semantic('store the water', floor=-1)
+            ix.semantic('store the water', floor=-1, margin=-1)
+            ix.semantic('store the water', floor=-1, margin=-1)
             self.assertEqual(fake.calls - calls, 1)
         finally:
             fake.close()
             self.sock.unlink(missing_ok=True)
 
     def test_a_reader_leaves_vectors_an_indexer_is_writing(self):
-        """The command line opens the index beside a window that may be indexing: vectors are appended before their rows
-        are committed, and a process that cut the file back to the committed rows would take them from the indexer."""
+        """The command line, or a second window, opens the index beside a process that may be indexing: vectors are
+        appended before their rows are committed, and a process that cut the file back to the committed rows would take
+        them from the indexer. Only the indexer, holding its lock, cuts (app/tests/test_index_build.py has the rest)."""
         fake = FakeRecall(self.sock)
         fake.start()
         try:
@@ -166,8 +173,10 @@ class Semantic(unittest.TestCase):
             size = vec.stat().st_size
             reader = retrieval.Index(lambda: self.cat, lambda r: ('Reference', 1.0), self.db, retrieval.Recall(self.sock), truncate=False)
             self.assertEqual((vec.stat().st_size, len(reader.mat)), (size, 4))
-            self.assertEqual(reader.semantic('how long do I boil cloudy water', k=1, floor=0.1)[0]['doc_id'], 'water')
-            retrieval.Index(lambda: self.cat, lambda r: ('Reference', 1.0), self.db, retrieval.Recall(self.sock))   # the indexing engine realigns
+            self.assertEqual(reader.semantic('how long do I boil cloudy water', k=1, floor=0.1, margin=-1)[0]['doc_id'], 'water')
+            engine = retrieval.Index(lambda: self.cat, lambda r: ('Reference', 1.0), self.db, retrieval.Recall(self.sock))   # a second engine starting
+            self.assertEqual(vec.stat().st_size, size)
+            self.assertEqual(engine.update(), 0)                # the indexer, with the lock: it realigns
             self.assertEqual(vec.stat().st_size, size - DIM * 2)
         finally:
             fake.close()
@@ -187,7 +196,7 @@ class Semantic(unittest.TestCase):
             self.assertEqual(ix.status['reset']['passages_dropped'], 4)
             self.assertEqual(len(ix.mat), 4)
             self.assertEqual(ix.vec_path.stat().st_size, 4 * DIM * 2)
-            self.assertTrue(ix.semantic('boil water', floor=0.1))
+            self.assertTrue(ix.semantic('boil water', floor=0.1, margin=-1))
         finally:
             fake.close()
             self.sock.unlink(missing_ok=True)

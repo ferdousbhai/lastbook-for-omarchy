@@ -5,20 +5,23 @@ The native window (native/, Rust and GTK 4) starts this as a child process and s
   {"id": 7, "method": "GET", "path": "/api/find?q=water"}
   {"id": 8, "method": "POST", "path": "/api/setup/start", "body": {...}}
 
-Each answer comes back as lines carrying the same id: one head, any number of text chunks, one end:
+Each answer comes back as lines carrying the same id: one head, any number of pieces, one end:
 
   {"id": 7, "head": 200, "type": "application/json"}
   {"id": 7, "chunk": "{\\"results\\": ..."}
   {"id": 7, "end": true}
 
-Text answers come as "chunk"; anything else (images, fonts, video) as "b64", base64. Chunks arrive as the engine writes them.
-{"cancel": 8} stops request 8. The first line out is {"ready": {...}} with the data and library folders, which the window reads
+A JSON answer's pieces are "chunk", text; anything else (pages, images, video) comes as "b64", base64, byte for byte.
+Pieces arrive as the engine writes them. "end" is false when the answer stopped short. A line that is not a request is
+passed over. Lines with no id are sent unasked: {"restart": folder} when setup has finished, and {"job": state} when a
+setup job's state changes. The first line out is {"ready": {...}} with the data and library folders, which the window reads
 files from directly (thumbnails, PDFs, videos): only answers that need the engine come through here.
 
 Requests run through app/bridge.py's Bridge (lanes, limits and the engine's own Handler):
 this process and the window are one program, split so the engine can stay in Python. It leaves when its standard input closes.
 """
 import base64
+import codecs
 import json
 import os
 import sys
@@ -34,7 +37,7 @@ OUT = sys.stdout
 sys.stdout = sys.stderr          # anything the engine prints goes to the log, never into the protocol
 _out_lock = threading.Lock()
 _open = threading.Condition()
-_running = {}    # id: the Exchange of a request still being answered (None until it has one), for {"cancel": id}. Under _open.
+_running = 0     # requests still being answered. Under _open.
 
 
 def send(obj):
@@ -48,47 +51,49 @@ class PipeSink:
     """A bridge Sink that forwards an answer to the window as it is written."""
 
     def __init__(self, rid):
+        global _running
         self.rid = rid
-        self.text = True
+        self.text = None     # for a JSON answer: its decoder, which keeps a character cut between two chunks whole
         with _open:
-            _running[rid] = None
+            _running += 1
 
     def head(self, status, reason, headers):
         ctype = next((v for k, v in headers if k.lower() == 'content-type'), '')
-        self.text = ctype.startswith('text/') or any(t in ctype for t in ('json', 'javascript', 'xml', 'svg', 'event-stream'))
+        if ctype.split(';')[0].strip() == 'application/json':
+            self.text = codecs.getincrementaldecoder('utf-8')('replace')
         send({'id': self.rid, 'head': status, 'type': ctype})
 
     def data(self, chunk):
-        if chunk:
-            if self.text:
-                send({'id': self.rid, 'chunk': chunk.decode('utf-8', 'replace')})
-            else:
-                send({'id': self.rid, 'b64': base64.b64encode(chunk).decode('ascii')})
+        if self.text:
+            chunk = self.text.decode(chunk)
+            if chunk:
+                send({'id': self.rid, 'chunk': chunk})
+        elif chunk:
+            send({'id': self.rid, 'b64': base64.b64encode(chunk).decode('ascii')})
 
     def finish(self, ok):
+        global _running
         try:
+            if self.text and (rest := self.text.decode(b'', final=True)):     # a last character cut short
+                send({'id': self.rid, 'chunk': rest})
             send({'id': self.rid, 'end': bool(ok)})
         finally:     # also when the window has gone and the pipe is closed: the request is over, and main() is waiting to leave
             with _open:
-                _running.pop(self.rid, None)
+                _running -= 1
                 _open.notify_all()
 
 
-def start(bridge, rid, method, path, body):
-    """One request from the window. It stays in _running until its answer ends or it is cancelled, however many come after."""
-    ex = bridge.start(method, path, json.dumps(body).encode() if body is not None else None, PipeSink(rid))
-    with _open:
-        if rid in _running:     # not answered already
-            _running[rid] = ex
-
-
-def cancel(rid):
-    """{"cancel": id}: the Handler stops at its next write. Nothing more is sent for a cancelled request, so it ends here."""
-    with _open:
-        ex = _running.pop(rid, None)
-        _open.notify_all()
-    if ex:
-        ex.cancel()
+def answer(bridge, line):
+    """One line from the window: a request, handed to the bridge. A line that is not one (not JSON, not an object, no
+    id that can be answered) carries no id an answer could name, so it is passed over."""
+    try:
+        req = json.loads(line)
+    except ValueError:      # UnicodeDecodeError too: the line's bytes are not UTF-8
+        return
+    if not isinstance(req, dict) or not isinstance(req.get('id'), (int, str)):
+        return
+    body = req.get('body')
+    bridge.start(req.get('method', 'GET'), req.get('path', '/'), json.dumps(body).encode() if body is not None else None, PipeSink(req['id']))
 
 
 def open_library(setup_api, settings_dir, note):
@@ -96,6 +101,10 @@ def open_library(setup_api, settings_dir, note):
     old library is put back, once, and opened instead; note['error'] then says so. Any other failure is raised as it is."""
     import server
     from engine.setup import install
+    try:     # upstream's US-only map data, which nothing reads: gone from a library an earlier version unpacked
+        install.drop_upstream_maps(os.environ['LASTBOOK_DATA'])
+    except Exception as e:
+        print('setup: upstream map data not removed:', e, flush=True)
     try:
         server.init()
     except Exception:
@@ -119,11 +128,18 @@ def failed_start(note, e):
 
 def options(app_main):
     """Setup's hooks for this window: a finished setup asks the window to restart on the new library (it starts this
-    engine again)."""
+    engine again), and each change of a job's state is told, so the window reads the job then and not on a timer (it
+    still reads progress on one, while someone is looking: bytes arriving are not events)."""
     def finished(folder):
         app_main.remember(Path(folder))
         send({'restart': str(folder)})
-    return dict(app_main.setup_options(), on_finish=finished)
+
+    def job_changed(state):
+        try:
+            send({'job': state})
+        except (OSError, ValueError):     # the window has gone and the pipe with it: the job carries on
+            pass
+    return dict(app_main.setup_options(), on_finish=finished, on_job=job_changed)
 
 
 def main():
@@ -160,21 +176,18 @@ def main():
             raise
         if not given or note:   # the library opened: delete the old library an upgrade moved aside
             setup_api.opened(app_main.app_folders()[0], data, note)
+        if not given:           # the person's own library (not one named for this run): its short, stable path
+            app_main.link_library(data)
+        import retrieval
+        retrieval.kick(default_library=not given)   # the background indexer, if documents wait and Recall is there; never raises
         setup_api.configure(mode='manage', current=data, **options(app_main))
         bridge = B.Bridge(server)
         ready = {'setup': False, 'data': str(data), 'library': str(server.LIB), 'version': app_main.version()}
         if note and note.get('error'):
             ready['notice'] = note['error']     # a switch that failed or was undone at this start, in a sentence
         send({'ready': ready})
-    for line in sys.stdin:
-        try:
-            req = json.loads(line)
-        except ValueError:
-            continue
-        if 'cancel' in req:
-            cancel(req['cancel'])
-        else:
-            start(bridge, req.get('id'), req.get('method', 'GET'), req.get('path', '/'), req.get('body'))
+    for line in sys.stdin.buffer:
+        answer(bridge, line)
     with _open:   # the window has gone: finish what it asked for, then leave
         _open.wait_for(lambda: not _running, timeout=30)
     return 0

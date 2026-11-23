@@ -1,0 +1,83 @@
+# The reading screens' bar: find in a manual's text and in a saved web page, a page's text copied, and the Search
+# screen's line on how it finds things.
+# native/dev/qa.sh native/dev/qa/find.jsonl [shots-dir]
+
+{"do":"wait","role":"window","name":"Guides — Lastbook","timeout_ms":30000}
+{"do":"key","keys":"<Control>f"}
+{"do":"wait","role":"window","name":"Search — Lastbook"}
+{"do":"type","text":"boil water"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"generic","name":"Safe water at home, Preview Press · page 1 of 2","visible":true}
+{"do":"shot","path":"search-line.png"}
+
+# Found in the manual's text from the page on show on, match by match, on to the next page and back.
+{"do":"focus","role":"generic","name":"Safe water at home, Preview Press · page 1 of 2"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"window","name":"Safe water at home — Lastbook"}
+{"do":"wait","role":"img","name":"Page 1 of 2","focused":true}
+{"do":"click","role":"button","name":"Find in this document (Ctrl+F)"}
+{"do":"wait","role":"search-box","name":"Find in this document","focused":true}
+{"do":"type","text":"water"}
+{"do":"wait","role":"label","name":"Match 1 of 3","visible":true}
+{"do":"shot","path":"find-reader.png"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"label","name":"Match 2 of 3","visible":true}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"label","name":"Match 3 of 3","visible":true}
+{"do":"wait","role":"text-box","name":"Page number","text":"2"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"label","name":"Match 1 of 3","visible":true}
+{"do":"wait","role":"text-box","name":"Page number","text":"1"}
+{"do":"key","keys":"<Shift>Return"}
+{"do":"wait","role":"label","name":"Match 3 of 3","visible":true}
+{"do":"wait","role":"text-box","name":"Page number","text":"2"}
+{"do":"shot","path":"find-reader-2.png"}
+{"do":"key","keys":"<Control>a"}
+{"do":"type","text":"rope"}
+{"do":"wait","role":"label","name":"No matches","visible":true}
+# Escape closes the bar and gives the keyboard back to the page, whose keys turn it again.
+{"do":"key","keys":"Escape"}
+{"do":"wait","role":"search-box","name":"Find in this document","visible":false}
+{"do":"wait","role":"img","name":"Page 2 of 2","focused":true}
+{"do":"key","keys":"Left"}
+{"do":"wait","role":"text-box","name":"Page number","text":"1"}
+
+# The page's text, copied: pasted into the find field, it is the first page's.
+{"do":"click","role":"button","name":"Copy this page's text"}
+{"do":"wait","toasts":["Copied the text of page 1."]}
+{"do":"click","role":"button","name":"Find in this document (Ctrl+F)"}
+{"do":"wait","role":"search-box","name":"Find in this document","focused":true}
+{"do":"key","keys":"<Control>v"}
+{"do":"wait","role":"search-box","name":"Find in this document","text":"Boil the water for one minute to kill the germs. If the water is cloudy, let it settle and filter it through a clean cloth first, then boil it."}
+{"do":"wait","role":"label","name":"Match 1 of 1","visible":true}
+{"do":"key","keys":"Escape"}
+
+# A saved web page: WebKit's find, and text selected in the page copied with Ctrl+C.
+{"do":"key","keys":"<Alt>Left"}
+{"do":"wait","role":"window","name":"Search — Lastbook"}
+{"do":"select","role":"list-item","name":"Library"}
+{"do":"wait","role":"window","name":"Library — Lastbook"}
+{"do":"focus","role":"grid-cell","name":"Other references"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"window","name":"Other references — Lastbook"}
+{"do":"focus","role":"generic","name":"Rope, Saved web page · Preview Press"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"window","name":"Rope — Lastbook"}
+{"do":"click","role":"button","name":"Find in this page (Ctrl+F)"}
+{"do":"wait","role":"search-box","name":"Find in this page","focused":true}
+{"do":"type","text":"rope"}
+{"do":"wait","role":"label","name":"Match 1 of 2","visible":true}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"label","name":"Match 2 of 2","visible":true}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"label","name":"Match 1 of 2","visible":true}
+{"do":"shot","path":"find-web.png"}
+{"do":"key","keys":"Escape"}
+{"do":"wait","role":"search-box","name":"Find in this page","visible":false}
+# WebKit's own keys: Ctrl+A selects the page, Ctrl+C copies it, and the find field takes it with Ctrl+V.
+{"do":"key","keys":"<Control>a"}
+{"do":"key","keys":"<Control>c"}
+{"do":"click","role":"button","name":"Find in this page (Ctrl+F)"}
+{"do":"key","keys":"<Control>v"}
+{"do":"wait","role":"search-box","name":"Find in this page","text":"Rope\n\nA saved page about rope."}
+{"do":"quit"}

@@ -5,11 +5,15 @@ set -Eeuo pipefail
 # the made-up library of dev/seed.py, on a broadway display of its own with a private HOME and XDG directories and no
 # session bus: no window opens anywhere visible, nothing of the desktop this is run from is read, and no real library
 # or Recall is used. Prints each command with its answer and exits with the window's status, non-zero when a
-# command failed or GLib logged a warning or a critical. bin/test runs every script in dev/qa.
+# command failed or GLib logged a warning or a critical. bin/test runs every script in dev/qa. The window is started
+# as the desktop entry starts it, `lastbook open`.
 #
 #   native/dev/qa.sh <script.jsonl> [shots-dir]
 #
 # A script's `shot` paths are relative to `shots-dir`; without one the pictures are thrown away with the run.
+#
+# A script with a folder of its own name beside it, `<name>.engine/engine_pipe.py`, is run over that stand-in engine in
+# place of the real one: what the window shows while the engine is slow, when it fails, and while a download runs.
 #
 #   LASTBOOK_QA_BINARY   the window to run (default native/target/debug/lastbook, `cargo build --features qa`)
 #   LASTBOOK_QA_TIMEOUT  seconds before the whole run is stopped (default 120)
@@ -18,6 +22,8 @@ script=$(realpath -e -- "$1")
 here=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repo=$(realpath -e -- "$here/../..")
 binary=${LASTBOOK_QA_BINARY:-$repo/native/target/debug/lastbook}
+engine=()
+[[ ! -f ${script%.jsonl}.engine/engine_pipe.py ]] || engine=(LASTBOOK_ENGINE="${script%.jsonl}.engine/engine_pipe.py")
 [[ -x $binary ]] || { echo "qa: build the window first (cargo build --features qa --manifest-path native/Cargo.toml)" >&2; exit 1; }
 command -v gtk4-broadwayd >/dev/null || { echo "qa: gtk4-broadwayd is required" >&2; exit 1; }
 # The two wheels Arch does not carry, from the cache bin/test uses: found before HOME is replaced.
@@ -74,10 +80,10 @@ status=0
     -u LASTBOOK_OPEN -u XDG_DOCUMENTS_DIR \
     HOME="$root/home" XDG_CONFIG_HOME="$root/config" XDG_STATE_HOME="$root/state" XDG_DATA_HOME="$root/data" \
     XDG_CACHE_HOME="$root/cache" XDG_RUNTIME_DIR="$root/runtime" \
-    LASTBOOK_DEV=1 PYTHONPATH="$deps" LASTBOOK_RECALL_SOCKET="$root/no-recall.sock" \
+    LASTBOOK_DEV=1 PYTHONPATH="$deps" LASTBOOK_RECALL_SOCKET="$root/no-recall.sock" "${engine[@]}" \
     WEBKIT_DISABLE_DMABUF_RENDERER=1 \
     GDK_BACKEND=broadway BROADWAY_DISPLAY=":$display" OMUI_QA=1 OMUI_QA_INPUT="127.0.0.1:$port" OMUI_QA_FD=3 \
-    timeout "${LASTBOOK_QA_TIMEOUT:-120}" "$binary" --data "$root/library" < "$script" 3> "$root/answers"
+    timeout "${LASTBOOK_QA_TIMEOUT:-120}" "$binary" open --data "$root/library" < "$script" 3> "$root/answers"
 ) &
 app_pid=$!
 wait "$app_pid" || status=$?

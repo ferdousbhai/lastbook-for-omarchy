@@ -60,7 +60,7 @@
      "doc": "5cd0b4e41cc479",
      "page": 56,
      "label": "FEMA P-530: what to do during an earthquake",
-     "note": "Detailed survival guidance from the California-originated home earthquake guide, including what to do with no table nearby."
+     "note": "Detailed survival guidance from FEMA's home earthquake guide, including what to do with no table nearby."
     }
    ]
   },
@@ -104,7 +104,7 @@
      "doc": "9681a68ebd07f5",
      "page": 99,
      "label": "Tsunami watch, advisory and warning explained",
-     "note": "CERT: what each NOAA alert level means and that the first wave may arrive before a warning."
+     "note": "CERT: what each US alert level means and that the first wave may arrive before a warning."
     },
     {
      "doc": "9681a68ebd07f5",
@@ -116,7 +116,7 @@
      "doc": "d0fbb2e051cd46",
      "page": 29,
      "label": "FEMA: how to stay safe when a tsunami threatens",
-     "note": "Prepare, survive, be safe: shelters 100 feet up or a mile inland, wave-and-arrow route signs, electrocution risk in floodwater."
+     "note": "Prepare, survive, be safe: shelters 100 feet (30 m) up or a mile (1.6 km) inland, evacuation route signs, electrocution risk in floodwater."
     }
    ]
   },
@@ -141,7 +141,7 @@
      "doc": "d0fbb2e051cd46",
      "page": 33,
      "label": "FEMA: how to stay safe when a wildfire threatens",
-     "note": "Leave immediately when told, call 9-1-1 if trapped, use N95 masks, and avoid hot ash and embers after."
+     "note": "Leave immediately when told, call the emergency number if trapped, use N95 masks, and avoid hot ash and embers after."
     }
    ]
   },
@@ -201,7 +201,7 @@
      "doc": "cae1149a714fc3",
      "page": 1,
      "label": "Red Cross: if you can't reach the exit stairs",
-     "note": "Red Cross sheet (2014): if trapped, call 911, close doors, hang a white sheet outside the window; practice reaching the fire stairs or a safe place in your unit."
+     "note": "Red Cross sheet (2014): if trapped, call the emergency number, close doors, hang a white sheet outside the window; practice reaching the fire stairs or a safe place in your unit."
     },
     {
      "doc": "9681a68ebd07f5",
@@ -281,7 +281,7 @@
      "doc": "255b448d041a65",
      "page": 15,
      "label": "Red Cross: chemical threat — what to do",
-     "note": "Shelter in place by closing windows and fans, wet cloths if no tape, and calling poison control or 9-1-1."
+     "note": "Shelter in place by closing windows and fans, wet cloths if no tape, and calling a poison centre or the emergency number."
     },
     {
      "doc": "d0fbb2e051cd46",
@@ -340,7 +340,7 @@
    "page": 100
   },
   {
-   "text": "If authorities tell you to evacuate for a wildfire, leave immediately; if trapped, call 9-1-1, but help could be delayed or impossible.",
+   "text": "If authorities tell you to evacuate for a wildfire, leave immediately; if trapped, call the emergency number, but help could be delayed or impossible.",
    "doc": "d0fbb2e051cd46",
    "page": 33
   },
@@ -355,7 +355,7 @@
    "page": 9
   },
   {
-   "text": "Do not walk, swim or drive through floodwater; just a foot of moving water can sweep a vehicle away. Do not climb into a closed attic.",
+   "text": "Do not walk, swim or drive through floodwater; just a foot (30 cm) of moving water can sweep a vehicle away. Do not climb into a closed attic.",
    "doc": "d0fbb2e051cd46",
    "page": 13
   },
@@ -388,19 +388,19 @@
    "doc": "ed5bac0a81b009",
    "page": 25,
    "label": "CERT: create a family disaster plan",
-   "note": "Two meeting places, an out-of-state check-in contact, wallet cards, shutting off utilities, alarms, and meeting neighbors."
+   "note": "Two meeting places, an out-of-area check-in contact, wallet cards, shutting off utilities, alarms, and meeting neighbors."
   },
   {
    "doc": "255b448d041a65",
    "page": 6,
-   "label": "Red Cross (Northern California): make a plan",
+   "label": "Red Cross: make a plan",
    "note": "Two exits from every room, two meeting places, an out-of-area contact, and texting because phone lines get overwhelmed."
   },
   {
    "doc": "db4d9783fca34b",
    "page": 2,
    "label": "FEMA 2024 emergency supply kit checklist",
-   "note": "Basic kit items — water, food, radio with NOAA alerts, flashlight, whistle, masks, plastic sheeting, utility wrench — and extras on the reverse."
+   "note": "Basic kit items — water, food, radio with weather alerts, flashlight, whistle, masks, plastic sheeting, utility wrench — and extras on the reverse."
   },
   {
    "doc": "2848f4bffb8109",
@@ -423,7 +423,7 @@
   {
    "doc": "a90ff7e6f3cf01",
    "label": "Ready.gov: prepare home and family for wildfires",
-   "note": "Alerts, evacuation zones, a 30-foot fire-resistant zone, a clean-air room, N95 masks and backup charging."
+   "note": "Alerts, evacuation zones, a 30-foot (9 m) fire-resistant zone, a clean-air room, N95 masks and backup charging."
   },
   {
    "doc": "5cd0b4e41cc479",
@@ -446,7 +446,7 @@
   {
    "doc": "5cd0b4e41cc479",
    "label": "Earthquake Safety at Home (FEMA P-530, 2020)",
-   "note": "Prepare, protect, survive, respond and recover — including retrofit projects and a full post-quake home checklist. Originally from California."
+   "note": "Prepare, protect, survive, respond and recover — including retrofit projects and a full post-quake home checklist."
   },
   {
    "doc": "9681a68ebd07f5",
@@ -461,7 +461,7 @@
   {
    "doc": "255b448d041a65",
    "label": "Red Cross Be Prepared guide",
-   "note": "Red Cross Northern California Coastal Region guide covering kits, plans and California hazards like earthquake, tsunami and wildfire."
+   "note": "Red Cross regional guide covering kits, plans and hazards such as earthquake, tsunami and wildfire."
   },
   {
    "doc": "3c0e90a41f5c85",
@@ -481,7 +481,7 @@
   {
    "doc": "ec27c9c3c6b74c",
    "label": "Nuclear War Survival Skills (Kearny)",
-   "note": "Classic civil-defense book from the 1980s on fallout shelters and expedient protection. Historical — prefer current FEMA guidance."
+   "note": "Classic civil-defense book from the 1980s on fallout shelters and expedient protection. Historical — prefer current official guidance."
   }
  ],
  "related": [

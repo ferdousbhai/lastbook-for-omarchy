@@ -28,7 +28,6 @@
   "topographic",
   "navigation",
   "gazetteer",
-  "GNIS",
   "OpenStreetMap",
   "GIS",
   "coast"
@@ -62,14 +61,8 @@
   {
    "id": "quake",
    "label": "How serious is earthquake risk here?",
-   "hint": "Southern California faults, older homes",
+   "hint": "Faults, older homes",
    "read": [
-    {
-     "doc": "5cd0b4e41cc479",
-     "page": 95,
-     "label": "California's faults and expected losses",
-     "note": "FEMA supplement on the San Andreas system and the many California faults that lie mostly on land under homes."
-    },
     {
      "doc": "5cd0b4e41cc479",
      "page": 29,
@@ -92,8 +85,8 @@
     {
      "doc": "dee61b224a1299",
      "page": 2,
-     "label": "Know your flood risk and flood maps",
-     "note": "FEMA flood sheet pointing to FEMA's Flood Map Service Center and describing what to do before, during and after a flood."
+     "label": "Know your flood risk",
+     "note": "FEMA flood sheet on flood risk and what to do before, during and after a flood."
     },
     {
      "doc": "2aadecc420798e",
@@ -412,18 +405,6 @@
      "page": 1,
      "label": "Topographic map symbols",
      "note": "USGS guide to contours and map symbols."
-    }
-   ]
-  },
-  {
-   "title": "Step 7: Use gazetteers and map datasets (advanced)",
-   "goal": "Know what the library's place-name and map datasets contain and that they need conversion or GIS software before use.",
-   "read": [
-    {
-     "zim": "zim/wikipedia_en_all_nopic_2026-06.zim/Geographic_Names_Information_System",
-     "title": "Geographic Names Information System",
-     "label": "What GNIS is",
-     "note": "Wikipedia article on the US federal gazetteer of place names."
     }
    ]
   }

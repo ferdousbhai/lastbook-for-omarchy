@@ -93,7 +93,7 @@
      "doc": "9681a68ebd07f5",
      "page": 26,
      "label": "Finding cooler places and checking on neighbors",
-     "note": "CERT 2019 annex: air-conditioned public places, its warning about fans alone when the heat index exceeds 99°F, and checking on neighbors without air conditioning."
+     "note": "CERT 2019 annex: air-conditioned public places, its warning about fans alone when the heat index exceeds 99°F (37°C), and checking on neighbors without air conditioning."
     },
     {
      "doc": "8a228a96ebfa42",
@@ -277,7 +277,7 @@
  ],
  "limits": [
   {
-   "text": "Use generators and fuel only outdoors, at least 20 feet from windows, doors and attached garages; carbon monoxide is colourless and odourless and can kill.",
+   "text": "Use generators and fuel only outdoors, at least 20 feet (6 m) from windows, doors and attached garages; carbon monoxide is colourless and odourless and can kill.",
    "doc": "f6becaef71ffd5"
   },
   {
@@ -291,17 +291,17 @@
    "page": 60
   },
   {
-   "text": "Never use heaters designed for outdoor use inside; keep kerosene heaters ventilated, refuel them outside and keep them at least three feet from things that can burn.",
+   "text": "Never use heaters designed for outdoor use inside; keep kerosene heaters ventilated, refuel them outside and keep them at least three feet (1 m) from things that can burn.",
    "doc": "9681a68ebd07f5",
    "page": 121
   },
   {
-   "text": "Do not rely on electric fans when it is over 95°F outside: they can increase the risk of heat illness.",
+   "text": "Do not rely on electric fans when it is over 95°F (35°C) outside: they can increase the risk of heat illness.",
    "doc": "1c0d7a149286b5",
    "page": 2
   },
   {
-   "text": "Heat stroke (very high temperature, red hot dry skin, confusion, unconsciousness): call 9-1-1 or get the person to a hospital immediately.",
+   "text": "Heat stroke (very high temperature, red hot dry skin, confusion, unconsciousness): call the emergency number or get the person to a hospital immediately.",
    "doc": "1c0d7a149286b5",
    "page": 2
   },
@@ -311,11 +311,11 @@
    "page": 27
   },
   {
-   "text": "A body temperature below 95°F is an emergency.",
+   "text": "A body temperature below 95°F (35°C) is an emergency.",
    "doc": "f6becaef71ffd5"
   },
   {
-   "text": "Evacuate immediately if authorities tell you to. If trapped by wildfire, call 9-1-1 and give your location, but emergency response may be delayed or impossible.",
+   "text": "Evacuate immediately if authorities tell you to. If trapped by wildfire, call the emergency number and give your location, but emergency response may be delayed or impossible.",
    "doc": "a90ff7e6f3cf01"
   },
   {
@@ -394,7 +394,7 @@
   {
    "doc": "5cd0b4e41cc479",
    "label": "FEMA Earthquake Safety at Home (2020)",
-   "note": "How to secure your space, find home weak points, plan, and recover after an earthquake; includes a California supplement."
+   "note": "How to secure your space, find home weak points, plan, and recover after an earthquake."
   },
   {
    "doc": "5b0efa0b70cb98",

@@ -65,7 +65,7 @@
      "doc": "e4bfed4b6afd6d",
      "page": 1,
      "label": "Temperature and time rules for perishable food",
-     "note": "FDA fact sheet (2007): which foods to discard after time above 40 °F, and that you cannot rely on appearance or odor."
+     "note": "FDA fact sheet (2007): which foods to discard after time above 40 °F (4 °C), and that you cannot rely on appearance or odor."
     },
     {
      "doc": "0dfdf1fb4b178f",
@@ -189,17 +189,17 @@
  ],
  "limits": [
   {
-   "text": "Throw away refrigerated food that has been at 40 °F or higher for more than 4 hours, or that has an unusual odor, color or texture.",
+   "text": "Throw away refrigerated food that has been at 40 °F (4 °C) or higher for more than 4 hours, or that has an unusual odor, color or texture.",
    "doc": "18bf4604bf28c4",
    "page": 2
   },
   {
-   "text": "Discard perishable food that has been above 40 °F for 2 hours or more; you cannot rely on appearance or odor.",
+   "text": "Discard perishable food that has been above 40 °F (4 °C) for 2 hours or more; you cannot rely on appearance or odor.",
    "doc": "e4bfed4b6afd6d",
    "page": 1
   },
   {
-   "text": "Use generators, camp stoves and charcoal grills only outdoors, at least 20 feet from windows, doors or garages; never heat a home with a gas stove, oven, grill or dryer.",
+   "text": "Use generators, camp stoves and charcoal grills only outdoors, at least 20 feet (6 m) from windows, doors or garages; never heat a home with a gas stove, oven, grill or dryer.",
    "doc": "18bf4604bf28c4",
    "page": 2
   },

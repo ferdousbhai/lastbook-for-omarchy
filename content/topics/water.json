@@ -224,7 +224,7 @@
      "doc": "e4bfed4b6afd6d",
      "page": 2,
      "label": "If your well has been flooded",
-     "note": "FDA fact sheet (2007): a flooded well should be tested and disinfected; contact the local or state health department."
+     "note": "FDA fact sheet (2007): a flooded well should be tested and disinfected; contact the local health department."
     },
     {
      "doc": "c6155c3ed58c35",
@@ -337,7 +337,7 @@
    "page": 14
   },
   {
-   "text": "A flooded well should be tested and disinfected; contact your local or state health department for advice.",
+   "text": "A flooded well should be tested and disinfected; contact your local health department for advice.",
    "doc": "e4bfed4b6afd6d",
    "page": 2
   },

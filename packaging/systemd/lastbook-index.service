@@ -1,0 +1,28 @@
+# Builds Lastbook's meaning-search index with no window open: `lastbook index` embeds the library's passages through
+# Recall for Omarchy until nothing is pending, then exits. Without Recall, or without a library, it exits at once (0).
+# Started at login (default.target.d/lastbook-index.conf), when Recall's socket appears (lastbook-index.path), and by
+# Lastbook itself after setup and whenever it finds documents waiting (retrieval.kick). One indexer at a time: a second
+# start stands down. To switch it off:  systemctl --user mask lastbook-index.service lastbook-index.path
+[Unit]
+Description=Lastbook: build the meaning-search index
+Documentation=https://github.com/ferdousbhai/lastbook-for-omarchy
+# Order only: when both start at login, Recall first. Nothing here pulls Recall in.
+After=recall-for-omarchy.service
+
+[Service]
+# Runs once and ends, like a oneshot, but "started" as soon as it runs (exec), not when it ends: the run is an hour or
+# more for a new library, and a oneshot pulled in at login would keep the session "starting" (systemctl --user
+# is-system-running) for all of it.
+Type=exec
+# --wait: how long to keep asking a Recall that is running but still loading its model or busy with its own files.
+ExecStart=/usr/bin/lastbook index --wait 900
+# No restart: the next login, the next start of Recall or the next `lastbook` command starts it again, and it carries
+# on where it stopped (SIGTERM ends it after the passages in hand; nothing embedded is lost).
+Restart=no
+# Out of the way of everything else (the embedding itself runs in Recall, at Recall's own priority).
+Nice=19
+IOSchedulingClass=idle
+CPUSchedulingPolicy=idle
+
+[Install]
+WantedBy=default.target
