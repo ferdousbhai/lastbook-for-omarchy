@@ -54,7 +54,9 @@ the Python engine as its own child process. Your library and settings stay in yo
   `packaging/arch/map-regions.json`, made by `tools/make_region_list.py`). On the Map screen the help points are marks (a
   legend says what each means, a click names one and says how far it is); after a town or `LAT,LON` is found, or for the
   map centre on request, a Nearest help panel lists the closest of each kind, hospitals, clinics and doctors together
-  under Medical help, and a row centres the map on it. `lastbook place --nearby` finds the nearest
+  under Medical help, and a row centres the map on it. Where no street-level map covers the place, the panel names the
+  regions whose streets would and downloads one at a press, showing its progress, then the help around the place. The
+  map opens on the street-level map made last. `lastbook place --nearby` finds the nearest
   help points from the same street-level maps, around a town or a point given as `LAT,LON`, so it answers for the regions
   installed and says plainly when no installed map covers a place. Upstream's US map files are not unpacked, and are
   removed from a library that still has them ([docs/MAPS.md](docs/MAPS.md)).

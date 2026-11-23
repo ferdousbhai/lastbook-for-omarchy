@@ -24,6 +24,10 @@ repo=$(realpath -e -- "$here/../..")
 binary=${LASTBOOK_QA_BINARY:-$repo/native/target/debug/lastbook}
 engine=()
 [[ ! -f ${script%.jsonl}.engine/engine_pipe.py ]] || engine=(LASTBOOK_ENGINE="${script%.jsonl}.engine/engine_pipe.py")
+# WebKit puts its page processes in a bubblewrap sandbox, which a container without user namespaces (CI's) cannot make:
+# the window would abort at its first web page. There, and only there, the test runs them unsandboxed.
+sandbox=()
+bwrap --unshare-user --ro-bind / / true 2>/dev/null || sandbox=(WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1)
 [[ -x $binary ]] || { echo "qa: build the window first (cargo build --features qa --manifest-path native/Cargo.toml)" >&2; exit 1; }
 command -v gtk4-broadwayd >/dev/null || { echo "qa: gtk4-broadwayd is required" >&2; exit 1; }
 # The two wheels Arch does not carry, from the cache bin/test uses: found before HOME is replaced.
@@ -81,7 +85,7 @@ status=0
     HOME="$root/home" XDG_CONFIG_HOME="$root/config" XDG_STATE_HOME="$root/state" XDG_DATA_HOME="$root/data" \
     XDG_CACHE_HOME="$root/cache" XDG_RUNTIME_DIR="$root/runtime" \
     LASTBOOK_DEV=1 PYTHONPATH="$deps" LASTBOOK_RECALL_SOCKET="$root/no-recall.sock" "${engine[@]}" \
-    WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+    WEBKIT_DISABLE_DMABUF_RENDERER=1 "${sandbox[@]}" \
     GDK_BACKEND=broadway BROADWAY_DISPLAY=":$display" OMUI_QA=1 OMUI_QA_INPUT="127.0.0.1:$port" OMUI_QA_FD=3 \
     timeout "${LASTBOOK_QA_TIMEOUT:-120}" "$binary" open --data "$root/library" < "$script" 3> "$root/answers"
 ) &

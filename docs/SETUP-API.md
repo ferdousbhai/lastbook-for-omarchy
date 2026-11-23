@@ -91,8 +91,10 @@ Also: `recommend.folder` (where it would go) and `recommend.need_bytes` (`{pack 
 after `finish` (the job ends `done` with the switch staged), so nothing is renamed while it is open.
 
 **The map.** `world: true` asks for the world map and place search; `regions` is a list of ids from `map_regions`
-(`[{id, name, parent, bbox}]`, Geofabrik's regions as bundled; `bbox` is [w, s, e, n], with w > e for a region across the
-antimeridian, which also has `bboxes`, its box each side of ±180). Each becomes a job item of `kind: "osm"` (ids `world`,
+(`[{id, name, parent, bbox, offered}]`, Geofabrik's regions as bundled; `bbox` is [w, s, e, n], with w > e for a region across the
+antimeridian, which also has `bboxes`, its box each side of ±180; `offered`: whether setup offers its streets, false for
+continents and for countries whose street level runs to tens of GB, whose parts are offered instead). The Map screen
+starts the same job for one region (`{regions: [id]}`) from its nearest-help panel, and reads `job` as this window does. Each becomes a job item of `kind: "osm"` (ids `world`,
 `places`, or the region id), made on this computer by `engine/setup/maps.py`; a region's size is known only once its turn
 comes and its tiles are counted. `world_bytes` is the estimate shown before that. `current.osm` =
 `{world, places, regions: [{id, name, bytes}]}` says what the open library already has; `places` is false for a place

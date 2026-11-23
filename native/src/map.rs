@@ -9,7 +9,9 @@
 //!
 //! Help points (HELP) are marked where a street-level map has them, and a click on a mark names it. The nearest of each
 //! kind around the place found (or the map centre) is the engine's answer (`/api/near`, near() in server.py), the one
-//! `lastbook place --nearby` gives: measured on the ground there, never here.
+//! `lastbook place --nearby` gives: measured on the ground there, never here. Where no street-level map covers the
+//! place, the engine names the regions whose streets would, and the panel offers to download one: the same setup job
+//! Library and downloads starts (setup.rs), shown as it runs, and the help around the place once it is done.
 
 use std::{
     cell::{Cell, RefCell},
@@ -21,11 +23,12 @@ use std::{
 
 use gtk::{gdk, glib, pango, prelude::*};
 use omui::{Theme, Tokens, blend};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{
     engine::query,
     mvt::{self, Feature, Geom, Layer},
+    setup,
     ui::{App, Route},
 };
 
@@ -34,6 +37,8 @@ const MAX_ZOOM: f64 = 19.0;
 const DRAW_PER_FRAME: usize = 4;
 /// How many points of a kind the nearest-help list shows: enough for a choice, few enough to see every kind.
 const PER_GROUP: usize = 4;
+/// Below this zoom the map shows more than about 50 km across: its centre is a region, not a place to look around.
+const PLACE_ZOOM: f64 = 11.0;
 
 /// The help points the map marks, by the `kind` of the tiles' pois layer and the engine's name for the same (server.py
 /// HELP and MAP_HELP): the kinds, the mark, whether it is drawn in the theme's colour for danger, and the heading the
@@ -55,6 +60,8 @@ struct Source {
     db: rusqlite::Connection,
     name: String,
     max_zoom: u32,
+    /// A street-level map's box [w, s, e, n] (its `bounds`), and when it was made: the map goes there (`frame`).
+    region: Option<([f64; 4], std::time::SystemTime)>,
 }
 
 impl Source {
@@ -63,7 +70,10 @@ impl Source {
         let meta = |k: &str| db.query_row("SELECT value FROM metadata WHERE name=?1", [k], |r| r.get::<_, String>(0)).ok();
         let max_zoom = meta("maxzoom").and_then(|v| v.parse().ok()).unwrap_or(14);
         let name = meta("name").unwrap_or_else(|| path.file_stem().unwrap_or_default().to_string_lossy().into_owned());
-        Some(Self { db, name, max_zoom })
+        let bounds: Vec<f64> = meta("bounds").unwrap_or_default().split(',').filter_map(|v| v.trim().parse().ok()).collect();
+        let made = std::fs::metadata(path).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+        let region = path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("regions-")).then(|| bounds.try_into().ok()).flatten().map(|b| (b, made));
+        Some(Self { db, name, max_zoom, region })
     }
 
     fn tile(&self, z: u32, x: u32, y: u32) -> Option<Vec<u8>> {
@@ -225,11 +235,29 @@ pub struct MapPage {
     panel_around: gtk::Label,
     panel_note: gtk::Label,
     panel_manage: gtk::Button,
+    /// Counts what the panel was asked to show: an answer for an earlier question is dropped.
+    asked: Cell<u64>,
+    /// Where no street-level map covers the place: a button for each region whose streets would, or the download of one.
+    offer: gtk::Box,
+    /// The regions the engine named for the place, not yet installed ({id, name}).
+    near_regions: RefCell<Vec<Value>>,
+    /// The setup job as last read, whether the panel is showing it, the timer that reads its progress, and the buttons
+    /// that act on it (made again only when what they offer changes, so the keyboard's focus stays on them).
+    job: RefCell<Value>,
+    following: Cell<bool>,
+    job_timer: RefCell<Option<glib::SourceId>>,
+    job_buttons: gtk::Box,
+    job_buttons_for: RefCell<String>,
     help_list: gtk::ListBox,
-    /// The points of the list's rows, by index (None for a heading).
+    /// What the list's rows go to, by index: a point ({lat, lon}) or a street-level map ({bounds}); None for a heading.
     help_rows: RefCell<Vec<Option<Value>>>,
     /// The map files open now (names and sizes): a download that adds or finishes one opens them again.
     loaded: RefCell<String>,
+    /// Whether the map has been put somewhere yet: the first time it is shown with nothing asked for, it goes to a
+    /// street-level map rather than showing the whole world (`show`).
+    placed: Cell<bool>,
+    /// A box [w, s, e, n] to show whole at the next frame, when the map's size is known.
+    frame_to: Cell<Option<[f64; 4]>>,
 }
 
 impl MapPage {
@@ -332,6 +360,8 @@ impl MapPage {
         let panel_manage = gtk::Button::new();
         omui::i18n::bind_label(&panel_manage, "Library and downloads");
         panel_manage.set_halign(gtk::Align::Start);
+        panel_manage.add_css_class("flat");   // other choices: the download the panel offers comes first
+        let offer = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let help_list = gtk::ListBox::new();
         help_list.add_css_class("map-results");
         let foot = gtk::Label::new(None);
@@ -342,6 +372,7 @@ impl MapPage {
         foot.add_css_class("meta");
         panel.append(&head);
         panel.append(&panel_note);
+        panel.append(&offer);
         panel.append(&panel_manage);
         panel.append(&gtk::ScrolledWindow::builder().child(&help_list).vexpand(true).propagate_natural_height(true).hscrollbar_policy(gtk::PolicyType::Never).build());
         panel.append(&foot);
@@ -374,9 +405,19 @@ impl MapPage {
             panel_around,
             panel_note,
             panel_manage,
+            asked: Cell::new(0),
+            offer,
+            near_regions: RefCell::new(Vec::new()),
+            job: RefCell::new(Value::Null),
+            following: Cell::new(false),
+            job_timer: RefCell::new(None),
+            job_buttons: gtk::Box::new(gtk::Orientation::Horizontal, 6),
+            job_buttons_for: RefCell::new(String::new()),
             help_list,
             help_rows: RefCell::new(Vec::new()),
             loaded: RefCell::new(String::new()),
+            placed: Cell::new(false),
+            frame_to: Cell::new(None),
         });
         let me = Rc::downgrade(&page);
         page.area.set_draw_func(move |_, cr, w, h| {
@@ -439,13 +480,18 @@ impl MapPage {
                     m.panel.set_visible(false);
                 } else {
                     let unpinned = m.pin.borrow().is_none();
-                    m.nearest(unpinned);
-                    m.help_list.grab_focus();
+                    if m.nearest(unpinned) {
+                        m.help_list.grab_focus();
+                    }
                 }
             }
         });
         let me = Rc::downgrade(self);
-        here.connect_clicked(move |_| if let Some(m) = me.upgrade() { m.nearest(true) });
+        here.connect_clicked(move |_| {
+            if let Some(m) = me.upgrade() {
+                m.nearest(true);
+            }
+        });
         let me = Rc::downgrade(self);
         close.connect_clicked(move |_| {
             if let Some(m) = me.upgrade() {
@@ -461,14 +507,16 @@ impl MapPage {
         });
         let me = Rc::downgrade(self);
         self.help_list.connect_row_activated(move |_, row| {
-            if let Some(m) = me.upgrade()
-                && let Some(Some(p)) = m.help_rows.borrow().get(row.index() as usize)
-                && let (Some(lat), Some(lon)) = (p["lat"].as_f64(), p["lon"].as_f64())
-            {
-                // Over a narrow map the panel hides what the row is for: it gives way to the map.
-                if m.panel.halign() != gtk::Align::End {
-                    m.panel.set_visible(false);
-                }
+            let Some(m) = me.upgrade() else { return };
+            let Some(Some(p)) = m.help_rows.borrow().get(row.index() as usize).cloned() else { return };
+            // Over a narrow map the panel hides what the row is for: it gives way to the map.
+            if m.panel.halign() != gtk::Align::End {
+                m.panel.set_visible(false);
+            }
+            let bounds: Option<Vec<f64>> = serde_json::from_value(p["bounds"].clone()).ok();
+            if let Some(b) = bounds.and_then(|b| b.try_into().ok()) {
+                m.frame(b);
+            } else if let (Some(lat), Some(lon)) = (p["lat"].as_f64(), p["lon"].as_f64()) {
                 m.center(lat, lon, m.zoom.get().max(16.0), None);
                 m.chosen.set(Some(lonlat_to_world(lon, lat)));
             }
@@ -546,10 +594,16 @@ impl MapPage {
         });
     }
 
-    /// Shows the panel with the nearest help around the pin; `here` moves the pin to the map centre first.
-    fn nearest(self: &Rc<Self>, here: bool) {
-        let Some(app) = self.app.upgrade() else { return };
+    /// Shows the panel with the nearest help around the pin; `here` moves the pin to the map centre first. False where
+    /// the map shows too wide an area for its centre to be a place to look around (PLACE_ZOOM): the panel asks for one.
+    fn nearest(self: &Rc<Self>, here: bool) -> bool {
+        let Some(app) = self.app.upgrade() else { return false };
+        self.stop_job();
         if here {
+            if self.zoom.get() < PLACE_ZOOM {
+                self.ask_for_place();
+                return false;
+            }
             self.panel.set_visible(true);
             let (x, y) = self.seen_centre();
             self.pin.replace(Some((x, y, omui::tr("Map centre"))));
@@ -560,41 +614,102 @@ impl MapPage {
         self.panel_around.set_text(&omui::tr!("Around {}", label));
         self.panel.set_visible(true);
         let (engine, me, a, b) = (app.engine.clone(), Rc::downgrade(self), format!("{lat:.6}"), format!("{lon:.6}"));
+        let asked = self.asked.get();
         glib::spawn_future_local(async move {
             let r = engine.get(&query("/api/near", &[("lat", &a), ("lon", &b)])).await;
-            if let Some(me) = me.upgrade() {
+            if let Some(me) = me.upgrade()
+                && me.asked.get() == asked
+            {
                 me.fill_help(r.ok());
             }
         });
+        true
     }
 
-    fn fill_help(&self, r: Option<Value>) {
+    /// The panel where no place is chosen and the whole map is too wide for its centre to be one: the find field takes
+    /// the keyboard, and the street-level maps installed are offered to go to.
+    fn ask_for_place(&self) {
+        self.stop_job();
+        self.panel.set_visible(true);
+        self.panel_around.set_text(&omui::tr("The map shows too wide an area"));
+        omui::clear(&self.offer);
+        self.panel_manage.set_visible(false);
         omui::clear(&self.help_list);
+        let mut rows = Vec::new();
+        let sources = self.sources.borrow();
+        let installed: Vec<(&str, [f64; 4])> = sources.iter().filter_map(|s| s.region.map(|(b, _)| (s.name.as_str(), b))).collect();
+        self.panel_note.set_text(&if installed.is_empty() {
+            omui::tr("Find a town above, or zoom in to where you are, to see the help near it.")
+        } else {
+            omui::tr("Find a town above, or zoom in to where you are, to see the help near it. Or go to a street-level map:")
+        });
+        self.panel_note.set_visible(true);
+        if !installed.is_empty() {
+            self.add_heading(&omui::tr("Street-level maps installed"));
+            rows.push(None);
+        }
+        for (name, bounds) in installed {
+            self.add_row(name, &omui::tr("Show it on the map"));
+            rows.push(Some(json!({"bounds": bounds})));
+        }
+        self.help_rows.replace(rows);
+        self.search.grab_focus();
+    }
+
+    fn add_heading(&self, text: &str) {
+        let h = gtk::Label::new(Some(text));
+        h.set_wrap(true);
+        h.set_max_width_chars(30);
+        h.add_css_class("heading");
+        h.set_xalign(0.0);
+        h.set_margin_top(6);
+        let row = gtk::ListBoxRow::builder().child(&h).activatable(false).selectable(false).focusable(false).build();
+        self.help_list.append(&row);
+    }
+
+    fn add_row(&self, title: &str, meta: &str) {
+        let b = gtk::Box::new(gtk::Orientation::Vertical, 1);
+        for (text, class) in [(title, "result-title"), (meta, "meta")] {
+            let l = gtk::Label::new(Some(text));
+            l.set_xalign(0.0);
+            l.set_ellipsize(pango::EllipsizeMode::End);
+            l.set_max_width_chars(30);
+            l.add_css_class(class);
+            b.append(&l);
+        }
+        self.help_list.append(&b);
+    }
+
+    fn fill_help(self: &Rc<Self>, r: Option<Value>) {
+        omui::clear(&self.help_list);
+        omui::clear(&self.offer);
         let mut rows = Vec::new();
         let points = r.as_ref().and_then(|v| v["points"].as_array()).cloned().unwrap_or_default();
         let covered = r.as_ref().is_some_and(|v| v["covered"].as_bool() == Some(true));
+        let regions = r.as_ref().and_then(|v| v["regions"].as_array()).cloned().unwrap_or_default();
+        let offered: Vec<Value> = regions.iter().filter(|g| g["installed"] != true).cloned().collect();
         let note = match &r {
             None => omui::tr("The map's help points could not be read."),
-            Some(_) if !covered => omui::tr("No street-level map covers this place, so its help points cannot be shown. Add the area's streets in Library and downloads."),
+            Some(_) if !covered && !offered.is_empty() => omui::tr("No street-level map covers this place yet. Download its streets to see the help near it:"),
+            Some(_) if !covered && regions.is_empty() => omui::tr("There is no street-level map to download for this place: it may be out at sea. Find a town to see the help near it."),
+            Some(_) if !covered => omui::tr("No street-level map covers this place, so its help points cannot be shown."),
             Some(_) if points.is_empty() => omui::tr("No help points on the map near this place."),
             Some(_) => String::new(),
         };
         self.panel_note.set_text(&note);
         self.panel_note.set_visible(!note.is_empty());
         self.panel_manage.set_visible(r.is_some() && !covered);
+        self.near_regions.replace(offered);
+        if !self.near_regions.borrow().is_empty() {
+            self.offer_downloads(None);
+            self.read_job();   // one under way (here or in another window) is shown instead
+        }
         for &(kinds, _, _, heading) in HELP {
             let mine: Vec<&Value> = points.iter().filter(|p| kinds.contains(&p["cls"].as_str().unwrap_or_default())).take(PER_GROUP).collect();
             if mine.is_empty() {
                 continue;
             }
-            let h = gtk::Label::new(Some(&omui::i18n::translate(heading)));
-            h.set_wrap(true);
-            h.set_max_width_chars(30);
-            h.add_css_class("heading");
-            h.set_xalign(0.0);
-            h.set_margin_top(6);
-            let row = gtk::ListBoxRow::builder().child(&h).activatable(false).selectable(false).focusable(false).build();
-            self.help_list.append(&row);
+            self.add_heading(&omui::i18n::translate(heading));
             rows.push(None);
             for p in mine {
                 let kind = kind_name(p["cls"].as_str().unwrap_or_default());
@@ -604,20 +719,196 @@ impl MapPage {
                     Some(n) => (n, format!("{kind} · {far}")),
                     None => (kind.as_str(), far),
                 };
-                let b = gtk::Box::new(gtk::Orientation::Vertical, 1);
-                for (text, class) in [(name, "result-title"), (meta.as_str(), "meta")] {
-                    let l = gtk::Label::new(Some(text));
-                    l.set_xalign(0.0);
-                    l.set_ellipsize(pango::EllipsizeMode::End);
-                    l.set_max_width_chars(30);
-                    l.add_css_class(class);
-                    b.append(&l);
-                }
-                self.help_list.append(&b);
+                self.add_row(name, &meta);
                 rows.push(Some(p.clone()));
             }
         }
         self.help_rows.replace(rows);
+    }
+
+    // ------------------------------------------------------------------------------------- adding the streets --
+    /// A button for each region whose streets would cover the place, smallest first. Nothing reaches the network until
+    /// one is pressed. `error`: why the last press started nothing (no room on the disk, another download under way).
+    fn offer_downloads(self: &Rc<Self>, error: Option<&str>) {
+        self.following.set(false);
+        omui::clear(&self.offer);
+        self.offer.set_sensitive(true);
+        for g in self.near_regions.borrow().iter() {
+            let b = crate::cards::wrap_button(&omui::tr!("Download streets for {}", g["name"].as_str().unwrap_or_default()));
+            if let Some(l) = b.child().and_downcast::<gtk::Label>() {
+                l.set_max_width_chars(30);
+            }
+            b.add_css_class(if self.offer.first_child().is_none() { "suggested-action" } else { "chip" });
+            let (me, id) = (Rc::downgrade(self), g["id"].clone());
+            b.connect_clicked(move |_| {
+                if let Some(me) = me.upgrade() {
+                    me.start_download(id.clone());
+                }
+            });
+            self.offer.append(&b);
+        }
+        self.offer.append(&meta(&omui::tr("Its size is known once the download starts: a small country is about 0.1–0.5 GB, a large one several GB.")));
+        if let Some(e) = error {
+            self.offer.append(&setup::error_label(e));
+        }
+    }
+
+    /// Starts the job Library and downloads would start for the region: its streets, made on this computer, straight
+    /// into the open library (with the world map, if it is missing).
+    fn start_download(self: &Rc<Self>, id: Value) {
+        let Some(app) = self.app.upgrade() else { return };
+        self.offer.set_sensitive(false);
+        let (engine, me) = (app.engine.clone(), Rc::downgrade(self));
+        glib::spawn_future_local(async move {
+            let r = engine.post("/api/setup/start", &json!({"pack": null, "world": false, "regions": [id]})).await;
+            let Some(me) = me.upgrade() else { return };
+            match r {
+                Ok(v) if v["error"].is_string() => me.offer_downloads(v["error"].as_str()),
+                Ok(v) => {
+                    me.following.set(true);
+                    me.draw_job(&v);
+                }
+                Err(e) => me.offer_downloads(Some(&e.to_string())),
+            }
+        });
+    }
+
+    fn read_job(self: &Rc<Self>) {
+        let Some(app) = self.app.upgrade() else { return };
+        let (engine, me) = (app.engine.clone(), Rc::downgrade(self));
+        glib::spawn_future_local(async move {
+            if let Ok(job) = engine.get("/api/setup/job").await
+                && let Some(me) = me.upgrade()
+            {
+                me.draw_job(&job);
+            }
+        });
+    }
+
+    /// The job in the panel, as setup.rs shows it. One that has finished the streets for this place opens them and
+    /// shows the help around it; one that is not under way leaves the download buttons.
+    fn draw_job(self: &Rc<Self>, job: &Value) {
+        if !self.panel.is_visible() || self.near_regions.borrow().is_empty() {
+            return;   // the panel was closed, or has moved on to a place that needs no download
+        }
+        let state = job["state"].as_str().unwrap_or_default();
+        let ours = job["items"].as_array().into_iter().flatten().any(|it| self.near_regions.borrow().iter().any(|g| g["id"] == it["id"]));
+        let elsewhere = job["elsewhere"] == true;
+        let was_following = self.following.get();
+        self.job.replace(job.clone());
+        match state {
+            "done" if ours && was_following => {
+                self.stop_job();
+                self.show();   // the new map file: drawn, and searched by the engine
+                self.nearest(false);
+                return;
+            }
+            "" | "done" => return self.offer_downloads(None),
+            "failed" if !ours || job["error"]["code"] == "cancelled" => return self.offer_downloads(None),
+            _ => {}
+        }
+        self.following.set(true);
+        let focused = self.job_buttons.focus_child().is_some();   // kept on the button through each redraw, and to Resume after Pause
+        if self.job_buttons.parent().is_some() {
+            self.offer.remove(&self.job_buttons);
+        }
+        omui::clear(&self.offer);
+        self.offer.set_sensitive(true);
+        let regions = self.near_regions.borrow().clone();
+        let mut said = Vec::new();   // an item's reason is not repeated as the job's
+        for it in job["items"].as_array().into_iter().flatten() {
+            said.extend(it["error"]["message"].as_str());
+            self.offer.append(&setup::item_row(it, &regions));
+        }
+        if let Some(e) = job["error"]["message"].as_str().filter(|e| !said.contains(e)) {
+            self.offer.append(&setup::error_label(e));
+        }
+        if elsewhere {
+            self.offer.append(&meta(&omui::tr("This download is running in another Lastbook window. Use that window to pause or cancel it.")));
+        }
+        // Stopping keeps what has arrived (Resume carries on from it); cancelling, which deletes it, is Library and
+        // downloads' to ask about.
+        let (text, path) = match state {
+            _ if elsewhere => (String::new(), ""),
+            "paused" => (omui::tr("Resume"), "/api/setup/resume"),
+            "failed" => (omui::tr("Try again"), "/api/setup/retry"),
+            _ => (omui::tr("Pause"), "/api/setup/pause"),
+        };
+        if *self.job_buttons_for.borrow() != path {
+            omui::clear(&self.job_buttons);
+            self.job_buttons_for.replace(path.to_owned());
+            if !path.is_empty() {
+                let b = gtk::Button::with_label(&text);
+                b.add_css_class(if path == "/api/setup/pause" { "chip" } else { "suggested-action" });
+                let me = Rc::downgrade(self);
+                b.connect_clicked(move |_| {
+                    if let Some(me) = me.upgrade() {
+                        me.act(path);
+                    }
+                });
+                self.job_buttons.append(&b);
+            }
+        }
+        self.offer.append(&self.job_buttons);
+        if focused && let Some(b) = self.job_buttons.first_child() {
+            b.grab_focus();
+        }
+        self.watch_job();
+    }
+
+    /// Pause, resume or try again: the job as it then is, or why the engine would not.
+    fn act(self: &Rc<Self>, path: &'static str) {
+        let Some(app) = self.app.upgrade() else { return };
+        let (engine, me) = (app.engine.clone(), Rc::downgrade(self));
+        glib::spawn_future_local(async move {
+            let r = engine.post(path, &json!({})).await;
+            let Some(me) = me.upgrade() else { return };
+            match r {
+                Ok(v) if v.get("items").is_some() => me.draw_job(&v),
+                Ok(v) => me.offer.append(&setup::error_label(v["error"].as_str().unwrap_or_default())),
+                Err(e) => me.offer.append(&setup::error_label(&e.to_string())),
+            }
+        });
+    }
+
+    /// Reads a running job's progress once a second while the panel shows it on screen, in the window in use. A job's
+    /// change of state has no word of its own here (setup.rs follows those), so this reading also sees it end.
+    fn watch_job(self: &Rc<Self>) {
+        if !setup::moves(&self.job.borrow()) {
+            return self.stop_job_timer();
+        }
+        if self.job_timer.borrow().is_some() {
+            return;
+        }
+        let me = Rc::downgrade(self);
+        let timer = glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
+            let Some(m) = me.upgrade() else { return glib::ControlFlow::Break };
+            if !m.panel.is_visible() || !m.root.is_mapped() {
+                m.job_timer.take();   // `show` reads it again when the map is back
+                return glib::ControlFlow::Break;
+            }
+            if m.root.root().and_downcast::<gtk::Window>().is_some_and(|w| w.is_active()) {
+                m.read_job();
+            }
+            glib::ControlFlow::Continue
+        });
+        self.job_timer.replace(Some(timer));
+    }
+
+    fn stop_job_timer(&self) {
+        if let Some(t) = self.job_timer.take() {
+            t.remove();
+        }
+    }
+
+    /// The panel is about to show something else: an answer still on its way is dropped, and the job carries on,
+    /// unwatched.
+    fn stop_job(&self) {
+        self.asked.set(self.asked.get() + 1);
+        self.near_regions.borrow_mut().clear();
+        self.following.set(false);
+        self.stop_job_timer();
+        self.job_buttons_for.replace(String::new());
     }
 
     fn controls(self: &Rc<Self>, zoom_in: &gtk::Button, zoom_out: &gtk::Button) {
@@ -722,7 +1013,12 @@ impl MapPage {
     }
 
     /// Opens the map files when the map is shown, and again whenever they have changed (setup adds maps while Lastbook runs).
+    /// The first time, with nothing asked for, it goes to the street-level map made last rather than showing the whole
+    /// world. A download followed in the panel is read again: its timer stops while the map is away.
     pub fn show(self: &Rc<Self>) {
+        if self.following.get() && setup::moves(&self.job.borrow()) {
+            self.read_job();
+        }
         if let Some(app) = self.app.upgrade()
             && let Some(data) = app.engine.ready.data.as_ref()
             && let geo = data.join("derived").join("geo")
@@ -740,12 +1036,16 @@ impl MapPage {
             } else {
                 omui::tr!("© OpenStreetMap contributors · {}", names.join(", "))
             });
+            if !self.placed.replace(true) {
+                self.frame_to.set(srcs.iter().filter_map(|s| s.region).max_by_key(|r| r.1).map(|r| r.0));
+            }
             self.sources.replace(srcs);
         }
         self.area.queue_draw();
     }
 
     pub fn show_at(self: &Rc<Self>, lat: f64, lon: f64, label: &str) {
+        self.placed.set(true);
         self.show();
         self.center(lat, lon, 15.0, Some(label.to_owned()));
         if self.panel.is_visible() {
@@ -766,6 +1066,22 @@ impl MapPage {
         }
         self.info.popdown();
         self.area.queue_draw();
+    }
+
+    /// Shows the box [w, s, e, n] whole, at the next frame (the map's size may not be known yet).
+    fn frame(&self, bounds: [f64; 4]) {
+        self.frame_to.set(Some(bounds));
+        self.area.queue_draw();
+    }
+
+    /// Fits the box [w, s, e, n] into the part of a map `w` × `h` that can be seen: left of the panel, where it is beside it.
+    fn fit(&self, [west, south, east, north]: [f64; 4], w: f64, h: f64) {
+        let east = if east < west { east + 360.0 } else { east };   // across the antimeridian
+        let ((x0, y0), (x1, y1)) = (lonlat_to_world(west, north), lonlat_to_world(east, south));
+        let beside = if self.panel.is_visible() && self.panel.halign() == gtk::Align::End { f64::from(self.panel.width().max(300) + 12) } else { 0.0 };
+        let scale = ((w - beside).max(100.0) / (x1 - x0).max(1e-9)).min(h / (y1 - y0).max(1e-9));
+        let (lon, lat) = world_to_lonlat((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+        self.center(lat, lon, ((scale / TILE).log2() - 0.2).clamp(1.0, 16.0), None);
     }
 
     fn zoom_by(&self, dz: f64, at: Option<(f64, f64)>) {
@@ -868,6 +1184,9 @@ impl MapPage {
     }
 
     fn draw(&self, cr: &cairo::Context, w: f64, h: f64) {
+        if let Some(b) = self.frame_to.take() {
+            self.fit(b, w, h);
+        }
         let st = self.style.borrow().clone();
         rgb(cr, &st.water, 1.0);
         let _ = cr.paint();
@@ -1087,6 +1406,13 @@ fn draw_layers(cr: &cairo::Context, layers: &[Layer], st: &Style, z: f64, lw: f6
             }
         }
     }
+}
+
+/// A line of small print in the panel, as wide as the panel.
+fn meta(text: &str) -> gtk::Label {
+    let l = omui::label(text, "meta");
+    l.set_max_width_chars(30);
+    l
 }
 
 /// A help point's mark and colour (HELP), by its kind on the map or in the engine's answer.

@@ -1,6 +1,8 @@
 # The Map screen's help points over the made-up street map of dev/seed.py (the town of Mapton, with one help point of
-# each kind): the nearest-help list after finding a town, a row of it centring the map, the legend, the plain answer
-# for a town no street map covers (Testville) and its way to Library and downloads, and the same in a narrow window.
+# each kind): the map opening on that street map, Nearest help over the whole world asking for a place rather than
+# pinning the open sea, the nearest-help list after finding a town, a row of it centring the map, the legend, the
+# download offered for a town no street map covers (Testville; not pressed here: map-download.jsonl presses it over a
+# stand-in engine) and its way to Library and downloads, and the same in a narrow window.
 # native/dev/qa.sh native/dev/qa/map.jsonl [shots-dir]
 
 {"do":"wait","role":"window","name":"Guides — Lastbook","timeout_ms":30000}
@@ -8,7 +10,39 @@
 {"do":"wait","size":[1000,700]}
 {"do":"select","role":"list-item","name":"Map"}
 {"do":"wait","role":"window","name":"Map — Lastbook"}
-{"do":"type","role":"search-box","name":"Find a town, or LAT,LON","text":"Mapton"}
+# It opens on the street map installed, not the whole world. A frame draws a few tiles: a few frames first.
+{"do":"state"}
+{"do":"state"}
+{"do":"state"}
+{"do":"shot","path":"map-opens.png"}
+
+# Zoomed out to the whole world, Nearest help pins nowhere: it asks for a town, with the keyboard in the find field,
+# and offers the street-level map installed, which a row shows.
+{"do":"focus","role":"generic","name":"Map"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"click","role":"button","name":"Nearest help"}
+{"do":"wait","role":"label","name":"The map shows too wide an area","visible":true}
+{"do":"wait","role":"search-box","name":"Find a town, or LAT,LON","focused":true}
+{"do":"wait","role":"list-item","name":"testland","visible":true}
+{"do":"shot","path":"map-world-nearest.png"}
+{"do":"click","role":"list-item","name":"testland"}
+{"do":"state"}
+{"do":"state"}
+{"do":"state"}
+{"do":"shot","path":"map-world-to-region.png"}
+{"do":"click","role":"button","name":"Close"}
+{"do":"wait","role":"label","name":"The map shows too wide an area","visible":false}
+{"do":"focus","role":"search-box","name":"Find a town, or LAT,LON"}
+{"do":"type","text":"Mapton"}
 {"do":"key","keys":"Return"}
 {"do":"focus","role":"list-item","name":"Mapton"}
 {"do":"key","keys":"Return"}
@@ -31,14 +65,16 @@
 {"do":"click","role":"button","name":"Close"}
 {"do":"wait","role":"label","name":"Around Mapton","visible":false}
 
-# A town no street map covers: no far-away points, a plain answer and the way to add the area.
+# A town no street map covers: no far-away points, but the regions whose streets would cover it, each a download.
 {"do":"focus","role":"search-box","name":"Find a town, or LAT,LON"}
 {"do":"key","keys":"<Control>a"}
 {"do":"type","text":"Testville"}
 {"do":"key","keys":"Return"}
 {"do":"focus","role":"list-item","name":"Testville"}
 {"do":"key","keys":"Return"}
-{"do":"wait","role":"label","name":"No street-level map covers this place, so its help points cannot be shown. Add the area's streets in Library and downloads.","visible":true}
+{"do":"wait","role":"label","name":"No street-level map covers this place yet. Download its streets to see the help near it:","visible":true}
+{"do":"wait","role":"button","name":"Download streets for Ethiopia","visible":true}
+{"do":"wait","role":"button","name":"Download streets for Sudan","visible":true}
 {"do":"shot","path":"map-uncovered.png"}
 
 # A third of a screen: the panel takes the map's width, and the map's centre has its own nearest help.
@@ -46,6 +82,7 @@
 {"do":"wait","size":[560,700]}
 {"do":"click","role":"button","name":"Nearest help around the map centre"}
 {"do":"wait","role":"label","name":"Around Map centre","visible":true}
+{"do":"wait","role":"button","name":"Download streets for Sudan","visible":true}
 {"do":"shot","path":"narrow-map-uncovered.png"}
 {"do":"focus","role":"search-box","name":"Find a town, or LAT,LON"}
 {"do":"key","keys":"<Control>a"}
@@ -58,6 +95,24 @@
 {"do":"click","role":"button","name":"Close"}
 {"do":"wait","role":"list-item","name":"RS Mapton","visible":false}
 {"do":"shot","path":"narrow-map.png"}
+{"do":"focus","role":"generic","name":"Map"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+{"do":"key","keys":"minus"}
+# The place found stays pinned, and Nearest help is around it; the map centre, over the whole world, is no place.
+{"do":"click","role":"button","name":"Nearest help"}
+{"do":"wait","role":"list-item","name":"RS Mapton","visible":true}
+{"do":"click","role":"button","name":"Nearest help around the map centre"}
+{"do":"wait","role":"list-item","name":"testland","visible":true}
+{"do":"shot","path":"narrow-map-world-nearest.png"}
+{"do":"click","role":"button","name":"Close"}
 {"do":"focus","role":"search-box","name":"Find a town, or LAT,LON"}
 {"do":"key","keys":"<Control>a"}
 {"do":"type","text":"Testville"}

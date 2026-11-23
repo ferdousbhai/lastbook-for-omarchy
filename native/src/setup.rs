@@ -71,7 +71,7 @@ fn runs(job: &Value) -> bool {
 
 /// Whether `job`'s progress is worth reading on a timer. This engine says when its own job changes state, so its job
 /// is read only while it moves; another window's job sends no word here, so it is read until it has ended.
-fn moves(job: &Value) -> bool {
+pub fn moves(job: &Value) -> bool {
     match job["state"].as_str() {
         Some("done" | "failed") | None => false,
         Some("paused") => job["elsewhere"] == true,
@@ -79,16 +79,7 @@ fn moves(job: &Value) -> bool {
     }
 }
 
-/// About how many street-level (zoom 15) map tiles a region's box [west, south, east, north] holds.
-fn street_tiles(bbox: &Value) -> f64 {
-    let v = |i: usize| bbox[i].as_f64().unwrap_or(0.0);
-    let (w, s, e, n) = (v(0), v(1).max(-85.05), v(2), v(3).min(85.05));
-    let row = |lat: f64| (1.0 - lat.to_radians().tan().asinh() / std::f64::consts::PI) / 2.0;
-    let wide = if e >= w { e - w } else { e - w + 360.0 } / 360.0;
-    wide * (row(s) - row(n)) * 4f64.powi(15)
-}
-
-fn gb(bytes: f64) -> String {
+pub fn gb(bytes: f64) -> String {
     use omui::i18n::format_number;
     if bytes >= 1e9 { tr!("{} GB", format_number(bytes / 1e9, 1)) } else { tr!("{} MB", format_number(bytes / 1e6, 0)) }
 }
@@ -102,6 +93,7 @@ const ENGINE_TEXT: &[&str] = &[
     n_!("Cancelled. Nothing was changed."),
     n_!("A download is already under way. Pause or cancel it first."),
     n_!("A download is under way. Pause or cancel it first."),
+    n_!("This download is running in another Lastbook window. Use that window."),
     n_!("That library is not available yet."),
     n_!("Lastbook does not know that map region."),
     n_!("Choose a library first."),
@@ -174,6 +166,44 @@ fn item_title(item: &Value, regions: &[Value]) -> String {
             None => title.to_owned(),
         },
     }
+}
+
+/// One item of a download as it is shown here and in the Map's nearest help: what it is and what it is doing, how far
+/// it has got, and why it failed. `regions` name the parts of the map (`map_regions`, or the Map's regions for a point).
+pub fn item_row(it: &Value, regions: &[Value]) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    row.add_css_class("result");
+    let state = it["state"].as_str().unwrap_or_default();
+    let (done, total) = (it["bytes_done"].as_f64().unwrap_or(0.0), it["bytes_total"].as_f64().unwrap_or(0.0));
+    // A list of facts, each a phrase of its own joined by a dot, never a sentence glued from parts.
+    let mut line = vec![tr!("{} — {}", item_title(it, regions), state_text(state))];
+    if total > 0.0 {
+        line.push(tr!("{} of {}", gb(done), gb(total)));
+    }
+    if let Some(r) = it["rate_bps"].as_f64().filter(|r| *r > 0.0) {
+        line.push(tr!("{}/s", gb(r)));
+    }
+    if let Some(e) = it["eta_s"].as_f64().filter(|e| *e > 0.0) {
+        line.push(omui::trn!("about {n} minutes left", (e / 60.0).ceil() as i64));
+    }
+    let line = label(&line.join(" · "), "result-title");
+    line.set_max_width_chars(30);   // its natural width, in the Map's panel: it wraps to the width it is given
+    row.append(&line);
+    let bar = gtk::ProgressBar::new();
+    bar.set_fraction(if total > 0.0 { (done / total).clamp(0.0, 1.0) } else if state == "done" { 1.0 } else { 0.0 });
+    row.append(&bar);
+    if let Some(e) = it["error"]["message"].as_str() {
+        row.append(&error_label(e));
+    }
+    row
+}
+
+/// A sentence of the engine's, shown as an error.
+pub fn error_label(text: &str) -> gtk::Label {
+    let l = label(&engine_says(text), "meta");
+    l.add_css_class("error");
+    l.set_max_width_chars(30);
+    l
 }
 
 /// Asks `picker` for a folder, titled `title`, and hands `chosen` the folder picked, or `failed` why the desktop could
@@ -527,19 +557,8 @@ impl SetupPage {
         let all: Vec<Value> = st["map_regions"].as_array().cloned().unwrap_or_default();
         let name_of_all = all.clone();
         let name_of = move |id: &str| name_of_all.iter().find(|r| r["id"] == id).and_then(|r| r["name"].as_str()).unwrap_or(id).to_owned();
-        // Offered are countries and their parts. Continents, and countries so large that street level runs to tens of
-        // GB (Russia, the US, Canada, Australia), are left out: their parts are in the list.
-        let ids: Vec<String> = all.iter().filter_map(|r| r["id"].as_str().map(str::to_owned)).collect();
-        let parents: std::collections::HashSet<String> = all.iter().filter_map(|r| r["parent"].as_str().map(str::to_owned)).collect();
-        let mut all: Vec<Value> = all
-            .into_iter()
-            .filter(|r| {
-                let id = r["id"].as_str().unwrap_or_default();
-                let top = r["parent"].as_str().is_none_or(str::is_empty);
-                let has_parts = parents.contains(id) || ids.iter().any(|i| i.strip_prefix(id).is_some_and(|rest| rest.starts_with('/')));
-                !top && !(has_parts && street_tiles(&r["bbox"]) > 40e6)
-            })
-            .collect();
+        // The engine says which regions are offered (maps.regions): countries and their parts, not continents.
+        let mut all: Vec<Value> = all.into_iter().filter(|r| r["offered"] == true).collect();
         all.sort_by_key(|r| r["name"].as_str().unwrap_or_default().to_lowercase());
         if has_world {
             let installed: Vec<String> = have["regions"].as_array().into_iter().flatten()
@@ -836,33 +855,10 @@ impl SetupPage {
         let regions = self.state.borrow()["map_regions"].as_array().cloned().unwrap_or_default();
         let mut said: Vec<String> = Vec::new();   // an item's reason is not repeated as the job's
         for it in items {
-            let row = gtk::Box::new(gtk::Orientation::Vertical, 4);
-            row.add_css_class("result");
-            let state = it["state"].as_str().unwrap_or_default();
-            let (done, total) = (it["bytes_done"].as_f64().unwrap_or(0.0), it["bytes_total"].as_f64().unwrap_or(0.0));
-            // A list of facts, each a phrase of its own joined by a dot, never a sentence glued from parts.
-            let mut line = vec![tr!("{} — {}", item_title(it, &regions), state_text(state))];
-            if total > 0.0 {
-                line.push(tr!("{} of {}", gb(done), gb(total)));
-            }
-            if let Some(r) = it["rate_bps"].as_f64().filter(|r| *r > 0.0) {
-                line.push(tr!("{}/s", gb(r)));
-            }
-            if let Some(e) = it["eta_s"].as_f64().filter(|e| *e > 0.0) {
-                line.push(omui::trn!("about {n} minutes left", (e / 60.0).ceil() as i64));
-            }
-            let line = line.join(" · ");
-            row.append(&label(&line, "result-title"));
-            let bar = gtk::ProgressBar::new();
-            bar.set_fraction(if total > 0.0 { (done / total).clamp(0.0, 1.0) } else if state == "done" { 1.0 } else { 0.0 });
-            row.append(&bar);
             if let Some(e) = it["error"]["message"].as_str() {
                 said.push(e.to_owned());
-                let l = label(&engine_says(e), "meta");
-                l.add_css_class("error");
-                row.append(&l);
             }
-            self.job_box.append(&row);
+            self.job_box.append(&item_row(it, &regions));
         }
         let state = job["state"].as_str().unwrap_or_default();
         // What the buttons offer, not the job's every phase (downloading, verifying, unpacking… all offer Pause/Cancel).
@@ -914,9 +910,7 @@ impl SetupPage {
             }
         }
         if let Some(e) = job["error"]["message"].as_str().filter(|e| !said.iter().any(|s| s == e)) {
-            let l = label(&engine_says(e), "meta");
-            l.add_css_class("error");
-            self.job_box.append(&l);
+            self.job_box.append(&error_label(e));
         }
         if elsewhere {
             self.job_box.append(&label(&tr("This download is running in another Lastbook window. Use that window to pause or cancel it."), "meta"));

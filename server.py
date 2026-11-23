@@ -15,20 +15,22 @@ over in-memory streams. The routes the window uses:
   /api/videos, /api/videos/all?q=  the Videos screen's rows, and a search of every video
   /api/shelves, /api/shelf/<id>    browse the whole collection by plain-language shelf
   /api/places?q=              place finder (the world's countries, regions and towns from GeoNames, or a point as LAT,LON)
-  /api/near?lat=&lon=[&to=LAT,LON]  the Map screen's nearest help around a point, or how far another point is from it
+  /api/near?lat=&lon=[&to=LAT,LON]  the Map screen's nearest help around a point (or, where no street map covers it, the
+                              regions that would), or how far another point is from it
   /api/encyclopedias, /api/encyclopedia/random?file=  the encyclopedias with their front pages, and a random article
   /api/library, /api/setup/*
 
 The command line (app/cli.py) calls the helpers here directly (hybrid, places, near, page_texts, transcript).
 Nothing in library-data is written. Caches go to derived/cache.
 """
-import functools, html, io, json, math, os, re, sqlite3, struct, sys, threading, traceback, unicodedata, urllib.parse, zlib
+import contextlib, functools, html, io, json, math, os, re, sqlite3, struct, sys, threading, traceback, unicodedata, urllib.parse, zlib
 from pathlib import Path
 
 import engine.paths as lastbook_paths  # noqa: E402  (data folder and program folder can differ in the packaged app)
 from engine.paths import ro_uri  # noqa: E402
 from engine import saved_pages, map_pois  # noqa: E402
 from engine.setup import api as setup_api  # noqa: E402  (the one module that may download: only when the person asks)
+from engine.setup import maps as setup_maps  # noqa: E402  (the street-level regions setup offers, with their boxes)
 HERE = lastbook_paths.DATA  # holds derived/
 APP = lastbook_paths.APP  # holds content/
 LIB = lastbook_paths.LIB
@@ -851,12 +853,21 @@ MAP_HELP = ('hospital', 'clinic', 'doctors', 'pharmacy', 'fire_station', 'police
 def near_help(at, to=None):
     """The Map screen's answer for a point (lat, lon). With `to`, another point: how far it is, {km, dir}. Without:
     {covered, points}, the nearest of each of MAP_HELP as near() finds them, and none where no installed street-level map
-    covers the point, rather than far-away ones from the map of somewhere else."""
+    covers the point, rather than far-away ones from the map of somewhere else. There it also has `regions`: up to three
+    whose streets setup can add for the point, smallest first, {id, name, bytes, installed} (`bytes` is the file's size
+    once it is installed, else null: a cut's size is known only once it is measured). None for a point out at sea."""
     if to:
         km, d = haversine(*at, *to)
         return {'km': round(km, 2), 'dir': d}
-    on = covered(*at)
-    return {'covered': on, 'points': near(*at, MAP_HELP, 5) if on else []}
+    if covered(*at):
+        return {'covered': True, 'points': near(*at, MAP_HELP, 5)}
+    town = None
+    if WORLD_PLACEDB.exists():
+        with contextlib.closing(sqlite3.connect(ro_uri(WORLD_PLACEDB), uri=True)) as db:
+            town = nearest_town(db, *at)
+    have = {r['id']: r['bytes'] for r in setup_maps.installed(GEO)['regions']}
+    return {'covered': False, 'points': [], 'regions': [{'id': r['id'], 'name': r['name'], 'bytes': have.get(r['id']), 'installed': r['id'] in have}
+                                                        for r in setup_maps.covering(*at, town[1] or '' if town else '')[:3]]}
 
 
 def haversine(la1, lo1, la2, lo2):

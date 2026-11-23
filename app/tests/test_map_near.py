@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The Map screen's nearest help (/api/near in server.py) as the window asks for it, through the bridge: the points around
-a place a street map covers, nothing (and covered false) where none does, the distance to one point, and refusals. And
+a place a street map covers, nothing (and covered false) where none does, with the regions whose streets would cover it,
+the distance to one point, and refusals. And
 the order place search lists places in, when many share a name.
 
   PYTHONPATH=<deps> python3 -B app/tests/test_map_near.py [-v]
@@ -68,7 +69,21 @@ class NearTests(unittest.TestCase):
         self.assertEqual((out['points'][1]['km'], out['points'][1]['dir']), (0.22, 'east'))
 
     def test_no_far_away_points_where_no_street_map_covers(self):
-        self.assertEqual(self.get('/api/near?lat=12.5&lon=34.25'), (200, {'covered': False, 'points': []}))
+        # Instead, the streets that would cover it, from the bundled region list, smallest first. This library has no
+        # place search to name the country, so both boxes that hold the point well inside are offered.
+        self.assertEqual(self.get('/api/near?lat=12.5&lon=34.25'), (200, {'covered': False, 'points': [], 'regions': [
+            {'id': 'ethiopia', 'name': 'Ethiopia', 'bytes': None, 'installed': False}, {'id': 'sudan', 'name': 'Sudan', 'bytes': None, 'installed': False}]}))
+        self.assertEqual(self.get('/api/near?lat=25&lon=-40'), (200, {'covered': False, 'points': [], 'regions': []}))   # the open sea
+
+    def test_the_regions_a_place_is_in_smallest_first(self):
+        names = lambda lat, lon, address: [r['name'] for r in server.setup_maps.covering(lat, lon, address)]
+        # Paris lies in Picardie's and Centre's boxes too, at their edges; the address names its own.
+        self.assertEqual(names(48.8566, 2.3522, 'Île-de-France, France'), ['Ile-de-France', 'France'])
+        self.assertEqual(names(-7.25, 112.75, 'East Java, Indonesia'), ['Java', 'Indonesia (with East Timor)'])
+        # Nepal named: not India's or China's streets, whose boxes hold Kathmandu as well.
+        self.assertEqual(names(27.7, 85.3, 'Bagmati Province, Nepal'), ['Nepal'])
+        self.assertEqual(names(12.5, 34.25, 'Sennar, Sudan'), ['Sudan'])
+        self.assertEqual(names(25.0, -40.0, ''), [])
 
     def test_how_far_a_point_is(self):
         self.assertEqual(self.get(f'/api/near?lat={LAT}&lon={LON}&to={LAT},{LON + 0.002}'), (200, {'km': 0.22, 'dir': 'east'}))

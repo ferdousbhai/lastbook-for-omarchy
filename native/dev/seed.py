@@ -95,13 +95,26 @@ def _world(lat, lon, z):
     return (lon + 180) / 360 * (1 << z), (1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * (1 << z)
 
 
-def _mbtiles(path, name, minzoom, maxzoom, tiles):
+def _mbtiles(path, name, minzoom, maxzoom, tiles, bounds=None):
     db = sqlite3.connect(path)
     db.executescript('CREATE TABLE metadata (name TEXT, value TEXT); CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER, tile_data BLOB);')
-    db.executemany('INSERT INTO metadata VALUES (?,?)', [('name', name), ('format', 'pbf'), ('minzoom', str(minzoom)), ('maxzoom', str(maxzoom))])
+    db.executemany('INSERT INTO metadata VALUES (?,?)', [('name', name), ('format', 'pbf'), ('minzoom', str(minzoom)), ('maxzoom', str(maxzoom))]
+                   + ([('bounds', ','.join(f'{v:.4f}' for v in bounds))] if bounds else []))
     db.executemany('INSERT INTO tiles VALUES (?,?,?,?)', [(z, x, (1 << z) - 1 - y, b) for (z, x, y), b in tiles.items()])   # rows from the south
     db.commit()
     db.close()
+
+
+def street_map(path, name, lat, lon, help_points):
+    """A street-level map around a point, as setup makes one: zooms 12 to 15, its box in `bounds` (where the map
+    opens), and the help points that fall in it."""
+    tiles = {}
+    for z in range(12, 16):
+        cx, cy = map(int, _world(lat, lon, z))
+        for x in range(cx - 2, cx + 3):
+            for y in range(cy - 2, cy + 3):
+                tiles[(z, x, y)] = _tile(z, x, y, help_points)
+    _mbtiles(path, name, 12, 15, tiles, (lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2))
 
 
 def maps(data):
@@ -111,14 +124,7 @@ def maps(data):
     # The world to zoom 8, as setup makes it, where the street map is: a tile drawn thousands of times its size is not.
     cx, cy = map(int, _world(lat, lon, 8))
     _mbtiles(geo / 'world.mbtiles', 'world', 0, 8, {(0, 0, 0): _tile(0, 0, 0), **{(8, x, y): _tile(8, x, y) for x in range(cx - 1, cx + 2) for y in range(cy - 1, cy + 2)}})
-    places = [(kind, label, lat + dy, lon + dx) for kind, label, dy, dx in HELP]
-    tiles = {}
-    for z in range(12, 16):
-        cx, cy = map(int, _world(lat, lon, z))
-        for x in range(cx - 2, cx + 3):
-            for y in range(cy - 2, cy + 3):
-                tiles[(z, x, y)] = _tile(z, x, y, places)
-    _mbtiles(geo / 'regions-testland.mbtiles', 'testland', 12, 15, tiles)
+    street_map(geo / 'regions-testland.mbtiles', 'testland', lat, lon, [(kind, label, lat + dy, lon + dx) for kind, label, dy, dx in HELP])
     con = sqlite3.connect(geo / 'world-places.sqlite')
     # user_version 2 as engine/setup/maps.py marks the place search it makes now (PLACES_VERSION): setup then shows it as here.
     con.executescript('''PRAGMA user_version = 2;

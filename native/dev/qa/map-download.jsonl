@@ -1,0 +1,47 @@
+# The Map screen's own download of the streets for a place no street map covers: a stand-in engine
+# (map-download.engine) makes the download up, so nothing reaches the network. A full disk is said under the buttons;
+# the download shows how far it has got, pauses and resumes; a lost network is said, with Try again; and once it is
+# done the map has the place's streets and the panel its help points, with nothing more pressed.
+# native/dev/qa.sh native/dev/qa/map-download.jsonl [shots-dir]
+
+{"do":"wait","role":"window","name":"Guides — Lastbook","timeout_ms":30000}
+{"do":"resize","width":1000,"height":700}
+{"do":"wait","size":[1000,700]}
+{"do":"select","role":"list-item","name":"Map"}
+{"do":"wait","role":"window","name":"Map — Lastbook"}
+{"do":"type","role":"search-box","name":"Find a town, or LAT,LON","text":"Testville"}
+{"do":"key","keys":"Return"}
+{"do":"focus","role":"list-item","name":"Testville"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"button","name":"Download streets for Sudan","visible":true}
+
+# The first press finds the disk too full: the engine's words, under the buttons, which stay.
+{"do":"click","role":"button","name":"Download streets for Sudan"}
+{"do":"wait","role":"label","name":"This needs 3.1 GB free on that disk, and it has 1.2 GB. Free some space or choose another disk.","visible":true}
+{"do":"shot","path":"map-download-no-space.png"}
+
+# The next one runs: how far it has got, and a way to stop it.
+{"do":"click","role":"button","name":"Download streets for Sudan"}
+{"do":"wait","role":"button","name":"Pause","visible":true}
+{"do":"wait","role":"label","name":"Streets for Sudan — Downloading · 40 MB of 120 MB · 2 MB/s · about 1 minute left","visible":true}
+{"do":"shot","path":"map-downloading.png"}
+{"do":"resize","width":560,"height":700}
+{"do":"wait","size":[560,700]}
+{"do":"shot","path":"narrow-map-downloading.png"}
+{"do":"resize","width":1000,"height":700}
+{"do":"wait","size":[1000,700]}
+{"do":"click","role":"button","name":"Pause"}
+{"do":"wait","role":"button","name":"Resume","visible":true}
+
+# Resumed, it loses the network: the reason, and Try again.
+{"do":"click","role":"button","name":"Resume"}
+{"do":"wait","role":"button","name":"Try again","visible":true,"timeout_ms":15000}
+{"do":"wait","role":"label","name":"Lastbook could not reach the map server to find the newest map. Try again later.","visible":true}
+{"do":"shot","path":"map-download-failed.png"}
+
+# Tried again, it is done: the help around Testville, from its new street map.
+{"do":"click","role":"button","name":"Try again"}
+{"do":"wait","role":"list-item","name":"RS Testville","visible":true,"timeout_ms":20000}
+{"do":"wait","role":"button","name":"Download streets for Sudan","visible":false}
+{"do":"shot","path":"map-downloaded.png"}
+{"do":"quit"}

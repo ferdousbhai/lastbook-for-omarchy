@@ -25,8 +25,10 @@ import io
 import json
 import math
 import os
+import re
 import sqlite3
 import time
+import unicodedata
 import zipfile
 import zlib
 from collections import OrderedDict
@@ -57,15 +59,62 @@ _regions = None
 
 
 def regions():
-    """[{id, name, parent, bbox: [w, s, e, n]}] as bundled; [] if the list is missing. A region across the antimeridian
-    has w > e and also `bboxes`, its real box each side of ±180 (region_boxes)."""
+    """[{id, name, parent, bbox: [w, s, e, n], offered}] as bundled; [] if the list is missing. A region across the
+    antimeridian has w > e and also `bboxes`, its real box each side of ±180 (region_boxes). `offered`: whether setup
+    offers its streets (_offered)."""
     global _regions
     if _regions is None:
         try:
             _regions = json.loads(regions_file().read_text(encoding='utf-8'))
         except (OSError, ValueError):
             _regions = []
+        parents = {r['parent'] for r in _regions if r.get('parent')}
+        for r in _regions:
+            r['offered'] = _offered(r, parents)
     return _regions
+
+
+def street_tiles(r):
+    """About how many street-level (zoom 15) map tiles a region's boxes hold: its size on the map, before it is cut."""
+    row = lambda lat: (1 - math.asinh(math.tan(math.radians(max(-85.05, min(85.05, lat))))) / math.pi) / 2
+    return sum((e - w) / 360 * (row(s) - row(n)) * 4 ** 15 for w, s, e, n in region_boxes(r))
+
+
+def _offered(r, parents):
+    """Offered are countries and their parts. Continents, and countries so large that street level runs to tens of GB
+    (Russia, the US, Canada, Australia), are left out: their parts are offered instead."""
+    has_parts = r['id'] in parents or any(o['id'].startswith(r['id'] + '/') for o in _regions)
+    return bool(r.get('parent')) and not (has_parts and street_tiles(r) > 40e6)
+
+
+def _words(t):
+    """A name as compared: lower case, without accents or punctuation, a space each side."""
+    t = ''.join(c for c in unicodedata.normalize('NFKD', t.lower()) if not unicodedata.combining(c))
+    return ' ' + ' '.join(re.sub(r'\W+', ' ', t).split()) + ' '
+
+
+def _country(r):
+    """The country a region is part of: the region under a continent that holds it (a US state is its own, under `us`)."""
+    while (up := region(r['parent'])) and up.get('parent'):
+        r = up
+    return r['id'].split('/')[0]
+
+
+def _depth(r, lat, lon):
+    """How far from its middle the point lies in the region's box: 0 at the middle, 1 at the edge (over 1 outside)."""
+    return min(max(abs(lon - (w + e) / 2) / max((e - w) / 2, 1e-9), abs(lat - (s + n) / 2) / max((n - s) / 2, 1e-9))
+               for w, s, e, n in region_boxes(r))
+
+
+def covering(lat, lon, address=''):
+    """The offered regions whose streets would put the point on the map, smallest first. Only boxes are known, and
+    neighbours' boxes overlap, so a region `address` (the nearest town's "region, country") does not name is left out
+    where the point lies near its box's edge, or in another country than the one named: Paris is in Picardie's box too."""
+    inside = [r for r in regions() if r['offered'] and _depth(r, lat, lon) <= 1]
+    named = {r['id'] for r in inside if _words(r['name'].split(' (')[0]) in _words(address)}
+    countries = {_country(r) for r in inside if r['id'] in named}
+    keep = [r for r in inside if r['id'] in named or (_depth(r, lat, lon) <= 0.85 and (not countries or _country(r) in countries))]
+    return sorted(keep, key=street_tiles)
 
 
 def region(rid):

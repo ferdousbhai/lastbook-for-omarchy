@@ -30,8 +30,24 @@ the files on the person's computer, when the person asks for them.
   kind around the place, under one heading per mark: hospitals, clinics and doctors together as Medical help, since in
   much of the world a small place has only a clinic or a doctor. A row centres the map on its point. The window asks the
   engine (`/api/near?lat=&lon=`, `near_help()` in `server.py`), the same `near()` as `--nearby` (below), and measures no
-  distance itself. Where no street-level map covers the place it lists nothing and says so, with a button to Library and
-  downloads, rather than showing points from a map of somewhere else.
+  distance itself. Where no street-level map covers the place it lists no points from a map of somewhere else: it names
+  the regions whose streets would cover the place (up to three, smallest first, which the engine picks from
+  `map-regions.json`: `covering()` in `engine/setup/maps.py`) with a button to download each. A button starts the same
+  setup job Library and downloads would (`/api/setup/start` with that region; the world map too if it is missing),
+  nothing reaches the network before it is pressed, and the panel shows the job as it runs (`item_row` in `setup.rs`):
+  how far it has got, Pause and Resume, a failure in the engine's words with Try again, a disk too full, or a download
+  another window runs. Once it is done the map opens the new file and the panel lists the help around the place.
+  Library and downloads stays as a quieter button for other choices. A point in no region (out at sea) is said to have
+  nothing to download, and the person is asked to find a town.
+- **Which regions cover a place.** Only each region's box is known, and neighbours' boxes overlap (Paris lies in
+  Picardie's and Centre's too), so a region is offered where the point lies well inside its box (no nearer its edge than
+  15% of the way from the middle), or where the nearest town's region and country in place search name it; once a
+  country is named, regions of other countries are left out (Kathmandu: Nepal, not India or China).
+- **No place, no pin.** Asked for the help around the map centre while the map shows more than about 50 km across (below
+  zoom 11, `PLACE_ZOOM`), the panel pins nothing: it asks for a town, with the keyboard in the find field, and lists the
+  street-level maps installed, each a row that shows its area.
+- **Where the map opens.** Shown for the first time with no place asked for, the map shows the street-level map made
+  last (its `bounds`), not the whole world. Asked to show a point (`Route::MapAt`, `map:LAT,LON`), it opens there.
 - **Place search** asks the engine (`/api/places`, `places()` in `server.py`), which searches `world-places.sqlite`, or
   takes a point as `LAT,LON` in decimal degrees. Each place says how it `match`es the query: `exact` (its name, maybe
   with its region or country), `alternate name` (one of the other names GeoNames knows it by), `partial` (a word left
@@ -104,7 +120,8 @@ engine needs no protocol buffer library.
 - `app.tests.test_maps` covers the PMTiles addressing and directory parsing behind the cut, that an upgrade keeps the
   person's map files, and the help points read back out of a made-up street map (across the antimeridian, at 60 N, and
   from damaged tiles); `app.tests.test_cli` asks `place` and `place --nearby` of one, by name and by coordinates, and
-  `app.tests.test_map_near` asks `/api/near` through the bridge. `native/dev/qa/map.jsonl` drives the Map screen over the
-  made-up town of `native/dev/seed.py` (Mapton, with a street map) and one without (Testville). `bin/test` runs them with
-  the window's tests.
+  `app.tests.test_map_near` asks `/api/near` through the bridge, and the regions offered for a point. `native/dev/qa/map.jsonl`
+  drives the Map screen over the made-up town of `native/dev/seed.py` (Mapton, with a street map) and one without
+  (Testville); `map-download.jsonl` downloads Testville's streets from the panel over a stand-in engine that makes the
+  download up. `bin/test` runs them with the window's tests.
 - Nothing a contributor adds may make the app open a connection outside setup's downloader.
