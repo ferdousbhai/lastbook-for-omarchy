@@ -6,6 +6,7 @@ Lastbook for Omarchy v1.4.1 makes the map offer the streets it lacks, and rewrit
 - The Guides screen's first section is "In an emergency", its guides are listed most urgent first, and four guides have clearer titles.
 - Setup no longer says the Medium and All libraries include California or US maps, which this version does not install.
 - Error messages are plainer, `lastbook read --pages` with too long a range says so, and the help lists `index --pause`.
+- Lighter install: Beautiful Soup is no longer a dependency, and about 800 lines of duplicated or unused code are gone.
 
 Install or update (x86_64 and aarch64, including Apple silicon through Asahi):
 
