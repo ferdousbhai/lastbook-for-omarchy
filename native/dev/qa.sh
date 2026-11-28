@@ -65,6 +65,11 @@ PYTHONPATH=$deps python3 -B "$here/seed.py" "$root/library" > "$root/seed.log" 2
 # listens on that port on 127.0.0.1 alone, where omui's QA sends key presses as broadway's web page would.
 display=$(( 100 + $$ % 800 ))
 port=$(( 8080 + display ))
+# Past a port something else on this computer listens on: broadwayd would start without it, and no key would arrive.
+while (exec 3<> "/dev/tcp/127.0.0.1/$port") 2>/dev/null; do
+  display=$(( 100 + (display - 99) % 800 ))
+  port=$(( 8080 + display ))
+done
 XDG_RUNTIME_DIR=$root/runtime gtk4-broadwayd --address 127.0.0.1 --port "$port" ":$display" \
   > "$root/broadwayd.log" 2>&1 &
 broadway_pid=$!

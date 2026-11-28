@@ -831,7 +831,8 @@ class Jobs(Base):
                     break
                 time.sleep(0.05)
             else:
-                self.fail('the child never started downloading: ' + child.stderr.read1(4000).decode())
+                child.kill()                  # first: a living child that wrote nothing would be waited on for its ten minutes
+                self.fail('the child never started downloading: ' + child.stderr.read().decode()[:4000])
         finally:
             child.kill()                      # SIGKILL
             child.wait()
@@ -866,7 +867,8 @@ class Jobs(Base):
                     break
                 time.sleep(0.02)
             else:
-                self.fail('the child never unpacked: ' + child.stderr.read1(4000).decode())
+                child.kill()                  # first: a living child that wrote nothing would be waited on for its ten minutes
+                self.fail('the child never unpacked: ' + child.stderr.read().decode()[:4000])
         finally:
             child.kill()                      # SIGKILL
             child.wait()

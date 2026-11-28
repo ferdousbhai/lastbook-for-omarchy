@@ -11,11 +11,21 @@ command -v cargo >/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
 cargo test --locked --manifest-path native/Cargo.toml
 # Feature `qa` only here: release builds leave it off.
 cargo build --locked --features qa --manifest-path native/Cargo.toml
+# Side by side, as many as there are processors: each has a library, home folder, display and port of its own, and most
+# of a script's time is the window's. Reported in order once all have ended; each command and its answer only for a
+# script that failed.
+qa=$(mktemp -d)
+trap 'rm -rf "${qa:?}"' EXIT
 for script in native/dev/qa/*.jsonl; do
-  # Each command and its answer only when the run fails.
-  out=$(native/dev/qa.sh "$script" 2>&1) || { printf '%s\n' "$out" >&2; exit 1; }
-  printf '%s\n' "${out##*$'\n'}"
+  while (( $(jobs -rp | wc -l) >= $(nproc) )); do wait -n || true; done
+  { native/dev/qa.sh "$script" > "$qa/${script##*/}" 2>&1 || touch "$qa/${script##*/}.failed"; } &
 done
+wait
+for script in native/dev/qa/*.jsonl; do
+  out=$(< "$qa/${script##*/}")
+  if [[ -e $qa/${script##*/}.failed ]]; then printf '%s\n' "$out" >&2; failed=1; else printf '%s\n' "${out##*$'\n'}"; fi
+done
+[[ -z ${failed:-} ]] || exit 1
 # Every app/tests/test_*.py, as the module app.tests.<name>.
 tests=(app/tests/test_*.py)
 tests=("${tests[@]%.py}")

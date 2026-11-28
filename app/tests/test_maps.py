@@ -57,7 +57,8 @@ class MapsTests(unittest.TestCase):
         for box, most in (((3, 5, 9, 11), 4096), ((60, 60, 70, 70), 4096), ((0, 63, 127, 64), 4096), ((17, 99, 17, 99), 4096),
                           ((0, 0, 127, 127), 4096), ((5, 30, 120, 90), 16), ((63, 0, 64, 127), 8)):
             x0, y0, x1, y1 = box
-            want = {maps.zxy_to_id(z, x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)}
+            inside = {(x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)}      # once: made again for each id, it took a minute
+            want = {maps.zxy_to_id(z, x, y) for x, y in inside}
             runs = maps.cover(*box, z, most=most)
             self.assertEqual(runs, sorted(runs))
             self.assertTrue(all(a[1] <= b[0] for a, b in zip(runs, runs[1:])), box)       # no id twice
@@ -67,7 +68,7 @@ class MapsTests(unittest.TestCase):
                 (exact if whole else got).update(ids)
             self.assertLessEqual(exact, want, box)                                          # a whole run holds nothing else
             self.assertLessEqual(want, exact | got, box)                                    # and nothing wanted is missed
-            self.assertEqual({t for t in exact | got if maps.id_to_zxy(t)[1:] in {(x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)}}, want)
+            self.assertEqual({t for t in exact | got if maps.id_to_zxy(t)[1:] in inside}, want)
             if most == 4096:
                 self.assertEqual(exact, want, box)
             else:
