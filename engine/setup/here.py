@@ -1,8 +1,9 @@
 """Where this computer seems to be, from what Omarchy already knows, and the street-level map to offer for it.
 
 Nothing here reaches the network, and nothing is measured: it reads the weather location the person set in Omarchy
-(~/.local/state/omarchy/settings/weather.json: exact) or, without one, the system's time zone (/etc/localtime: an area,
-often several regions wide), and whether the computer has a route out (the kernel's routing table: nothing is sent).
+(~/.local/state/omarchy/settings/weather.json: exact), else the town they gave Lastbook when it asked (setup.json's
+`place`, kept until the time zone changes), else the system's time zone (/etc/localtime: an area, often several regions
+wide), and whether the computer has a route out (the kernel's routing table: nothing is sent).
 
 offer() is what setup, the window and the command line show: None, or the place and the regions whose streets would cover
 it, when no installed street-level map does, the computer is online and the person has not switched the offer off
@@ -60,6 +61,20 @@ def zone_place(localtime=LOCALTIME, zoneinfo=ZONEINFO):
     except (OSError, ValueError, IndexError):
         pass
     return None
+
+
+def own_place(settings_dir, zone=None):
+    """{name, detail, lat, lon} of the town the person gave Lastbook (`detail`: its "region, country" in place search) (setup.json's `place`), for as long as the computer's time
+    zone is the one it had then: a new time zone means they have travelled, and the town is forgotten."""
+    s = download.read_json(Path(settings_dir) / 'setup.json', {})
+    p = s.get('place') if isinstance(s, dict) else None
+    try:
+        if p['zone'] != ((zone or zone_place() or {}).get('zone')):
+            return None
+        lat, lon = float(p['lat']), float(p['lon'])
+        return {'name': str(p['name'])[:80], 'detail': str(p.get('detail') or '')[:120], 'lat': lat, 'lon': lon} if -90 <= lat <= 90 and -180 <= lon <= 180 else None
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def online(routes=ROUTES):
@@ -126,7 +141,7 @@ def asking(settings_dir):
 
 
 def offer(settings_dir, geo=None, home=None, is_online=None, zone=None):
-    """None, or {place, source: 'weather location' or 'time zone', exact, area, pick, regions: [{id, name}], text} for a
+    """None, or {place, source: 'weather location', 'town you gave' or 'time zone', exact, area, pick, regions: [{id, name}], text} for a
     computer that is online, somewhere no installed street-level map covers. `geo`: the open library's derived/geo
     (None in first-run setup, where nothing is installed). `exact`: the place is a point, so the regions are the ones
     that cover it, and `pick` the one of them to choose for the person when that is sure; a time zone gives the nearest few of its country, for the person to choose from. `text`: the
@@ -136,32 +151,37 @@ def offer(settings_dir, geo=None, home=None, is_online=None, zone=None):
     if not asking(settings_dir) or not is_online:
         return None
     have = {r['id'] for r in maps.installed(geo)['regions']} if geo else set()
+    source = 'weather location'
     at = weather_place(home)
+    if not at and (at := own_place(settings_dir, zone)):
+        source = 'town you gave'
     if at:
         if geo:
             from engine import map_pois
             with map_pois.Regions(geo) as installed:
                 if installed.covers(at['lat'], at['lon']):
                     return None
-        address = _address(geo, at['lat'], at['lon']) if geo else ''
+        address = at.get('detail') or (_address(geo, at['lat'], at['lon']) if geo else '')
         regions = [r for r in maps.covering(at['lat'], at['lon'], address) if r['id'] not in have][:3]
-        place, source, area = at['name'], 'weather location', ''
+        place, area = at['name'], ''
         # The one to pick for them: the region the nearest town's address names, or the only one there is.
         named = [r for r in regions if maps._words(r['name'].split(' (')[0]) in maps._words(address)] if address else []
         pick = (named or regions)[0]['id'] if named or len(regions) == 1 else None
     else:
         zone = zone or zone_place()
+        source = 'time zone'
         if not zone:
             return None
         around = [r for _, r in _candidates(zone)]
         if any(r['id'] in have for r in around):
             return None     # a map of that part of the world is here: a time zone cannot say more
         regions = around[:NEAREST]
-        place, source, area, pick = zone['name'], 'time zone', zone['area'], None
+        place, area, pick = zone['name'], zone['area'], None
     if not regions:
         return None
     names = ', '.join(r['name'] for r in regions)
-    text = (f"No street-level map is installed for where this computer seems to be ({place}, from Omarchy's {source}"
+    said = {'weather location': "from Omarchy's weather location", 'time zone': "from Omarchy's time zone", 'town you gave': 'the town its owner gave'}[source]
+    text = (f"No street-level map is installed for where this computer seems to be ({place}, {said}"
             + (f': {area}' if area else '') + f"), so nearby help cannot be looked up there. The owner can add one in Lastbook's "
             f"Library and downloads (lastbook open manage:): {names}. Tell them once. They can switch this note off there.")
     return {'place': place, 'source': source, 'exact': bool(at), 'area': area, 'pick': pick,

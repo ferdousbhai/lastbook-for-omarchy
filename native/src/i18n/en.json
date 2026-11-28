@@ -368,5 +368,9 @@
   "Streets, buildings and help points (hospitals, pharmacies, water, shelters) for the areas you pick; a small country is about 0.1–0.5 GB, a large one several GB. Made on this computer from OpenStreetMap. Lastbook reads where you are from Omarchy's weather location or time zone, and sends nothing to find you.": "Streets, buildings and help points (hospitals, pharmacies, water, shelters) for the areas you pick; a small country is about 0.1–0.5 GB, a large one several GB. Made on this computer from OpenStreetMap. Lastbook reads where you are from Omarchy's weather location or time zone, and sends nothing to find you.",
   "_Not now": "_Not now",
   "_Don't ask again": "_Don't ask again",
-  "_Choose a map": "_Choose a map"
+  "_Download": "_Download",
+  "_Download {}": "_Download {}",
+  "No street-level map on this computer covers {}. Nearest help needs one.": "No street-level map on this computer covers {}. Nearest help needs one.",
+  "Your town, for the right map": "Your town, for the right map",
+  "No street map yet for {}.": "No street map yet for {}."
 }

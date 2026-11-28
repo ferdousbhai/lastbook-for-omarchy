@@ -44,7 +44,8 @@ To build the package from a checkout instead (needs Rust): `cd packaging/arch &&
 - **An offline map.** OpenStreetMap drawn in your theme's colours. Find any country, region, or town of 500 people or
   more; where you have street-level detail, *Nearest help* lists the closest hospitals, clinics, pharmacies, police,
   fire stations and drinking water. You pick the areas. When no street map covers where the computer is, Lastbook
-  offers one as it opens (it reads Omarchy's weather location or time zone, and sends nothing to find you).
+  offers one as it opens, one press to download (it reads Omarchy's weather location or time zone, or asks your
+  town, and sends nothing to find you).
   [docs/MAPS.md](docs/MAPS.md) has the details.
 - **An Omarchy app.** One native GTK 4 window that follows your theme and language, driven from the keyboard
   ([Keyboard](#keyboard)).
@@ -119,7 +120,7 @@ setup (below).
 - **Checked files.** Every download is checked against the SHA-256 in the manifest before it is used. Zips are checked
   for unsafe paths, links and sizes before anything is written.
 - **Where you are, without asking anyone.** To offer a street map you lack, Lastbook reads the weather location you
-  set in Omarchy, or else the system's time zone, and the kernel's routing table to see whether you are online
+  set in Omarchy, or else the town you gave it or the system's time zone, and the kernel's routing table to see whether you are online
   (`engine/setup/here.py`). Nothing is sent, nothing is downloaded until you start it, and the switch under Map in
   Library and downloads turns the offer off.
 - **Nothing else.** The window blocks all web loads, there is no telemetry, no account, and nothing runs on a timer or at

@@ -322,6 +322,22 @@ class Setup:
             print('setup: no map offer:', type(e).__name__, flush=True)
             return None
 
+    def towns(self):
+        """Whether the open library has place search, so the window can ask for a town and find it."""
+        return bool(self.current and maps.places_current(self.current / 'derived' / 'geo' / maps.PLACES_FILE))
+
+    def set_place(self, name, lat, lon, detail=''):
+        """The town the person says they are in, kept with the time zone the computer has now (here.own_place)."""
+        try:
+            place = {'name': str(name)[:80], 'detail': str(detail or '')[:120], 'lat': float(lat), 'lon': float(lon), 'zone': (here.zone_place() or {}).get('zone')}
+        except (TypeError, ValueError):
+            return {'error': 'That is not a place.', 'code': 'bad_place'}
+        with _SETTINGS:
+            s = self._settings()
+            s['place'] = place
+            self._save_settings(s)
+        return {'map_offer': here.asking(self.settings_dir), 'here': self.here(), 'towns': self.towns()}
+
     def set_offer(self, ask):
         """The person's switch: whether Lastbook offers the map of where the computer is (the window and the commands)."""
         with _SETTINGS:
@@ -1077,7 +1093,7 @@ def configure(**kw):
 ROUTES = {
     ('GET', 'state'): lambda s, b: s.state(),
     ('GET', 'job'): lambda s, b: s.public_job(),
-    ('GET', 'here'): lambda s, b: {'here': s.here(), 'map_offer': here.asking(s.settings_dir)},
+    ('GET', 'here'): lambda s, b: {'here': s.here(), 'map_offer': here.asking(s.settings_dir), 'towns': s.towns()},
     ('POST', 'check'): lambda s, b: s.check(),
     ('POST', 'start'): lambda s, b: s.start(b.get('pack'), b.get('folder'), repair=bool(b.get('repair')), world=bool(b.get('world')), regions=[x for x in (b.get('regions') or []) if isinstance(x, str)][:50]),
     ('POST', 'pause'): lambda s, b: s.pause(),
@@ -1086,6 +1102,7 @@ ROUTES = {
     ('POST', 'retry'): lambda s, b: s.retry(),
     ('POST', 'use'): lambda s, b: s.use(b.get('path')),
     ('POST', 'finish'): lambda s, b: s.finish(),
+    ('POST', 'place'): lambda s, b: s.set_place(b.get('name'), b.get('lat'), b.get('lon'), b.get('detail')),
     ('POST', 'offer'): lambda s, b: s.set_offer(b.get('ask') is not False),
 }
 

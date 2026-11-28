@@ -90,17 +90,23 @@ Credits: map data © OpenStreetMap contributors (ODbL), tiles by Protomaps; plac
 When the computer is online, somewhere no installed street-level map covers, Lastbook offers one
 (`engine/setup/here.py`). It finds out without sending anything:
 
-- **Where.** The weather location set in Omarchy (`~/.local/state/omarchy/settings/weather.json`, when it has
-  coordinates) is exact: the regions offered are those that cover it (`maps.covering`, told apart by the nearest
-  town's address), and `pick` names the one to choose for the person when that is sure. Without it, the system's time
-  zone (`/etc/localtime`, with `zone1970.tab` for its main city) is only an area: up to six regions around that city
-  are offered to choose from, and nothing is offered once a street map within about 400 km of the city is installed,
-  since a time zone cannot say it is the wrong one. No time zone (UTC), no offer.
+- **Where.** In this order:
+  - The weather location set in Omarchy (`~/.local/state/omarchy/settings/weather.json`, when it has coordinates).
+  - The town the person gave Lastbook when it asked (`place` in the app's `setup.json`), kept until the computer's
+    time zone changes, which is taken to mean they have travelled.
+  - The system's time zone (`/etc/localtime`, with `zone1970.tab` for its main city). No time zone (UTC), no offer.
+
+  The first two are exact: the regions offered are those that cover the point (`maps.covering`, told apart by the
+  town's region and country), and `pick` names the one to choose for the person when that is sure. A time zone is only
+  an area: up to six regions around its city are offered to choose from, and nothing is offered once a street map
+  within about 400 km of the city is installed, since a time zone cannot say it is the wrong one.
 - **Online.** A default route in the kernel's routing table (`/proc/net/route`, `/proc/net/ipv6_route`).
 - **Who is told.** First-run setup and Library and downloads list the regions under Map, one press each to pick. The
-  library's window asks in a dialog each time it opens (Not now, Don't ask again, Choose a map, which shows Library
-  and downloads). `lastbook place` and `lastbook status` carry the same as `map_offer`, a sentence for the agent to
-  pass on. Nothing is downloaded until the person starts it in the window.
+  library's window asks in a dialog each time it opens: Not now, Don't ask again, or Download, which starts the
+  region's streets (as the Map screen's own button does) and shows Library and downloads for the progress. Several
+  regions are listed in the dialog, one chosen already. Where only the time zone is known and the library has place
+  search, the dialog also takes the person's town, found offline, which makes the offer exact. `lastbook place` and `lastbook status` carry the same as `map_offer`, a sentence for the agent to
+  pass on. Nothing is downloaded until the person presses Download.
 - **The switch.** "Offer the street map of where this computer is", under Map in Library and downloads (and the
   dialog's Don't ask again), is `map_offer` in the app's `setup.json`; off, neither the window nor the commands say
   anything. `LASTBOOK_MAP_OFFER=0` does the same for one run.
@@ -141,6 +147,7 @@ engine needs no protocol buffer library.
   from damaged tiles); `app.tests.test_cli` asks `place` and `place --nearby` of one, by name and by coordinates, and
   `app.tests.test_map_near` asks `/api/near` through the bridge, and the regions offered for a point. `native/dev/qa/map.jsonl`
   drives the Map screen over the made-up town of `native/dev/seed.py` (Mapton, with a street map) and one without
-  (Testville); `map-download.jsonl` downloads Testville's streets from the panel over a stand-in engine that makes the
+  (Testville); `offer.jsonl` and `offer-town.jsonl` drive the map offer's dialog from a weather location and from a time zone;
+  `map-download.jsonl` downloads Testville's streets from the panel over a stand-in engine that makes the
   download up. `bin/test` runs them with the window's tests.
 - Nothing a contributor adds may make the app open a connection outside setup's downloader.

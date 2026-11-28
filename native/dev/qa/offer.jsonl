@@ -1,25 +1,21 @@
 # The map offer: the computer's weather location in Omarchy (Testville, set by the stand-in engine offer.engine) has no
-# street map, so the window asks as it opens. "Choose a map" shows Library and downloads with the regions to pick from and
-# nothing started; the switch there turns the offer off, and its suggestion goes.
+# street map, so the window asks as it opens. Two regions' boxes hold Testville, so the dialog lists both; one is
+# chosen and one press downloads it (the stand-in makes the download up), shown in Library and downloads. The switch
+# there turns the offer off, and its suggestion goes.
 # native/dev/qa.sh native/dev/qa/offer.jsonl [shots-dir]
 
 {"do":"wait","role":"window","name":"Guides — Lastbook","timeout_ms":30000}
 {"do":"wait","dialog":"Add a street map for Testville?"}
+{"do":"wait","role":"radio","name":"Ethiopia","checked":true}
+{"do":"click","role":"radio","name":"Sudan"}
+{"do":"wait","role":"radio","name":"Sudan","checked":true}
 {"do":"shot","path":"offer.png"}
-{"do":"click","role":"button","name":"Choose a map"}
+{"do":"click","role":"button","name":"Download"}
 {"do":"wait","dialog":null}
 {"do":"wait","role":"window","name":"Library and downloads — Lastbook"}
-{"do":"wait","role":"label","name":"No street map yet for Testville, your weather location in Omarchy.","visible":true}
-# Two regions' boxes hold Testville and its address names neither, so none is picked for the person: one press picks.
-{"do":"wait","role":"button","name":"Add Ethiopia","visible":true}
-{"do":"click","role":"button","name":"Add Sudan"}
-{"do":"wait","role":"button","name":"Sudan ✕","visible":true}
-{"do":"wait","role":"checkbox","name":"Offer the street map of where this computer is","checked":true}
-{"do":"shot","path":"offer-chosen.png"}
-
-# Switched off: the suggestion goes, and the choice already made stays.
-{"do":"click","role":"checkbox","name":"Offer the street map of where this computer is"}
-{"do":"wait","role":"checkbox","name":"Offer the street map of where this computer is","checked":false}
-{"do":"wait","role":"label","name":"No street map yet for Testville, your weather location in Omarchy.","visible":false}
-{"do":"wait","role":"button","name":"Sudan ✕","visible":true}
+{"do":"wait","role":"label","name":"Streets for Sudan — Downloading · 40 MB of 120 MB · 2 MB/s · about 1 minute left","visible":true}
+{"do":"wait","role":"button","name":"Pause","visible":true}
+{"do":"shot","path":"offer-downloading.png"}
+{"do":"click","role":"button","name":"Pause"}
+{"do":"wait","role":"button","name":"Resume","visible":true}
 {"do":"quit"}

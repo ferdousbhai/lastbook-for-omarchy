@@ -1,0 +1,23 @@
+# The map offer from the time zone alone (Khartoum's, set by the stand-in engine offer-town.engine): an area, so the
+# dialog lists the regions around its city and asks for the town. A town that is not in place search is said; one
+# that is makes the offer exact, and one press downloads its streets (the stand-in makes the download up).
+# native/dev/qa.sh native/dev/qa/offer-town.jsonl [shots-dir]
+
+{"do":"wait","role":"window","name":"Guides — Lastbook","timeout_ms":30000}
+{"do":"wait","dialog":"Add a street map for Khartoum?"}
+{"do":"wait","role":"radio","name":"Sudan","checked":true}
+{"do":"shot","path":"offer-zone.png"}
+{"do":"type","role":"text-box","name":"Your town, for the right map","text":"Nowhereton"}
+{"do":"key","keys":"Return"}
+{"do":"wait","role":"label","name":"No place by that name.","visible":true}
+{"do":"type","role":"text-box","name":"Your town, for the right map","text":"Testville"}
+{"do":"key","keys":"Return"}
+{"do":"wait","dialog":"Add a street map for Testville?"}
+{"do":"wait","role":"label","name":"No place by that name.","visible":false}
+{"do":"click","role":"radio","name":"Sudan"}
+{"do":"shot","path":"offer-town.png"}
+{"do":"click","role":"button","name":"Download"}
+{"do":"wait","dialog":null}
+{"do":"wait","role":"window","name":"Library and downloads — Lastbook"}
+{"do":"wait","role":"label","name":"Streets for Sudan — Downloading · 40 MB of 120 MB · 2 MB/s · about 1 minute left","visible":true}
+{"do":"quit"}

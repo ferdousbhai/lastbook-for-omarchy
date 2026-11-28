@@ -639,10 +639,10 @@ impl SetupPage {
         // Where the computer seems to be and has no streets (engine/setup/here.py): its regions, one press each.
         if let Some(here) = st["here"].as_object() {
             let place = here.get("place").and_then(Value::as_str).unwrap_or_default();
-            self.body.append(&label(&if here.get("exact") == Some(&json!(true)) {
-                tr!("No street map yet for {}, your weather location in Omarchy.", place)
-            } else {
-                tr!("No street map yet near {}, the city of your time zone.", place)
+            self.body.append(&label(&match here.get("source").and_then(Value::as_str) {
+                Some("weather location") => tr!("No street map yet for {}, your weather location in Omarchy.", place),
+                Some("time zone") => tr!("No street map yet near {}, the city of your time zone.", place),
+                _ => tr!("No street map yet for {}.", place),
             }, "meta"));
             let offered = gtk::FlowBox::new();
             offered.set_selection_mode(gtk::SelectionMode::None);
@@ -703,46 +703,133 @@ impl SetupPage {
     }
 
     /// As the library's window opens: where the computer seems to be has no street-level map, it is online and the
-    /// person has not switched the offer off (engine/setup/here.py), so they are asked. `show` brings Library and
-    /// downloads on screen, with the region already picked where the engine is sure of it (`pick`); nothing is downloaded until they
-    /// start it there.
+    /// person has not switched the offer off (engine/setup/here.py), so they are asked, and one press downloads it.
+    /// One region: the button names it. Several (a time zone, or boxes that overlap): they are listed in the dialog,
+    /// the engine's pick or the first one chosen already. Where only the time zone is known and the library has place
+    /// search, a field takes their town, which makes the offer exact and is remembered. `show` brings Library and
+    /// downloads on screen, where the download shows how far it has got and can be paused.
     pub fn offer_map(self: &Rc<Self>, show: impl Fn() + 'static) {
         let (engine, me) = (self.engine.clone(), Rc::downgrade(self));
         glib::spawn_future_local(async move {
             let Ok(v) = engine.get("/api/setup/here").await else { return };
             let Some(me) = me.upgrade() else { return };
-            let here = v["here"].clone();
-            let Some(place) = here["place"].as_str().map(str::to_owned) else { return };
-            let exact = here["exact"] == json!(true);
+            if !v["here"]["place"].is_string() {
+                return;
+            }
+            let here = Rc::new(RefCell::new(v["here"].clone()));
+            let chosen = Rc::new(RefCell::new(String::new()));
             let dialog = omui::Dialog::new(Some(""), Some(""));
-            dialog.bind(move |d| {
-                d.set_heading(&tr!("Add a street map for {}?", place));
-                d.set_body(&if exact {
-                    tr!("No street-level map on this computer covers {}, your weather location in Omarchy. Nearest help needs one.", place)
-                } else {
-                    tr!("No street-level map on this computer is near {}, the city of your time zone. Nearest help needs one.", place)
-                });
-            });
-            for id in ["later", "never", "choose"] {
+            for id in ["later", "never", "download"] {
                 dialog.add_response(id, "");
             }
             dialog.set_response_translated("later", "_Not now");
             dialog.set_response_translated("never", "_Don't ask again");
-            dialog.set_response_translated("choose", "_Choose a map");
-            dialog.set_response_appearance("choose", omui::Appearance::Suggested);
-            dialog.set_default_response("choose");
+            // The words, written again after a switch of language and after a town is given.
+            let texts = {
+                let here = here.clone();
+                move |d: &omui::Dialog| {
+                    let here = here.borrow();
+                    let place = here["place"].as_str().unwrap_or_default();
+                    d.set_heading(&tr!("Add a street map for {}?", place));
+                    d.set_body(&match here["source"].as_str() {
+                        Some("weather location") => tr!("No street-level map on this computer covers {}, your weather location in Omarchy. Nearest help needs one.", place),
+                        Some("time zone") => tr!("No street-level map on this computer is near {}, the city of your time zone. Nearest help needs one.", place),
+                        _ => tr!("No street-level map on this computer covers {}. Nearest help needs one.", place),
+                    });
+                    d.set_response_label("download", &match here["regions"].as_array().map(Vec::as_slice) {
+                        Some([only]) => tr!("_Download {}", only["name"].as_str().unwrap_or_default()),
+                        _ => tr("_Download"),
+                    });
+                }
+            };
+            // The regions to choose from, when there is more than one: the engine's pick, or the first, chosen already.
+            let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            let radios = {
+                let (here, chosen, list) = (here.clone(), chosen.clone(), list.clone());
+                move || {
+                    clear(&list);
+                    let here = here.borrow();
+                    let regions: Vec<(String, String)> = here["regions"].as_array().into_iter().flatten()
+                        .filter_map(|r| Some((r["id"].as_str()?.to_owned(), r["name"].as_str()?.to_owned())))
+                        .collect();
+                    let first = here["pick"].as_str().and_then(|p| regions.iter().position(|r| r.0 == p)).unwrap_or(0);
+                    chosen.replace(regions.get(first).map(|r| r.0.clone()).unwrap_or_default());
+                    let mut group: Option<gtk::CheckButton> = None;
+                    for (i, (id, name)) in regions.iter().enumerate().filter(|_| regions.len() > 1) {
+                        let radio = gtk::CheckButton::with_label(name);
+                        radio.set_group(group.as_ref());
+                        radio.set_active(i == first);
+                        let (id, chosen) = (id.clone(), chosen.clone());
+                        radio.connect_toggled(move |b| {
+                            if b.is_active() {
+                                chosen.replace(id.clone());
+                            }
+                        });
+                        list.append(&radio);
+                        group.get_or_insert(radio);
+                    }
+                }
+            };
+            radios();
+            let extra = gtk::Box::new(gtk::Orientation::Vertical, 8);
+            extra.append(&list);
+            if v["towns"] == json!(true) && here.borrow()["source"] == "time zone" {
+                let town = gtk::Entry::new();
+                omui::i18n::bind(&town, |town| {
+                    town.set_placeholder_text(Some(&tr("Your town, for the right map")));
+                    town.update_property(&[gtk::accessible::Property::Label(&tr("Your town, for the right map"))]);
+                });
+                let missed = error_label("");
+                missed.set_visible(false);
+                extra.append(&town);
+                extra.append(&missed);
+                let (engine, here, radios, texts, dialog, weak) = (me.engine.clone(), here.clone(), radios.clone(), texts.clone(), dialog.downgrade(), Rc::downgrade(&me));
+                town.connect_activate(move |town| {
+                    let q = town.text().trim().to_owned();
+                    if q.is_empty() {
+                        return;
+                    }
+                    let (engine, here, radios, texts, dialog, weak, missed) = (engine.clone(), here.clone(), radios.clone(), texts.clone(), dialog.clone(), weak.clone(), missed.clone());
+                    glib::spawn_future_local(async move {
+                        let found = engine.get(&crate::engine::query("/api/places", &[("q", &q)])).await.ok();
+                        let place = found.as_ref().and_then(Value::as_array).and_then(|l| l.iter().find(|p| p["match"] != "partial" && p["lat"].is_number()));
+                        let Some(place) = place else {
+                            missed.set_text(&tr("No place by that name."));
+                            missed.set_visible(true);
+                            return;
+                        };
+                        missed.set_visible(false);
+                        let body = json!({"name": place["name"], "detail": place["detail"], "lat": place["lat"], "lon": place["lon"]});
+                        let Ok(now) = engine.post("/api/setup/place", &body).await else { return };
+                        let Some(dialog) = dialog.upgrade() else { return };
+                        if now["here"]["place"].is_string() {
+                            here.replace(now["here"].clone());
+                            radios();
+                            texts(&dialog);
+                        } else {
+                            dialog.close();   // a street map covers that town: there is nothing to add
+                        }
+                        if let Some(me) = weak.upgrade()
+                            && !me.state.borrow().is_null()
+                        {
+                            me.refresh();
+                        }
+                    });
+                });
+            }
+            dialog.set_extra_child(Some(extra.upcast_ref()));
+            dialog.bind(texts);
+            dialog.set_response_appearance("download", omui::Appearance::Suggested);
+            dialog.set_default_response("download");
             dialog.set_close_response("later");
             let weak = Rc::downgrade(&me);
             dialog.connect_response(move |_, id| {
                 let Some(me) = weak.upgrade() else { return };
                 match id {
                     "never" => me.set_offer(false),
-                    "choose" => {
-                        if let Some(id) = here["pick"].as_str()
-                            && !me.regions.borrow().iter().any(|x| x == id)
-                        {
-                            me.regions.borrow_mut().push(id.to_owned());
-                        }
+                    "download" if !chosen.borrow().is_empty() => {
+                        // As the Map screen starts one: the streets alone, into the open library.
+                        me.post("/api/setup/start", json!({"pack": null, "world": false, "regions": [*chosen.borrow()]}));
                         show();
                     }
                     _ => {}
