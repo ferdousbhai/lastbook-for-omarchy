@@ -16,7 +16,7 @@ use serde_json::json;
 pub const HELP: &str = "lastbook — offline survival library: manuals, health guides, videos, encyclopedias and a map (JSON output)
 
 Commands:
-  search QUERY [--kind any|manual|video|encyclopedia] [--limit 1..20]
+  search QUERY [--kind any|manual|video|encyclopedia] [--limit 1..20] [--read]   ranked passages; --read adds the whole page of the best four
   read DOC_ID [--pages 3,4,5] [--section TEXT]   text of pages, of an encyclopedia article (zim:…) or of a saved page
   page DOC_ID PAGE [--out FILE.png] [--width 160..1600]   one PDF page as a picture
   transcript VIDEO_ID [--query TEXT]  timed lines of a video: all, or those nearest the query

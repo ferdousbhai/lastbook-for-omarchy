@@ -105,6 +105,11 @@ class Shapes(unittest.TestCase):
         for k in ('title', 'publisher', 'year', 't', 'excerpt', 'trust'):
             self.assertIn(k, hit)
         self.assertIn('boil', hit['excerpt'])
+        self.assertNotIn('text', hit)
+
+    def test_search_read_brings_the_whole_page_of_the_best_results(self):
+        hit = self.ok('search', 'boil', '--read', data=SMALL)['results'][0]
+        self.assertEqual((hit['doc_id'], hit['page'], hit['text']), ('manual', 2, 'Page two: boil it for one minute.'))
 
     def test_no_matches_is_success(self):
         self.assertEqual(self.ok('search', 'zzzqqqxxx')['results'], [])

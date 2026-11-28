@@ -29,6 +29,8 @@ if (HERE.parent / 'lib').is_dir():   # the installed package: its lib/ before th
 KINDS = ('any', 'manual', 'video', 'encyclopedia')
 ROUTES = ('read', 'wiki', 'watch', 'guide', 'web', 'search', 'shelf', 'map', 'section', 'manage')   # native/src/ui.rs Route::from_key
 MAX_PAGES = 10
+READ_FIRST = 4       # search --read: the best results whose whole page comes with them
+PAGE_CHARS = 6000
 ARTICLE_CHARS = 20000
 
 
@@ -78,7 +80,8 @@ def parser():
         for names, opts in args:
             p.add_argument(*names, **opts)
         return p
-    cmd('search', (['query'], {}), (['--kind'], {'choices': KINDS, 'default': 'any'}), (['--limit'], {'type': bounded(1, 20), 'default': 8}))
+    cmd('search', (['query'], {}), (['--kind'], {'choices': KINDS, 'default': 'any'}), (['--limit'], {'type': bounded(1, 20), 'default': 8}),
+        (['--read'], {'action': 'store_true'}))
     cmd('read', (['doc_id'], {}), (['--pages'], {'type': page_list}), (['--section'], {}))
     cmd('page', (['doc_id'], {}), (['page'], {'type': bounded(1, 100000)}), (['--out'], {}), (['--width'], {'type': bounded(160, 1600), 'default': 1200}))
     cmd('transcript', (['video_id'], {}), (['--query'], {}))
@@ -159,6 +162,15 @@ def document(S, doc_id):
 # -------------------------------------------------------------------------------------------------------------- commands --
 def search(S, a):
     out = {'query': a.query, 'results': S.hybrid(a.query[:200], a.limit, a.kind)}
+    if a.read:
+        # The whole page behind each of the best few, so one command is often enough to answer from: what the built-in
+        # assistant was handed with every question. PDF pages only: a result elsewhere has no page to give.
+        by_id = S.catalog()['by_id']
+        for hit in out['results'][:READ_FIRST]:
+            if hit['kind'] == 'pdf' and hit.get('page'):
+                texts = S.page_texts(by_id[hit['doc_id']])
+                if hit['page'] <= len(texts):
+                    hit['text'] = re.sub(r'[ \t]{2,}', ' ', texts[hit['page'] - 1]).strip()[:PAGE_CHARS]
     nudge(S)
     return out
 

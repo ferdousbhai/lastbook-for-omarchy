@@ -67,7 +67,7 @@ it and keeps it removed; `lastbook skill install` puts it back.
 **The command line** answers from the same library as the window, as JSON on standard output, with no window:
 
 ```bash
-lastbook search "treat a burn" --limit 5          # ranked passages: doc_id, title, page, excerpt, trust
+lastbook search "treat a burn" --read             # ranked passages (doc_id, title, page, excerpt, trust), the best four with their whole page
 lastbook read med-443ae5cfaa6ecc68 --pages 37,38  # the text of PDF pages, an encyclopedia article (zim:…) or a saved page
 lastbook page med-443ae5cfaa6ecc68 38             # one PDF page as a PNG (in ~/.cache/Lastbook/pages, or --out FILE)
 lastbook transcript VIDEO_ID --query "tinder"     # a video's timed lines
