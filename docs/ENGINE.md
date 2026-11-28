@@ -86,7 +86,7 @@ through the command line and the agent skill.
   `link_library`). A library named for one run (`--data`, `LASTBOOK_DATA`) is not linked.
 
 The skill and the commands change together: `app/tests/test_cli.py` and `cli.rs`'s tests check that the skill names
-every command and only real ones, but not that what it says of their output is true.
+every command an agent runs and only real ones, but not that what it says of their output is true.
 
 ## What stays correct as a library changes
 

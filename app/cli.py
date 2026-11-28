@@ -30,7 +30,7 @@ KINDS = ('any', 'manual', 'video', 'encyclopedia')
 ROUTES = ('read', 'wiki', 'watch', 'guide', 'web', 'search', 'shelf', 'map', 'section', 'manage')   # native/src/ui.rs Route::from_key
 MAX_PAGES = 10
 READ_FIRST = 4       # search --read: the best results whose whole page comes with them
-PAGE_CHARS = 6000
+PAGE_CHARS = 3200   # as the built-in assistant had it: four of them fit a small model's context
 ARTICLE_CHARS = 20000
 
 
@@ -169,8 +169,16 @@ def search(S, a):
         for hit in out['results'][:READ_FIRST]:
             if hit['kind'] == 'pdf' and hit.get('page'):
                 texts = S.page_texts(by_id[hit['doc_id']])
-                if hit['page'] <= len(texts):
-                    hit['text'] = re.sub(r'[ \t]{2,}', ' ', texts[hit['page'] - 1]).strip()[:PAGE_CHARS]
+                if hit['page'] <= len(texts) and (text := re.sub(r'[ \t]{2,}', ' ', texts[hit['page'] - 1]).strip()[:PAGE_CHARS]):
+                    hit['text'] = text
+                    del hit['excerpt']   # a piece of that page
+    # What the window's cards use and an agent does not, and where a result is not (no page, no moment), are left out:
+    # every search is read by a model, word by word.
+    out['results'] = [{k: v for k, v in hit.items() if k not in ('found_by', 'score', 'wiki', 'pages') and v not in (None, '')}
+                      for hit in out['results']]
+    import retrieval
+    if not (retrieval.recall_socket().exists() and S.INDEX.coverage()['passages']):
+        out['note'] = 'Matched by words only (search by meaning is not available): use the words a manual would use.'
     nudge(S)
     return out
 

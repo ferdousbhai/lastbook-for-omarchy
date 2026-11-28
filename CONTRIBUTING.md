@@ -61,7 +61,8 @@ library does not cover something, record that in `content/gaps.json` instead of 
 
 **The skill says what the commands do.** An agent knows the command line only through `skills/lastbook/SKILL.md`. A
 change to a command's arguments, output or errors changes the skill in the same pull request, and the skill stays short:
-what an agent needs to answer well, nothing about how the engine works.
+what an agent needs to answer well, nothing about how the engine works, and nothing a command's own output or error
+already says.
 
 **Plain words.** Interface text is short, concrete and calm. Many readers will be stressed, tired, or reading in a second
 language.

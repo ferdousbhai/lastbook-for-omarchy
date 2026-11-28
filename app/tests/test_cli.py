@@ -102,14 +102,18 @@ class Shapes(unittest.TestCase):
         self.assertEqual(out['query'], 'boil water')
         hit = out['results'][0]
         self.assertEqual((hit['doc_id'], hit['kind'], hit['page']), ('pdfsmall', 'pdf', 1))
-        for k in ('title', 'publisher', 'year', 't', 'excerpt', 'trust'):
+        for k in ('title', 'publisher', 'excerpt', 'trust'):
             self.assertIn(k, hit)
+        for k in ('t', 'year', 'notes', 'score', 'found_by', 'pages'):   # what this result has none of, and the window's own fields
+            self.assertNotIn(k, hit)
+        self.assertIn('words only', out['note'])        # no Recall here
         self.assertIn('boil', hit['excerpt'])
         self.assertNotIn('text', hit)
 
     def test_search_read_brings_the_whole_page_of_the_best_results(self):
         hit = self.ok('search', 'boil', '--read', data=SMALL)['results'][0]
         self.assertEqual((hit['doc_id'], hit['page'], hit['text']), ('manual', 2, 'Page two: boil it for one minute.'))
+        self.assertNotIn('excerpt', hit)   # the page holds it
 
     def test_no_matches_is_success(self):
         self.assertEqual(self.ok('search', 'zzzqqqxxx')['results'], [])
@@ -331,8 +335,8 @@ class Shipped(unittest.TestCase):
         listed = rust.split('const ENGINE: &[&str] = &[', 1)[1].split(']', 1)[0]
         self.assertEqual({c.strip(' "') for c in listed.split(',')}, commands)
         skill = (ROOT / 'skills' / 'lastbook' / 'SKILL.md').read_text(encoding='utf-8')
-        for c in commands:
-            self.assertIn(f'`{c}', skill.replace('`lastbook ', '`'), c)
+        for c in commands - {'index'}:   # the index builds itself: nothing an agent runs
+            self.assertIn(f'lastbook {c} ', skill, c)
         pkgbuild = (ROOT / 'packaging' / 'arch' / 'PKGBUILD').read_text(encoding='utf-8')
         self.assertIn('app/cli.py', pkgbuild)
 
