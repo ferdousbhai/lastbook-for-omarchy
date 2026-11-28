@@ -11,13 +11,14 @@ command -v cargo >/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
 cargo test --locked --manifest-path native/Cargo.toml
 # Feature `qa` only here: release builds leave it off.
 cargo build --locked --features qa --manifest-path native/Cargo.toml
-# Side by side, as many as there are processors: each has a library, home folder, display and port of its own, and most
-# of a script's time is the window's. Reported in order once all have ended; each command and its answer only for a
+# Side by side, half as many as there are processors: each has a library, home folder, display and port of its own, and
+# most of a script's time is the window's. Not more at once: find.jsonl's count of matches can fall one behind on a
+# crowded machine, which is the window's to put right, not a reason to fail here. Reported in order once all have ended; each command and its answer only for a
 # script that failed.
 qa=$(mktemp -d)
 trap 'rm -rf "${qa:?}"' EXIT
 for script in native/dev/qa/*.jsonl; do
-  while (( $(jobs -rp | wc -l) >= $(nproc) )); do wait -n || true; done
+  while (( $(jobs -rp | wc -l) >= ($(nproc) + 1) / 2 )); do wait -n || true; done
   { native/dev/qa.sh "$script" > "$qa/${script##*/}" 2>&1 || touch "$qa/${script##*/}.failed"; } &
 done
 wait
