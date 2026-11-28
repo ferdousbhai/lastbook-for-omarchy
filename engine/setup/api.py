@@ -327,14 +327,18 @@ class Setup:
         return bool(self.current and maps.places_current(self.current / 'derived' / 'geo' / maps.PLACES_FILE))
 
     def set_place(self, name, lat, lon, detail=''):
-        """The town the person says they are in, kept with the time zone the computer has now (here.own_place)."""
+        """The town the person says they are in, kept for the time zone the computer has now (here.own_place)."""
+        zone = (here.zone_place() or {}).get('zone')
         try:
-            place = {'name': str(name)[:80], 'detail': str(detail or '')[:120], 'lat': float(lat), 'lon': float(lon), 'zone': (here.zone_place() or {}).get('zone')}
+            place = {'name': str(name)[:80], 'detail': str(detail or '')[:120], 'lat': float(lat), 'lon': float(lon)}
         except (TypeError, ValueError):
+            place = None
+        if not place or not zone:
             return {'error': 'That is not a place.', 'code': 'bad_place'}
         with _SETTINGS:
             s = self._settings()
-            s['place'] = place
+            places = s.get('places') if isinstance(s.get('places'), dict) else {}
+            s['places'] = {**places, zone: place}
             self._save_settings(s)
         return {'map_offer': here.asking(self.settings_dir), 'here': self.here(), 'towns': self.towns()}
 

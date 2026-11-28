@@ -2,7 +2,7 @@
 
 Nothing here reaches the network, and nothing is measured: it reads the weather location the person set in Omarchy
 (~/.local/state/omarchy/settings/weather.json: exact), else the town they gave Lastbook when it asked (setup.json's
-`place`, kept until the time zone changes), else the system's time zone (/etc/localtime: an area, often several regions
+`places`, one for each time zone they have been asked in), else the system's time zone (/etc/localtime: an area, often several regions
 wide), and whether the computer has a route out (the kernel's routing table: nothing is sent).
 
 offer() is what setup, the window and the command line show: None, or the place and the regions whose streets would cover
@@ -64,13 +64,12 @@ def zone_place(localtime=LOCALTIME, zoneinfo=ZONEINFO):
 
 
 def own_place(settings_dir, zone=None):
-    """{name, detail, lat, lon} of the town the person gave Lastbook (`detail`: its "region, country" in place search) (setup.json's `place`), for as long as the computer's time
-    zone is the one it had then: a new time zone means they have travelled, and the town is forgotten."""
+    """{name, detail, lat, lon} of the town the person gave Lastbook for the time zone the computer is in now
+    (setup.json's `places`, one a time zone; `detail`: its "region, country" in place search). A new time zone means
+    they have travelled: the town given there is used, and the others are kept for when they are back."""
     s = download.read_json(Path(settings_dir) / 'setup.json', {})
-    p = s.get('place') if isinstance(s, dict) else None
     try:
-        if p['zone'] != ((zone or zone_place() or {}).get('zone')):
-            return None
+        p = s['places'][(zone or zone_place())['zone']]
         lat, lon = float(p['lat']), float(p['lon'])
         return {'name': str(p['name'])[:80], 'detail': str(p.get('detail') or '')[:120], 'lat': lat, 'lon': lon} if -90 <= lat <= 90 and -180 <= lon <= 180 else None
     except (KeyError, TypeError, ValueError):

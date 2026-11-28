@@ -75,15 +75,17 @@ class Here(unittest.TestCase):
         self.assertIn('Nepal', o['text'])
         self.assertIn('lastbook open manage:', o['text'])
 
-    def test_the_town_the_person_gave_is_exact_until_the_time_zone_changes(self):
+    def test_a_town_is_kept_for_each_time_zone(self):
         self.settings.mkdir()
-        (self.settings / 'setup.json').write_text(json.dumps({'place': {'name': 'Pokhara', 'detail': 'Gandaki, Nepal', 'lat': 28.21, 'lon': 83.99, 'zone': 'Asia/Kathmandu'}}))
+        (self.settings / 'setup.json').write_text(json.dumps({'places': {
+            'Asia/Kathmandu': {'name': 'Pokhara', 'detail': 'Gandaki, Nepal', 'lat': 28.21, 'lon': 83.99}}}))
         o = here.offer(self.settings, None, self.home, True, zone=self.zone('Asia/Kathmandu'))
         self.assertEqual((o['place'], o['source'], o['exact'], o['pick']), ('Pokhara', 'town you gave', True, 'nepal'))
         self.assertIn('the town its owner gave', o['text'])
-        # Travelled: the town is forgotten, and the new time zone speaks.
+        # Travelled: no town was given there yet, so the new time zone speaks. Back again, Pokhara is still known.
         o = here.offer(self.settings, None, self.home, True, zone=self.zone('Asia/Tokyo'))
         self.assertEqual((o['place'], o['source']), ('Tokyo', 'time zone'))
+        self.assertEqual(here.offer(self.settings, None, self.home, True, zone=self.zone('Asia/Kathmandu'))['place'], 'Pokhara')
 
     def test_nothing_is_offered_offline_or_switched_off(self):
         self.weather(name='Kathmandu', latitude=27.7172, longitude=85.324)

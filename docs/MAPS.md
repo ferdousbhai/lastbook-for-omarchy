@@ -92,8 +92,9 @@ When the computer is online, somewhere no installed street-level map covers, Las
 
 - **Where.** In this order:
   - The weather location set in Omarchy (`~/.local/state/omarchy/settings/weather.json`, when it has coordinates).
-  - The town the person gave Lastbook when it asked (`place` in the app's `setup.json`), kept until the computer's
-    time zone changes, which is taken to mean they have travelled.
+  - The town the person gave Lastbook when it asked (`places` in the app's `setup.json`, one for each time zone).
+    A new time zone is taken to mean they have travelled: the town given there is used, or asked for, and the
+    others are kept for when they are back. Nothing of this removes a map: every street map made stays installed.
   - The system's time zone (`/etc/localtime`, with `zone1970.tab` for its main city). No time zone (UTC), no offer.
 
   The first two are exact: the regions offered are those that cover the point (`maps.covering`, told apart by the
