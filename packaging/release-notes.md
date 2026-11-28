@@ -1,12 +1,12 @@
-Lastbook for Omarchy v1.4.1 makes the map offer the streets it lacks, and rewrites the guides and messages for readers anywhere.
+Lastbook for Omarchy v1.5.0 makes the library work better with your own AI agent, and offers the street map of where you are.
 
-- "Nearest help" on a place no street-level map covers now offers to download that region's streets, right in the panel, with progress, pause and resume. The help list appears when the download finishes.
-- The map opens on your newest street-level map rather than the whole world, and "Nearest help" on a whole-world view asks for a town instead of pinning the ocean.
-- The guides read for an international audience: US agencies are explained, reading labels lead with what the page helps with, imperial measures have metric beside them, spelling is British, and search finds "power cut", "torch", "petrol" and "ambulance".
-- The Guides screen's first section is "In an emergency", its guides are listed most urgent first, and four guides have clearer titles.
-- Setup no longer says the Medium and All libraries include California or US maps, which this version does not install.
-- Error messages are plainer, `lastbook read --pages` with too long a range says so, and the help lists `index --pause`.
-- Lighter install: Beautiful Soup is no longer a dependency, and about 800 lines of duplicated or unused code are gone.
+- The agent skill is half the size and tells an agent to answer as Lastbook's built-in assistant once did: search, read the page, cite it, and keep the library and its own knowledge apart.
+- `lastbook search --read` returns the whole page behind the best four results, so one command is often enough to answer from. Search output no longer carries fields only the window uses, and says when it matched by words only.
+- When you are online somewhere no installed street map covers, Lastbook offers that region's streets as it opens: one press downloads it. First-run setup and Library and downloads suggest the same regions.
+- Lastbook reads where you are from Omarchy's weather location or time zone, or you can type your town; nothing is sent to find you. A switch under Map in Library and downloads turns the offer off.
+- `lastbook place` and `lastbook status` tell an agent when no street map covers where the computer is, for it to pass on. No command downloads anything.
+- The library's files are at `~/.local/share/Lastbook/library` after any `lastbook` command, not only after the window has opened.
+- The README and docs are rewritten for new users, with how this fork differs from Lastbook.
 
 Install or update (x86_64 and aarch64, including Apple silicon through Asahi):
 
