@@ -298,7 +298,20 @@ def place(S, a):
                                       + (f"Installed: {', '.join(installed)}. " if installed else 'None is installed. ')
                                       + "Add the region's map in Lastbook's setup.")
     out['note'] = 'Offline map data: may be outdated, shows no closures or damage; distances are straight lines.'
+    if (offer := map_offer(S)):
+        out['map_offer'] = offer['text']
     return out
+
+
+def map_offer(S):
+    """The street-level map Lastbook would offer the person for where this computer seems to be (engine/setup/here.py),
+    or None. A command says it to the agent, who passes it on: only the person starts a download, in the window."""
+    try:
+        from engine.setup import here
+        import main as app_main
+        return here.offer(app_main.app_folders()[0], S.HERE / 'derived' / 'geo')
+    except Exception:   # never the reason a command fails
+        return None
 
 
 def guides(S, a):
@@ -400,7 +413,8 @@ def status(S, a):
                        'web_pages': summary.get('web_pages'), 'videos': summary.get('videos'), 'encyclopedias': len(zims)},
             'encyclopedias': zims,
             'meaning_search': m,
-            'maps': maps.installed(S.HERE / 'derived' / 'geo')}
+            'maps': maps.installed(S.HERE / 'derived' / 'geo'),
+            **({'map_offer': offer['text']} if (offer := map_offer(S)) else {})}
 
 
 def index(S, a):

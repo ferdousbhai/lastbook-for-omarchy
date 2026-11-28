@@ -15,7 +15,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-from . import download, hardware, install, maps
+from . import download, hardware, here, install, maps
 from .manifest import Manifest
 
 DATA_NAME = install.DATA_NAME
@@ -312,7 +312,23 @@ class Setup:
         world = WORLD_ESTIMATE if not (current and current['osm']['world']) else PLACES_ESTIMATE
         return {'mode': self.mode, 'hardware': hw, 'manifest': self.manifest.public(), 'current': current,
                 'found': self.found(), 'recommend': self.recommend(hw), 'job': self.public_job(),
-                'map_regions': maps.regions(), 'world_bytes': world}
+                'map_regions': maps.regions(), 'world_bytes': world, 'here': self.here(), 'map_offer': here.asking(self.settings_dir)}
+
+    def here(self):
+        """The street-level map to offer for where this computer seems to be (here.offer), or None. Never stops setup."""
+        try:
+            return here.offer(self.settings_dir, self.current / 'derived' / 'geo' if self.current else None)
+        except Exception as e:
+            print('setup: no map offer:', type(e).__name__, flush=True)
+            return None
+
+    def set_offer(self, ask):
+        """The person's switch: whether Lastbook offers the map of where the computer is (the window and the commands)."""
+        with _SETTINGS:
+            s = self._settings()
+            s['map_offer'] = bool(ask)
+            self._save_settings(s)
+        return {'map_offer': bool(ask), 'here': self.here()}
 
     def public_job(self):
         with self.lock:
@@ -1061,6 +1077,7 @@ def configure(**kw):
 ROUTES = {
     ('GET', 'state'): lambda s, b: s.state(),
     ('GET', 'job'): lambda s, b: s.public_job(),
+    ('GET', 'here'): lambda s, b: {'here': s.here(), 'map_offer': here.asking(s.settings_dir)},
     ('POST', 'check'): lambda s, b: s.check(),
     ('POST', 'start'): lambda s, b: s.start(b.get('pack'), b.get('folder'), repair=bool(b.get('repair')), world=bool(b.get('world')), regions=[x for x in (b.get('regions') or []) if isinstance(x, str)][:50]),
     ('POST', 'pause'): lambda s, b: s.pause(),
@@ -1069,6 +1086,7 @@ ROUTES = {
     ('POST', 'retry'): lambda s, b: s.retry(),
     ('POST', 'use'): lambda s, b: s.use(b.get('path')),
     ('POST', 'finish'): lambda s, b: s.finish(),
+    ('POST', 'offer'): lambda s, b: s.set_offer(b.get('ask') is not False),
 }
 
 

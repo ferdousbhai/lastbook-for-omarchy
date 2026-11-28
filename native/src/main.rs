@@ -138,6 +138,7 @@ fn main() -> glib::ExitCode {
                         page.guard_close(&app);
                         // A download finished with the window put away is shown where its buttons are.
                         page.on_return(cards::weak(&ui, |ui| ui.navigate(ui::Route::Section("manage"))));
+                        page.offer_map(cards::weak(&ui, |ui| ui.navigate(ui::Route::Section("manage"))));
                         say(&engine, window.upcast_ref());
                         // The screens live as long as the application does.
                         unsafe { app.set_data("lastbook-ui", ui) };

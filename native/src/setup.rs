@@ -636,12 +636,120 @@ impl SetupPage {
         if !self.regions.borrow().is_empty() {
             self.body.append(&chips);
         }
+        // Where the computer seems to be and has no streets (engine/setup/here.py): its regions, one press each.
+        if let Some(here) = st["here"].as_object() {
+            let place = here.get("place").and_then(Value::as_str).unwrap_or_default();
+            self.body.append(&label(&if here.get("exact") == Some(&json!(true)) {
+                tr!("No street map yet for {}, your weather location in Omarchy.", place)
+            } else {
+                tr!("No street map yet near {}, the city of your time zone.", place)
+            }, "meta"));
+            let offered = gtk::FlowBox::new();
+            offered.set_selection_mode(gtk::SelectionMode::None);
+            offered.set_column_spacing(6);
+            offered.set_row_spacing(6);
+            for r in here.get("regions").and_then(Value::as_array).into_iter().flatten() {
+                let (Some(id), Some(name)) = (r["id"].as_str(), r["name"].as_str()) else { continue };
+                if self.regions.borrow().iter().any(|x| x == id) {
+                    continue;
+                }
+                let b = crate::cards::wrap_button(&tr!("Add {}", name), "chip");
+                let id = id.to_owned();
+                on_click(&b, self, move |me| {
+                    me.regions.borrow_mut().push(id.clone());
+                    me.redraw();
+                });
+                offered.insert(&b, -1);
+            }
+            self.body.append(&offered);
+        }
+        let ask = gtk::CheckButton::with_label(&tr("Offer the street map of where this computer is"));
+        crate::cards::wrap_check(&ask);
+        ask.set_active(st["map_offer"] != json!(false));
+        let me = Rc::downgrade(self);
+        ask.connect_toggled(move |b| {
+            if let Some(me) = me.upgrade() {
+                me.set_offer(b.is_active());
+            }
+        });
+        self.body.append(&ask);
         self.body.append(&label(
             &tr("Streets, buildings and help points (hospitals, pharmacies, water, shelters) for the areas you pick; a small country \
-             is about 0.1–0.5 GB, a large one several GB. Made on this computer from OpenStreetMap: you choose the areas, and \
-             Lastbook never detects your location."),
+             is about 0.1–0.5 GB, a large one several GB. Made on this computer from OpenStreetMap. Lastbook reads where you \
+             are from Omarchy's weather location or time zone, and sends nothing to find you."),
             "meta",
         ));
+    }
+
+    /// The person's switch for the map offer: kept by the engine, and the page drawn again with what it now offers.
+    fn set_offer(self: &Rc<Self>, ask: bool) {
+        let (engine, me) = (self.engine.clone(), Rc::downgrade(self));
+        glib::spawn_future_local(async move {
+            let r = engine.post("/api/setup/offer", &json!({"ask": ask})).await;
+            let Some(me) = me.upgrade() else { return };
+            match r {
+                Ok(v) => {
+                    if !me.state.borrow().is_null() {
+                        let mut st = me.state.borrow().clone();
+                        st["map_offer"] = v["map_offer"].clone();
+                        st["here"] = v["here"].clone();
+                        me.state.replace(st);
+                        me.redraw();
+                    }
+                }
+                Err(e) => me.say(&e.to_string(), true),
+            }
+        });
+    }
+
+    /// As the library's window opens: where the computer seems to be has no street-level map, it is online and the
+    /// person has not switched the offer off (engine/setup/here.py), so they are asked. `show` brings Library and
+    /// downloads on screen, with the region already picked where the engine is sure of it (`pick`); nothing is downloaded until they
+    /// start it there.
+    pub fn offer_map(self: &Rc<Self>, show: impl Fn() + 'static) {
+        let (engine, me) = (self.engine.clone(), Rc::downgrade(self));
+        glib::spawn_future_local(async move {
+            let Ok(v) = engine.get("/api/setup/here").await else { return };
+            let Some(me) = me.upgrade() else { return };
+            let here = v["here"].clone();
+            let Some(place) = here["place"].as_str().map(str::to_owned) else { return };
+            let exact = here["exact"] == json!(true);
+            let dialog = omui::Dialog::new(Some(""), Some(""));
+            dialog.bind(move |d| {
+                d.set_heading(&tr!("Add a street map for {}?", place));
+                d.set_body(&if exact {
+                    tr!("No street-level map on this computer covers {}, your weather location in Omarchy. Nearest help needs one.", place)
+                } else {
+                    tr!("No street-level map on this computer is near {}, the city of your time zone. Nearest help needs one.", place)
+                });
+            });
+            for id in ["later", "never", "choose"] {
+                dialog.add_response(id, "");
+            }
+            dialog.set_response_translated("later", "_Not now");
+            dialog.set_response_translated("never", "_Don't ask again");
+            dialog.set_response_translated("choose", "_Choose a map");
+            dialog.set_response_appearance("choose", omui::Appearance::Suggested);
+            dialog.set_default_response("choose");
+            dialog.set_close_response("later");
+            let weak = Rc::downgrade(&me);
+            dialog.connect_response(move |_, id| {
+                let Some(me) = weak.upgrade() else { return };
+                match id {
+                    "never" => me.set_offer(false),
+                    "choose" => {
+                        if let Some(id) = here["pick"].as_str()
+                            && !me.regions.borrow().iter().any(|x| x == id)
+                        {
+                            me.regions.borrow_mut().push(id.to_owned());
+                        }
+                        show();
+                    }
+                    _ => {}
+                }
+            });
+            dialog.present(&me.root);
+        });
     }
 
     fn start(self: &Rc<Self>) {

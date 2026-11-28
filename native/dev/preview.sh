@@ -158,7 +158,7 @@ else
 fi
 
 # No Recall (a socket that is not there).
-LASTBOOK_OPEN=$route LASTBOOK_DEV=1 PYTHONPATH=$deps \
+LASTBOOK_OPEN=$route LASTBOOK_DEV=1 LASTBOOK_MAP_OFFER=0 PYTHONPATH=$deps \
   LASTBOOK_RECALL_SOCKET=$root/no-recall.sock GDK_BACKEND=wayland \
   "$binary" --data "$root/library" > "$root/window.log" 2>&1 &
 window_pid=$!

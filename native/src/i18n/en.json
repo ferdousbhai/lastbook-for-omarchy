@@ -233,7 +233,6 @@
   "Step by step": "Step by step",
   "Street-level maps installed": "Street-level maps installed",
   "Streets for {}": "Streets for {}",
-  "Streets, buildings and help points (hospitals, pharmacies, water, shelters) for the areas you pick; a small country is about 0.1–0.5 GB, a large one several GB. Made on this computer from OpenStreetMap: you choose the areas, and Lastbook never detects your location.": "Streets, buildings and help points (hospitals, pharmacies, water, shelters) for the areas you pick; a small country is about 0.1–0.5 GB, a large one several GB. Made on this computer from OpenStreetMap: you choose the areas, and Lastbook never detects your location.",
   "Supermarket": "Supermarket",
   "That library is not available yet.": "That library is not available yet.",
   "That link is to a PDF this library does not list, so it cannot be opened here.": "That link is to a PDF this library does not list, so it cannot be opened here.",
@@ -358,5 +357,16 @@
   "{}, p. {}": "{}, p. {}",
   "{}, {} · zoom {}": "{}, {} · zoom {}",
   "{}/s": "{}/s",
-  "© OpenStreetMap contributors · {}": "© OpenStreetMap contributors · {}"
+  "© OpenStreetMap contributors · {}": "© OpenStreetMap contributors · {}",
+  "Add a street map for {}?": "Add a street map for {}?",
+  "Add {}": "Add {}",
+  "No street map yet for {}, your weather location in Omarchy.": "No street map yet for {}, your weather location in Omarchy.",
+  "No street map yet near {}, the city of your time zone.": "No street map yet near {}, the city of your time zone.",
+  "No street-level map on this computer covers {}, your weather location in Omarchy. Nearest help needs one.": "No street-level map on this computer covers {}, your weather location in Omarchy. Nearest help needs one.",
+  "No street-level map on this computer is near {}, the city of your time zone. Nearest help needs one.": "No street-level map on this computer is near {}, the city of your time zone. Nearest help needs one.",
+  "Offer the street map of where this computer is": "Offer the street map of where this computer is",
+  "Streets, buildings and help points (hospitals, pharmacies, water, shelters) for the areas you pick; a small country is about 0.1–0.5 GB, a large one several GB. Made on this computer from OpenStreetMap. Lastbook reads where you are from Omarchy's weather location or time zone, and sends nothing to find you.": "Streets, buildings and help points (hospitals, pharmacies, water, shelters) for the areas you pick; a small country is about 0.1–0.5 GB, a large one several GB. Made on this computer from OpenStreetMap. Lastbook reads where you are from Omarchy's weather location or time zone, and sends nothing to find you.",
+  "_Not now": "_Not now",
+  "_Don't ask again": "_Don't ask again",
+  "_Choose a map": "_Choose a map"
 }

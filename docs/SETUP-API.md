@@ -15,6 +15,7 @@ The screens are `native/src/setup.rs`; the engine side is `engine/setup/`:
 | `manifest.py` | Loads the bundled `setup/manifest-v1.json`, plus one fetch of `https://downloads.lastbook.org/manifest-v1.json` when the person presses *Check for newer libraries*. Packs only. The fetched copy is used only if it validates and every URL is allowed. |
 | `hardware.py` | Reads the free space of the disks setup may install on, for the recommendation and the space checks. |
 | `install.py` | Checks a zip before writing anything: zip-slip, absolute paths, links, case clashes, encryption and the size against `installed_bytes`. Unpacks so that a stopped unpack can resume, leaving out upstream's US-only map data (`DROPPED`, below). Does the one-rename switch, keeps the old library, and rolls back if the new one does not open. |
+| `here.py` | Where the computer seems to be, from Omarchy's weather location or the time zone, whether it is online, and the street-level map to offer for it. Reads files only. |
 | `maps.py` | Makes the map on the person's computer: cuts `world.mbtiles` and `regions-<id>.mbtiles` out of Protomaps' newest daily OpenStreetMap build (PMTiles, range requests through `download.py`) and builds `world-places.sqlite` from GeoNames. The region list is the bundled `setup/map-regions.json`. |
 | `api.py` | Handles `/api/setup/*`, runs the job (`job.json`, pause, resume, cancel and retry), recognizes files already on the computer, makes the recommendation, and provides setup mode's `SetupServer` for the bridge. |
 
@@ -71,9 +72,11 @@ are served by `engine/setup/api.py` alone. In normal mode `server.py` hands `/ap
 
 | Request | Answer |
 |---|---|
-| `GET /api/setup/state` | `{mode: "first-run" or "manage", hardware, manifest: {source: "bundled" or "fetched", published, packs}, current: {folder, pack, content_revision, osm} or null, found: [...], recommend: {pack, why}, job, map_regions, world_bytes}` |
+| `GET /api/setup/state` | `{mode: "first-run" or "manage", hardware, manifest: {source: "bundled" or "fetched", published, packs}, current: {folder, pack, content_revision, osm} or null, found: [...], recommend: {pack, why}, job, map_regions, world_bytes, here, map_offer}` |
 | `POST /api/setup/start` `{pack, folder?, world?, regions?}` | the new `job`, or `{error, need_bytes, free_bytes}` |
 | `GET /api/setup/job` | `job` |
+| `GET /api/setup/here` | `{here, map_offer}` alone, for the window as it opens |
+| `POST /api/setup/offer` `{ask}` | the person's switch for the map offer: `{map_offer, here}` |
 | `POST /api/setup/check` | the one GET of the published manifest (waited for up to 10 s), then the same answer as `state`. Only when the person presses *Check for newer libraries*: `state` itself reaches nothing |
 | `POST /api/setup/pause`, `/resume`, `/cancel`, `/retry` | `job` |
 | `POST /api/setup/use` `{path}` | uses a library or file already on this computer: `job` (verify, then unpack or activate) |
@@ -96,6 +99,10 @@ comes and its tiles are counted. `world_bytes` is the estimate shown before that
 search made by an earlier version (towns of 15,000+ only, `maps.places_current`), so `{world: true}` makes it again, and
 `world_bytes` is then the estimate for place search alone. With a pack in the same `start`
 the files go into the staged library; without one they go straight into the open library.
+
+`here` (in `state` too) is the street-level map to offer for where the computer seems to be, or null:
+`{place, source: "weather location" or "time zone", exact, area, pick, regions: [{id, name}], text}`; `map_offer` is
+whether the person has the offer on ([MAPS.md](MAPS.md#the-map-offer)).
 
 `hardware` = `{disks: [{path, free_bytes, total_bytes}]}`: the app's own data folder and the open library's disk,
 nothing else. The recommendation is made from it.

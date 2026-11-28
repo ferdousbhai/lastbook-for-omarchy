@@ -17,7 +17,8 @@ import fixture  # noqa: E402
 DATA = fixture.ensure()
 TMP = Path(tempfile.mkdtemp(prefix='lastbook-cli-'))
 ENV = {**os.environ, 'HOME': str(TMP / 'home'), 'XDG_CONFIG_HOME': str(TMP / 'home/config'), 'XDG_DATA_HOME': str(TMP / 'home/data'),
-       'XDG_CACHE_HOME': str(TMP / 'home/cache'), 'LASTBOOK_RECALL_SOCKET': str(TMP / 'no-recall.sock')}
+       'XDG_CACHE_HOME': str(TMP / 'home/cache'), 'LASTBOOK_RECALL_SOCKET': str(TMP / 'no-recall.sock'),
+       'LASTBOOK_MAP_OFFER': '0'}   # what the computer running the tests knows of where it is stays out of them (test_here.py)
 for k in ('LASTBOOK_DATA', 'LASTBOOK_DEV', 'LASTBOOK_OPEN'):
     ENV.pop(k, None)
 
@@ -263,6 +264,23 @@ class ExitCodes(unittest.TestCase):
         self.assertIn('run `lastbook`', self.fails(1, 'status', data=None))
         self.assertIn('not a Lastbook library', self.fails(1, 'search', 'x', data=TMP / 'home'))
         self.assertFalse((TMP / 'home' / 'data').exists())         # nothing was made on the way
+
+    def test_a_place_with_no_street_map_is_said_to_the_agent(self):
+        # Omarchy's weather location is Testville, which no installed street map covers, and the computer is taken to
+        # be online: `place` and `status` carry the offer for the agent to pass on. Switched off, they do not.
+        home = TMP / 'weather'
+        weather = home / '.local/state/omarchy/settings/weather.json'
+        weather.parent.mkdir(parents=True)
+        weather.write_text(json.dumps({'name': 'Testville', 'latitude': 12.5, 'longitude': 34.25}))
+        env = {**ENV, 'HOME': str(home), 'XDG_CONFIG_HOME': str(home / 'config'), 'LASTBOOK_MAP_OFFER': '1'}
+        for args in (['place', 'Mapton'], ['status']):
+            said = run(*args, data=SMALL, env=env)[1]['map_offer']
+            self.assertIn('Testville', said)
+            self.assertIn('Sudan', said)
+            self.assertNotIn('map_offer', run(*args, data=SMALL)[1])
+        (home / 'config' / 'Lastbook').mkdir(parents=True)
+        (home / 'config' / 'Lastbook' / 'setup.json').write_text('{"map_offer": false}')
+        self.assertNotIn('map_offer', run('status', data=SMALL, env={**env, 'LASTBOOK_MAP_OFFER': ''})[1])
 
     def test_the_persons_own_library_gets_its_short_path(self):
         # The skill names ~/.local/share/Lastbook/library: a command makes that link, not only the window. A library

@@ -43,7 +43,8 @@ To build the package from a checkout instead (needs Rust): `cd packaging/arch &&
   Recall, by meaning. Each result opens at its page, moment or section.
 - **An offline map.** OpenStreetMap drawn in your theme's colours. Find any country, region, or town of 500 people or
   more; where you have street-level detail, *Nearest help* lists the closest hospitals, clinics, pharmacies, police,
-  fire stations and drinking water. You pick the areas; Lastbook never detects your location.
+  fire stations and drinking water. You pick the areas. When no street map covers where the computer is, Lastbook
+  offers one as it opens (it reads Omarchy's weather location or time zone, and sends nothing to find you).
   [docs/MAPS.md](docs/MAPS.md) has the details.
 - **An Omarchy app.** One native GTK 4 window that follows your theme and language, driven from the keyboard
   ([Keyboard](#keyboard)).
@@ -80,7 +81,8 @@ lastbook open med-443ae5cfaa6ecc68 38             # a window at that page; also 
 `lastbook --help` lists every command. A command exits 0 on success (no matches too) and 1 on any failure, with one line
 on standard error saying what. `--data FOLDER` names another library. Commands run beside an open window, read only the
 library, and write nothing but the engine's caches. `lastbook place --nearby` answers for the street-level regions
-installed, and says plainly when none covers a place. The library's files are also at one stable path,
+installed, and says plainly when none covers a place; `place` and `status` also tell the agent when no street map
+covers where the computer is, for it to pass on (no command downloads anything). The library's files are also at one stable path,
 `~/.local/share/Lastbook/library`, for an agent's `grep` and `jq`.
 
 Search by meaning needs an index of the library, which the `lastbook-index` user service builds in the background
@@ -116,6 +118,10 @@ setup (below).
   still cover the allowed hosts; it needs the network, so `bin/release` runs it and `bin/check` does not.
 - **Checked files.** Every download is checked against the SHA-256 in the manifest before it is used. Zips are checked
   for unsafe paths, links and sizes before anything is written.
+- **Where you are, without asking anyone.** To offer a street map you lack, Lastbook reads the weather location you
+  set in Omarchy, or else the system's time zone, and the kernel's routing table to see whether you are online
+  (`engine/setup/here.py`). Nothing is sent, nothing is downloaded until you start it, and the switch under Map in
+  Library and downloads turns the offer off.
 - **Nothing else.** The window blocks all web loads, there is no telemetry, no account, and nothing runs on a timer or at
   startup that reaches the network.
 - **A working library is never broken.** New data is unpacked beside the old one, checked, and then switched in with a

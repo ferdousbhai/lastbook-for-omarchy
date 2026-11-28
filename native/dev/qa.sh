@@ -84,7 +84,7 @@ status=0
     -u LASTBOOK_OPEN -u XDG_DOCUMENTS_DIR \
     HOME="$root/home" XDG_CONFIG_HOME="$root/config" XDG_STATE_HOME="$root/state" XDG_DATA_HOME="$root/data" \
     XDG_CACHE_HOME="$root/cache" XDG_RUNTIME_DIR="$root/runtime" \
-    LASTBOOK_DEV=1 PYTHONPATH="$deps" LASTBOOK_RECALL_SOCKET="$root/no-recall.sock" "${engine[@]}" \
+    LASTBOOK_DEV=1 PYTHONPATH="$deps" LASTBOOK_RECALL_SOCKET="$root/no-recall.sock" LASTBOOK_MAP_OFFER=0 "${engine[@]}" \
     WEBKIT_DISABLE_DMABUF_RENDERER=1 "${sandbox[@]}" \
     GDK_BACKEND=broadway BROADWAY_DISPLAY=":$display" OMUI_QA=1 OMUI_QA_INPUT="127.0.0.1:$port" OMUI_QA_FD=3 \
     timeout "${LASTBOOK_QA_TIMEOUT:-120}" "$binary" open --data "$root/library" < "$script" 3> "$root/answers"

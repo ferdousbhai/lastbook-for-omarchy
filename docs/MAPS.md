@@ -75,7 +75,7 @@ GeoNames' public files (`download.geonames.org`: `cities500.zip`, about 14 MB, w
   index. Only names and boxes are taken from Geofabrik. A region across the antimeridian (Alaska, Fiji, New Zealand, the
   Russian Far East) is two boxes, one each side of ±180, and its street map is cut from their union.
 - The person picks the areas in setup (`native/src/setup.rs`; `POST /api/setup/start {world, regions}` in
-  [SETUP-API.md](SETUP-API.md)). Lastbook never detects location.
+  [SETUP-API.md](SETUP-API.md)). Lastbook measures no location; it reads the one Omarchy has (below).
 - These files belong to no pack. An upgrade to another pack keeps them (`maps.ours`).
 - A library set up before place search held villages has a gazetteer of towns of 15,000+ only. It still works, but
   `world-places.sqlite` says which kind it is (SQLite's `user_version`, `maps.PLACES_VERSION`), and setup counts the
@@ -84,6 +84,26 @@ GeoNames' public files (`download.geonames.org`: `cities500.zip`, about 14 MB, w
   until the person starts that download.
 
 Credits: map data © OpenStreetMap contributors (ODbL), tiles by Protomaps; place names from GeoNames (CC BY 4.0).
+
+## The map offer
+
+When the computer is online, somewhere no installed street-level map covers, Lastbook offers one
+(`engine/setup/here.py`). It finds out without sending anything:
+
+- **Where.** The weather location set in Omarchy (`~/.local/state/omarchy/settings/weather.json`, when it has
+  coordinates) is exact: the regions offered are those that cover it (`maps.covering`, told apart by the nearest
+  town's address), and `pick` names the one to choose for the person when that is sure. Without it, the system's time
+  zone (`/etc/localtime`, with `zone1970.tab` for its main city) is only an area: up to six regions around that city
+  are offered to choose from, and nothing is offered once a street map within about 400 km of the city is installed,
+  since a time zone cannot say it is the wrong one. No time zone (UTC), no offer.
+- **Online.** A default route in the kernel's routing table (`/proc/net/route`, `/proc/net/ipv6_route`).
+- **Who is told.** First-run setup and Library and downloads list the regions under Map, one press each to pick. The
+  library's window asks in a dialog each time it opens (Not now, Don't ask again, Choose a map, which shows Library
+  and downloads). `lastbook place` and `lastbook status` carry the same as `map_offer`, a sentence for the agent to
+  pass on. Nothing is downloaded until the person starts it in the window.
+- **The switch.** "Offer the street map of where this computer is", under Map in Library and downloads (and the
+  dialog's Don't ask again), is `map_offer` in the app's `setup.json`; off, neither the window nor the commands say
+  anything. `LASTBOOK_MAP_OFFER=0` does the same for one run.
 
 ## Nearby help from the command line
 
