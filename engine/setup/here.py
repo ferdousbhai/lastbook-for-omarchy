@@ -2,17 +2,19 @@
 
 Nothing here reaches the network, and nothing is measured: it reads the weather location the person set in Omarchy
 (~/.local/state/omarchy/settings/weather.json: exact), else the town they gave Lastbook when it asked (setup.json's
-`places`, one for each time zone they have been asked in), else the system's time zone (/etc/localtime: an area, often several regions
-wide), and whether the computer has a route out (the kernel's routing table: nothing is sent).
+`places`, one for each time zone they have been asked in), else the system's time zone (/etc/localtime: an area,
+often several regions wide), and whether the computer has a route out (the kernel's routing table: nothing is sent).
 
 offer() is what setup, the window and the command line show: None, or the place and the regions whose streets would cover
 it, when no installed street-level map does, the computer is online and the person has not switched the offer off
 (`map_offer: false` in the app's setup.json; LASTBOOK_MAP_OFFER=0 for one run).
 """
+import contextlib
 import json
 import math
 import os
 import re
+import sqlite3
 from pathlib import Path
 
 from . import download, maps
@@ -114,21 +116,13 @@ def _candidates(zone):
 
 
 def _address(geo, lat, lon):
-    """The "region, country" of the gazetteer's nearest town within about 50 km, which tells overlapping regions' boxes
-    apart (maps.covering); '' without a gazetteer or a town."""
-    import sqlite3
+    """The "region, country" of the nearest town (maps.nearest_town); '' without a gazetteer or a town near."""
     try:
-        con = sqlite3.connect(f"file:{Path(geo) / maps.PLACES_FILE}?mode=ro", uri=True)
-        try:
-            d = 0.5
-            rows = con.execute("SELECT detail, lat, lon FROM place WHERE kind IN ('city','town') AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?",
-                               (lat - d, lat + d, lon - d, lon + d)).fetchall()
-        finally:
-            con.close()
+        with contextlib.closing(sqlite3.connect(f"file:{Path(geo) / maps.PLACES_FILE}?mode=ro", uri=True)) as db:
+            town = maps.nearest_town(db, lat, lon)
     except sqlite3.Error:
         return ''
-    near = min(rows, key=lambda r: math.hypot(r[1] - lat, (r[2] - lon) * math.cos(math.radians(lat))), default=None)
-    return near[0] or '' if near else ''
+    return town[1] or '' if town else ''
 
 
 def asking(settings_dir):
@@ -140,11 +134,14 @@ def asking(settings_dir):
 
 
 def offer(settings_dir, geo=None, home=None, is_online=None, zone=None):
-    """None, or {place, source: 'weather location', 'town you gave' or 'time zone', exact, area, pick, regions: [{id, name}], text} for a
-    computer that is online, somewhere no installed street-level map covers. `geo`: the open library's derived/geo
-    (None in first-run setup, where nothing is installed). `exact`: the place is a point, so the regions are the ones
-    that cover it, and `pick` the one of them to choose for the person when that is sure; a time zone gives the nearest few of its country, for the person to choose from. `text`: the
-    sentence a command passes on to an agent."""
+    """The street-level map to offer, or None: for a computer that is online, somewhere no installed street-level map
+    covers, whose owner has the offer on. `geo`: the open library's derived/geo (None in first-run setup, where nothing
+    is installed).
+
+    {place, source, exact, area, pick, regions: [{id, name}], text}. `source`: 'weather location', 'town you gave' or
+    'time zone'. `exact`: the place is a point, so `regions` are those that cover it and `pick` is the one to choose
+    for the person, when that is sure; a time zone is an area (`area`, in tzdata's words), so `regions` are the
+    nearest few to choose from. `text`: the sentence a command passes on to an agent."""
     if is_online is None:
         is_online = os.environ.get('LASTBOOK_MAP_OFFER') == '1' or online()   # =1: taken to be online, for the QA scripts
     if not asking(settings_dir) or not is_online:

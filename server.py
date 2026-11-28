@@ -856,7 +856,7 @@ def near_help(at, to=None):
     town = None
     if WORLD_PLACEDB.exists():
         with contextlib.closing(sqlite3.connect(ro_uri(WORLD_PLACEDB), uri=True)) as db:
-            town = nearest_town(db, *at)
+            town = setup_maps.nearest_town(db, *at)
     have = {r['id']: r['bytes'] for r in setup_maps.installed(GEO)['regions']}
     return {'covered': False, 'points': [], 'regions': [{'id': r['id'], 'name': r['name'], 'bytes': have.get(r['id']), 'installed': r['id'] in have}
                                                         for r in setup_maps.covering(*at, town[1] or '' if town else '')[:3]]}
@@ -918,15 +918,6 @@ def _match(db, q, row_id, name, detail, loosened):
     return 'alternate name' if hit else 'partial'
 
 
-def nearest_town(db, lat, lon):
-    """The gazetteer's nearest town to a point, within about 50 km: (name, detail, km), or None."""
-    d = 0.5
-    rows = db.execute("SELECT name, detail, lat, lon FROM place WHERE kind IN ('city','town') AND lat BETWEEN ? AND ? "
-                      "AND lon BETWEEN ? AND ?", (lat - d, lat + d, lon - d / max(math.cos(math.radians(lat)), 0.05), lon + d / max(math.cos(math.radians(lat)), 0.05))).fetchall()
-    best = min(((haversine(lat, lon, y, x)[0], name, detail) for name, detail, y, x in rows), default=None)
-    return (best[1], best[2], best[0]) if best and best[0] <= 50 else None
-
-
 def places(q, limit=20):
     """Places for a query, best first: {name, kind, detail, lat, lon, source, match, onMap}. `match` says how the place
     answers the query (_match; 'coordinates' for a point given as LAT,LON). `onMap`: an installed street-level map covers it,
@@ -938,7 +929,7 @@ def places(q, limit=20):
     db = sqlite3.connect(ro_uri(WORLD_PLACEDB), uri=True) if WORLD_PLACEDB.exists() else None
     try:
         if at:
-            town = nearest_town(db, *at) if db else None
+            town = setup_maps.nearest_town(db, *at) if db else None
             detail = f'{town[2]:.0f} km from {town[0]}, {town[1]}' if town else 'A point given by its coordinates'
             out = [{'name': ','.join(f'{v:.6f}'.rstrip('0').rstrip('.') for v in at), 'kind': 'point', 'detail': detail, 'lat': at[0], 'lon': at[1],
                     'source': 'coordinates', 'match': 'coordinates'}]

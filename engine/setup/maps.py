@@ -171,6 +171,16 @@ def places_current(path):
     return head[:16] == b'SQLite format 3\0' and int.from_bytes(head[60:64], 'big') >= PLACES_VERSION
 
 
+def nearest_town(db, lat, lon):
+    """The gazetteer's nearest town to a point, within about 50 km: (name, detail, km), or None. `db`: world-places.sqlite,
+    open. Its detail ("region, country") tells apart regions whose boxes overlap (covering)."""
+    d, wide = 0.5, max(math.cos(math.radians(lat)), 0.05)
+    rows = db.execute("SELECT name, detail, lat, lon FROM place WHERE kind IN ('city','town') AND lat BETWEEN ? AND ? "
+                      "AND lon BETWEEN ? AND ?", (lat - d, lat + d, lon - d / wide, lon + d / wide)).fetchall()
+    best = min(((math.hypot(y - lat, (x - lon) * wide) * 111.2, name, detail) for name, detail, y, x in rows), default=None)
+    return (best[1], best[2], best[0]) if best and best[0] <= 50 else None
+
+
 def installed(geo):
     """What map files this library has: {world: bool, places: bool (and current: places_current), regions: [{id, name, bytes}]}."""
     geo = Path(geo)

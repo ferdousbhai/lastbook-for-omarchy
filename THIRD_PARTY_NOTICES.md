@@ -74,7 +74,7 @@ their licences allow.
 
 ## Used from the system, not bundled
 
-Python 3, NumPy, GTK 4, WebKitGTK 6, Poppler, GStreamer and its plugins, SQLite, glib2 and
+Python 3, NumPy, the time zone database (tzdata, for the map offer), GTK 4, WebKitGTK 6, Poppler, GStreamer and its plugins, SQLite, glib2 and
 the GCC runtime come from Arch's own packages under their own licences (the PKGBUILD's `depends`).
 
 ## Downloaded by setup, never bundled

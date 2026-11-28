@@ -315,8 +315,13 @@ class Setup:
                 'map_regions': maps.regions(), 'world_bytes': world, 'here': self.here(), 'map_offer': here.asking(self.settings_dir)}
 
     def here(self):
-        """The street-level map to offer for where this computer seems to be (here.offer), or None. Never stops setup."""
+        """The street-level map to offer for where this computer seems to be (here.offer), or None: none while a
+        download is under way or waiting to be resumed, which may be that map's. Never stops setup."""
         try:
+            # The job as this engine knows it, without asking who runs it (public_job): that takes the job's lock, which
+            # makes its file, and opening a window should write nothing.
+            if self.job and self.job.get('state') in (*ACTIVE, 'paused'):
+                return None
             return here.offer(self.settings_dir, self.current / 'derived' / 'geo' if self.current else None)
         except Exception as e:
             print('setup: no map offer:', type(e).__name__, flush=True)

@@ -18,27 +18,5 @@ os.environ['LASTBOOK_MAP_OFFER'] = '1'
 standin.use_real_engine()
 from engine.setup import api  # noqa: E402
 
-job = None
-
-
-def start(s, body):
-    """The job the real engine would start for the region asked for, downloading."""
-    global job
-    rid = body['regions'][0]
-    item = {'id': rid, 'kind': 'osm', 'title': f'{rid.title()} streets', 'state': 'downloading', 'source': 'download',
-            'bytes_done': 40_000_000, 'bytes_total': 120_000_000, 'rate_bps': 2_000_000, 'eta_s': 40, 'error': None}
-    job = {'id': 'made-up', 'state': 'downloading', 'error': None, 'folder': os.environ['LASTBOOK_DATA'], 'items': [item]}
-    if s.on_job:
-        s.on_job('downloading')
-    return job
-
-
-def pause(s, body):
-    job['state'] = job['items'][0]['state'] = 'paused'
-    if s.on_job:
-        s.on_job('paused')
-    return job
-
-
-api.ROUTES.update({('POST', 'start'): start, ('GET', 'job'): lambda s, b: job, ('POST', 'pause'): pause})
+standin.made_up_download(api)
 standin.run_real_engine()

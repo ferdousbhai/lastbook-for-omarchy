@@ -52,6 +52,27 @@ def fail_but(path, body):
         asked.add(req['path'])
 
 
+def made_up_download(api):
+    """Setup's start, for the real engine's routes: a job for the region asked for that is at once downloading, and
+    paused when asked, with nothing fetched."""
+    job = {}
+
+    def become(s, state):
+        job['state'] = job['items'][0]['state'] = state
+        if s.on_job:
+            s.on_job(state)
+        return job
+
+    def start(s, body):
+        rid = body['regions'][0]
+        job.update(id='made-up', error=None, folder=os.environ['LASTBOOK_DATA'], items=[{
+            'id': rid, 'kind': 'osm', 'title': f'{rid.title()} streets', 'source': 'download', 'bytes_done': 40_000_000,
+            'bytes_total': 120_000_000, 'rate_bps': 2_000_000, 'eta_s': 40, 'error': None}])
+        return become(s, 'downloading')
+    api.ROUTES.update({('POST', 'start'): start, ('GET', 'job'): lambda s, b: job or None,
+                       ('POST', 'pause'): lambda s, b: become(s, 'paused')})
+
+
 def use_real_engine(*more):
     """Makes the real engine's modules importable over the library, before any of them is imported: they are then
     changed, and the engine run (`run_real_engine`). `more`: other folders to import from."""

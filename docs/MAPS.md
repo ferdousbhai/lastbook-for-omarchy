@@ -108,6 +108,7 @@ When the computer is online, somewhere no installed street-level map covers, Las
   regions are listed in the dialog, one chosen already. Where only the time zone is known and the library has place
   search, the dialog also takes the person's town, found offline, which makes the offer exact. `lastbook place` and `lastbook status` carry the same as `map_offer`, a sentence for the agent to
   pass on. Nothing is downloaded until the person presses Download.
+- **Not while downloading.** While a setup download runs or waits to be resumed, nothing is offered.
 - **The switch.** "Offer the street map of where this computer is", under Map in Library and downloads (and the
   dialog's Don't ask again), is `map_offer` in the app's `setup.json`; off, neither the window nor the commands say
   anything. `LASTBOOK_MAP_OFFER=0` does the same for one run.
