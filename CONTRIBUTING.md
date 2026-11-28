@@ -59,6 +59,10 @@ nothing shared may name a real person's home, street, coordinates, machines or a
 **Sources first.** A guide card points at a real page of a real source in the library, with its page number. If the
 library does not cover something, record that in `content/gaps.json` instead of writing advice from memory.
 
+**The skill says what the commands do.** An agent knows the command line only through `skills/lastbook/SKILL.md`. A
+change to a command's arguments, output or errors changes the skill in the same pull request, and the skill stays short:
+what an agent needs to answer well, nothing about how the engine works.
+
 **Plain words.** Interface text is short, concrete and calm. Many readers will be stressed, tired, or reading in a second
 language.
 

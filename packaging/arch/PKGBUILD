@@ -10,7 +10,7 @@ pkgdesc='Offline survival library for Omarchy: manuals, videos, encyclopedias an
 arch=('x86_64' 'aarch64')
 url='https://github.com/ferdousbhai/lastbook-for-omarchy'
 license=('MIT')
-# The engine is Python (numpy, Beautiful Soup, and the two wheels below); the window is GTK 4 (native/), with WebKitGTK 6 for
+# The engine is Python (numpy and the two wheels below); the window is GTK 4 (native/), with WebKitGTK 6 for
 # articles, Poppler for PDFs and GStreamer for videos: H.264/AAC through gst-libav, VP9 through gst-plugins-good, AV1 through gst-plugin-dav1d.
 depends=('python>=3.14' 'python<3.15' 'python-numpy' 'glib2' 'gtk4' 'webkitgtk-6.0' 'poppler-glib'
   'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'gst-plugin-dav1d' 'sqlite' 'gcc-libs')

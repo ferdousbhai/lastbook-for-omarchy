@@ -1,70 +1,127 @@
 # Lastbook for Omarchy
 
-An offline survival library for Omarchy (Arch Linux with Hyprland, on x86_64 and on aarch64 Apple silicon through Asahi). It puts
-manuals, videos, encyclopedias, an offline map and short practical guides on one computer. After setup, it works offline. The
-desktop sidebar opens Search, Guides, Library, Encyclopedias, Videos, Map, Saved and Library and downloads, with About in
-its footer. Encyclopedias opens each encyclopedia at its front page and offers an article picked at random; search finds
-encyclopedia articles too (it has an Encyclopedias filter). Lastbook has no AI of its own: an AI agent on the computer answers questions
-from the library through the `lastbook` command line and its agent skill (below).
+An offline survival library for [Omarchy](https://omarchy.org): manuals, how-to videos, encyclopedias, short guides for
+urgent needs and a map of the world, all on your own computer. After setup it needs no internet. Read it in its window,
+or ask the AI agent you already use: Lastbook gives the agent a command line and a skill, and has no AI of its own.
 
 ![The Guides screen: the sidebar of screens, and the guides for urgent needs](docs/screenshot.png)
 
-A hard fork of [Lastbook](https://github.com/Immortal-Protocols/lastbook) (<https://lastbook.org>), made Omarchy-only, with one native window: the macOS,
-Windows and iPad apps, the browser interface, the websites, the pack-building tools and the update checker are gone; meaning-based search uses
-[Recall for Omarchy](https://github.com/ferdousbhai/recall-for-omarchy)'s embedding model; search reads the encyclopedias. The
-download packs are Lastbook's own, pre-built, from `downloads.lastbook.org`; the map is made on your computer in setup.
-
-> MIT License ([LICENSE](LICENSE)), as upstream. See [CONTRIBUTING.md](CONTRIBUTING.md).
+It is a hard fork of [Lastbook](https://github.com/Immortal-Protocols/lastbook) (<https://lastbook.org>), rebuilt as one
+native Omarchy app ([what changed](#how-it-differs-from-lastbook)). MIT licensed, as upstream.
 
 ## Install
+
+On Omarchy (x86_64, or aarch64 Apple silicon through Asahi):
 
 ```bash
 curl -fsSL https://ferdousbhai.com/lastbook/install.sh | sudo bash
 ```
 
-It adds Lastbook's signed package repository (both architectures) and installs `lastbook-for-omarchy`; re-running is safe.
+This adds Lastbook's signed package repository and installs `lastbook-for-omarchy`; running it again is safe. Updates
+then come with the rest of the system (`omarchy update`). The installer works on plain Arch Linux too.
 
-Or build and install the package from this checkout (it compiles the window; it needs Rust):
+Open Lastbook from the application menu. First-run setup offers three libraries (Small, about 8 GB; Medium, about 67 GB;
+All, about 388 GB) and the map: the whole world to city level (about 0.6 GB) plus street-level detail for the regions
+you pick. It downloads and checks them, and can be paused and resumed. A library already on the computer (a folder or a
+pack zip) can be used instead.
+
+The installer offers [Recall for Omarchy](https://github.com/ferdousbhai/recall-for-omarchy), which adds search by
+meaning (or later: `curl -fsSL https://ferdousbhai.com/recall/install.sh | sudo bash`). Without it everything works, and
+search matches words.
+
+To build the package from a checkout instead (needs Rust): `cd packaging/arch && makepkg -si`. To remove Lastbook:
+`sudo pacman -Rns lastbook-for-omarchy`; your library and settings stay in your home folder (`~/.local/share/Lastbook`,
+`~/.config/Lastbook`, `~/.cache/Lastbook`) until you delete them.
+
+## What you get
+
+- **Guides for urgent needs.** Fourteen short guides (someone is hurt, safe water, the power is out, …), each pointing
+  at real pages of the library's sources, with what the sources warn about and what the curators could not find.
+- **The library.** Manuals and saved web pages, videos with transcripts, and offline encyclopedias (ZIM files, such as
+  MDWiki and Appropedia; Wikipedia in the largest pack), in a reader with find, zoom and saved pages.
+- **Search across all of it.** One search over manuals, video moments and encyclopedia articles, by words and, with
+  Recall, by meaning. Each result opens at its page, moment or section.
+- **An offline map.** OpenStreetMap drawn in your theme's colours. Find any country, region, or town of 500 people or
+  more; where you have street-level detail, *Nearest help* lists the closest hospitals, clinics, pharmacies, police,
+  fire stations and drinking water. You pick the areas; Lastbook never detects your location.
+  [docs/MAPS.md](docs/MAPS.md) has the details.
+- **An Omarchy app.** One native GTK 4 window that follows your theme and language, driven from the keyboard
+  ([Keyboard](#keyboard)).
+- **Your agent can use it.** See below.
+
+## Ask your own AI agent
+
+Lastbook runs no model and has no chat. The agent already on your computer (Claude Code, Codex, or any other, with a
+local model too, through Omarchy's `omarchy-local-ai`, say) answers from the library instead. Ask it in plain words:
+
+> My kid burned her hand on the stove. What do I do? Use Lastbook.
+
+The agent searches the library, reads the pages behind the best results, and answers with the document and page beside
+each claim, saying so when the library does not cover something. Two things make that work:
+
+**The skill** (`skills/lastbook/SKILL.md`) tells an agent when to reach for the library and how to search, read and
+cite. Lastbook installs it for you at `~/.agents/skills/lastbook`, linked from `~/.claude/skills` and `~/.codex/skills`,
+and keeps it current. `lastbook skill` prints it, for an agent that looks elsewhere; `lastbook skill uninstall` removes
+it and keeps it removed; `lastbook skill install` puts it back.
+
+**The command line** answers from the same library as the window, as JSON on standard output, with no window:
 
 ```bash
-cd packaging/arch && makepkg -si
+lastbook search "treat a burn" --limit 5          # ranked passages: doc_id, title, page, excerpt, trust
+lastbook read med-443ae5cfaa6ecc68 --pages 37,38  # the text of PDF pages, an encyclopedia article (zim:…) or a saved page
+lastbook page med-443ae5cfaa6ecc68 38             # one PDF page as a PNG (in ~/.cache/Lastbook/pages, or --out FILE)
+lastbook transcript VIDEO_ID --query "tinder"     # a video's timed lines
+lastbook place "Denpasar" --nearby hospital       # a town or "LAT,LON", and the help points near it
+lastbook guides; lastbook guide hurt              # the guides, and the pages one points to
+lastbook status                                   # library folder and counts, meaning search, map files
+lastbook open med-443ae5cfaa6ecc68 38             # a window at that page; also routes: guide:hurt, search:burns
 ```
 
-The installer offers to add Recall for Omarchy for meaning-based search (or later: `curl -fsSL https://ferdousbhai.com/recall/install.sh | sudo bash`).
-Without it everything works, and search matches words only.
+`lastbook --help` lists every command. A command exits 0 on success (no matches too) and 1 on any failure, with one line
+on standard error saying what. `--data FOLDER` names another library. Commands run beside an open window, read only the
+library, and write nothing but the engine's caches. `lastbook place --nearby` answers for the street-level regions
+installed, and says plainly when none covers a place. The library's files are also at one stable path,
+`~/.local/share/Lastbook/library`, for an agent's `grep` and `jq`.
 
-Open Lastbook from the application menu. First-run setup downloads your chosen library and makes the map.
-The window is a native GTK 4 program (`lastbook`); it uses the system's WebKitGTK, Poppler and GStreamer codecs, and runs
-the Python engine as its own child process. Your library and settings stay in your home folder
-(`~/.local/share/Lastbook`, `~/.config/Lastbook`, `~/.cache/Lastbook`). Updates come from pacman (`omarchy update`).
+Search by meaning needs an index of the library, which the `lastbook-index` user service builds in the background
+through Recall (an hour or more for a new library; `lastbook status` shows how far it is, and `lastbook index` builds it
+in the foreground). To switch it off: `systemctl --user mask lastbook-index.service lastbook-index.path`.
 
-## What it does
+## How it differs from Lastbook
 
-- **Guides first.** Short, curated guides for urgent needs (`content/topics/`), each pointing to real pages in the library
-  with page numbers, plus what curators looked for and did not find (`content/gaps.json`).
-- **The full library.** Manuals and PDFs (with a whole-PDF view), videos, and offline encyclopedias (ZIM files), with
-  keyword search everywhere and meaning-based search through Recall for Omarchy when it is running.
-- **Offline map of the world.** OpenStreetMap vector tiles drawn natively in the theme's colours: the whole world to city
-  level (`derived/geo/world.mbtiles`, about 0.6 GB), plus street-level detail (roads, buildings, water, and help points:
-  hospitals, pharmacies, police, fire stations, drinking water, shelters) for the region chosen in setup, any of
-  Geofabrik's 554 regions. Places anywhere can be found offline (a GeoNames gazetteer of countries, regions, and towns and
-  villages of 500 people or more). The person picks the areas in setup; Lastbook never detects location. Nothing is hosted by Lastbook: setup
-  cuts the map on the person's computer from Protomaps' newest daily OpenStreetMap build (HTTPS range requests, only the
-  tiles wanted) and builds place search from GeoNames (`engine/setup/maps.py`; the area list is
-  `packaging/arch/map-regions.json`, made by `tools/make_region_list.py`). On the Map screen the help points are marks (a
-  legend says what each means, a click names one and says how far it is); after a town or `LAT,LON` is found, or for the
-  map centre on request, a Nearest help panel lists the closest of each kind, hospitals, clinics and doctors together
-  under Medical help, and a row centres the map on it. Where no street-level map covers the place, the panel names the
-  regions whose streets would and downloads one at a press, showing its progress, then the help around the place. The
-  map opens on the street-level map made last. `lastbook place --nearby` finds the nearest
-  help points from the same street-level maps, around a town or a point given as `LAT,LON`, so it answers for the regions
-  installed and says plainly when no installed map covers a place. More in [docs/MAPS.md](docs/MAPS.md).
-- **For AI agents too.** The same library from the command line, as JSON, with a skill that tells an agent how to
-  search it, read the pages and cite them (below). The agent can be any on the computer, with a local model as well
-  (through Omarchy's `omarchy-local-ai`, say).
-- **One-download setup.** On first run, setup defaults to Small.
-  The person can choose Small, Medium or All, picks the world map and any street-level regions, and starts the checked
-  downloads. A library already on the computer (a folder or a pack zip) can be used instead of downloading.
+| | Lastbook (upstream) | Lastbook for Omarchy |
+|---|---|---|
+| Runs on | macOS, Windows, iPad, and in a browser | Omarchy and Arch Linux, as one native window |
+| Questions | A built-in assistant on a local model | Your own agent, through the `lastbook` command line and skill |
+| Search by meaning | Its own embedding model | Recall for Omarchy's, if installed; nothing bundled |
+| Search | Manuals and videos | Encyclopedia articles too |
+| Map | US map files shipped in the packs | The world, cut on your computer from OpenStreetMap, any of 554 regions at street level |
+| Install and updates | Installers and an update checker | A signed pacman repository; `omarchy update` |
+
+The library packs are upstream's own, pre-built, from `downloads.lastbook.org`. Upstream's websites and pack-building
+tools are not in this fork. The app opens no network port, and reaches the network only for the downloads you start in
+setup (below).
+
+## Privacy and network use
+
+- **No listening port.** The desktop app opens no network port. The window (`native/`) and the engine talk in JSON lines over
+  the engine's standard input and output (`app/engine_pipe.py`, through the in-memory bridge `app/bridge.py`). Meaning-based search asks Recall for Omarchy's
+  EmbeddingGemma over a local Unix socket in the user's runtime folder; nothing of it leaves the computer.
+- **One use of the network, started by the person.** Setup's downloader (`engine/setup/`), when the person starts or
+  resumes a download, or presses *Check for newer libraries* (one request for the published list). Opening setup reaches nothing. It goes through `engine/setup/download.py`, the only module that opens a connection: HTTPS on port
+  443 only, to allow-listed hosts only (`downloads.lastbook.org` for upstream's packs and the manifest; Protomaps' build hosts for the map; `download.geonames.org` for place names), no proxy
+  from the system, and a redirect is followed only to another allowed host.
+- **Pinned trust.** The downloader trusts only the root certificates in `engine/setup/roots.pem` (6 roots from Mozilla's
+  bundle), never the system's trust store. `python3 -I -B packaging/check_tls_roots.py` checks that those roots
+  still cover the allowed hosts; it needs the network, so `bin/release` runs it and `bin/check` does not.
+- **Checked files.** Every download is checked against the SHA-256 in the manifest before it is used. Zips are checked
+  for unsafe paths, links and sizes before anything is written.
+- **Nothing else.** The window blocks all web loads, there is no telemetry, no account, and nothing runs on a timer or at
+  startup that reaches the network.
+- **A working library is never broken.** New data is unpacked beside the old one, checked, and then switched in with a
+  single rename. A failure at any step leaves the old library as it was.
+
+The setup contract, with what each file of `engine/setup/` does, is in [docs/SETUP-API.md](docs/SETUP-API.md).
 
 ## Keyboard
 
@@ -102,53 +159,6 @@ The window follows the language picked in Omarchy (Setup > Region > Language) as
 the languages that do. Its own words are in `native/src/i18n/en.json`, the list translators work from; English is the
 only catalog so far. The library itself (manuals, videos, encyclopedias, and the curated guides, which cite English
 sources page by page) stays in the language it was written in. The command line answers in English, for scripts.
-
-## Command line and agent skill
-
-`lastbook open` (the launcher's command), or `lastbook` alone, opens the window. With a command it answers from the same library as JSON on standard output, with no
-window, for scripts and for AI agents working on the computer:
-
-```bash
-lastbook search "treat a burn" --limit 5          # passages by meaning and by words: doc_id, title, page, excerpt, trust
-lastbook read med-443ae5cfaa6ecc68 --pages 37,38  # the text of PDF pages; of an encyclopedia article (zim:…); of a saved page
-lastbook page med-443ae5cfaa6ecc68 38             # one PDF page as a PNG (in ~/.cache/Lastbook/pages, or --out FILE)
-lastbook transcript VIDEO_ID --query "tinder"     # a video's timed lines
-lastbook place "Denpasar" --nearby hospital       # a town in the offline gazetteer, or "LAT,LON", and help points near it (needs a street-level map of the area)
-lastbook guides; lastbook guide hurt              # the situation guides and the pages they point to
-lastbook status                                   # library folder and counts, meaning search, map files
-lastbook open med-443ae5cfaa6ecc68 38             # a new window at that page; also routes: guide:hurt, search:burns
-```
-
-`lastbook --help` lists them. Exit codes: 0 success (no matches too), 1 any failure (invalid arguments, no library yet,
-an unknown id); an error is one line on standard error, saying which. `--data FOLDER` names the library, as for the window.
-The commands run beside an open window: they only read the library, and write nothing but the engine's own caches
-(`lastbook index`, which the lastbook-index user service runs in the background, builds the meaning-search index). Only `open` starts a window.
-
-The agent skill (`skills/lastbook/SKILL.md`) tells an agent when and how to use these: to answer a question it searches,
-reads the pages the results point at, and cites document title and page. `lastbook skill` prints it;
-`lastbook skill install` writes it to `~/.agents/skills/lastbook` and links it from `~/.claude/skills` and
-`~/.codex/skills`. The installer does that for the desktop user, and the window keeps an installed skill current.
-
-## Privacy and network use
-
-- **No listening port.** The desktop app opens no network port. The window (`native/`) and the engine talk in JSON lines over
-  the engine's standard input and output (`app/engine_pipe.py`, through the in-memory bridge `app/bridge.py`). Meaning-based search asks Recall for Omarchy's
-  EmbeddingGemma over a local Unix socket in the user's runtime folder; nothing of it leaves the computer.
-- **One use of the network, started by the person.** Setup's downloader (`engine/setup/`), when the person starts or
-  resumes a download, or presses *Check for newer libraries* (one request for the published list). Opening setup reaches nothing. It goes through `engine/setup/download.py`, the only module that opens a connection: HTTPS on port
-  443 only, to allow-listed hosts only (`downloads.lastbook.org` for upstream's packs and the manifest; Protomaps' build hosts for the map; `download.geonames.org` for place names), no proxy
-  from the system, and a redirect is followed only to another allowed host.
-- **Pinned trust.** The downloader trusts only the root certificates in `engine/setup/roots.pem` (6 roots from Mozilla's
-  bundle), never the system's trust store. `python3 -I -B packaging/check_tls_roots.py` checks that those roots
-  still cover the allowed hosts; it needs the network, so `bin/release` runs it and `bin/check` does not.
-- **Checked files.** Every download is checked against the SHA-256 in the manifest before it is used. Zips are checked
-  for unsafe paths, links and sizes before anything is written.
-- **Nothing else.** The window blocks all web loads, there is no telemetry, no account, and nothing runs on a timer or at
-  startup that reaches the network.
-- **A working library is never broken.** New data is unpacked beside the old one, checked, and then switched in with a
-  single rename. A failure at any step leaves the old library as it was.
-
-The setup contract, with what each file of `engine/setup/` does, is in [docs/SETUP-API.md](docs/SETUP-API.md).
 
 ## What's where
 

@@ -107,6 +107,8 @@ def library(given):
         if remembered is not None and not remembered.exists():      # a library was set up, and its folder is not there now
             raise Failed(f'The library folder {remembered} is not there (is its disk disconnected?). Connect it, or run `lastbook` to choose another.')
         raise Failed('No library yet: run `lastbook` to set one up.')
+    if not named:   # the person's own library: its short, stable path, which the skill names (the window makes it too)
+        app_main.link_library(found)
     return found
 
 
@@ -124,7 +126,6 @@ def first_library(app_main):
         return None
     app_main.remember(lib)
     setup_api.opened(settings, lib, note)
-    app_main.link_library(lib)
     return app_main.check(lib)[0]
 
 

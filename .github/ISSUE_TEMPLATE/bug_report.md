@@ -14,12 +14,13 @@ What you did, what you expected, and what you saw instead.
 3.
 
 **Your computer**
-- Lastbook version (About page):
+- Lastbook version (About page, or `lastbook --version`):
 - System: Omarchy version (`omarchy version`), and x86_64 or Apple silicon (Asahi)
 - Library: Small / Medium / All, or your own
 
 **Screenshots or log**
-If you can, add a screenshot or the last lines of `LastbookData/derived/logs/lastbook.log`.
+If you can, add a screenshot or the last lines of `LastbookData/derived/logs/lastbook.log`. For a command, add the
+command and the line it printed.
 
 Before you post, remove anything personal: your name, your home area or address, folder paths with your user name,
 and the names of your computers.

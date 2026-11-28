@@ -255,6 +255,19 @@ class ExitCodes(unittest.TestCase):
         self.assertIn('not a Lastbook library', self.fails(1, 'search', 'x', data=TMP / 'home'))
         self.assertFalse((TMP / 'home' / 'data').exists())         # nothing was made on the way
 
+    def test_the_persons_own_library_gets_its_short_path(self):
+        # The skill names ~/.local/share/Lastbook/library: a command makes that link, not only the window. A library
+        # named for one run (--data) is not the person's own, and gets none.
+        home = TMP / 'linked'
+        env = {**ENV, 'HOME': str(home), 'XDG_CONFIG_HOME': str(home / 'config'), 'XDG_DATA_HOME': str(home / 'data')}
+        (home / 'config' / 'Lastbook').mkdir(parents=True)
+        (home / 'config' / 'Lastbook' / 'settings.json').write_text(json.dumps({'library': str(SMALL)}))
+        link = home / 'data' / 'Lastbook' / 'library'
+        self.assertEqual(run('guides', data=SMALL, env=env)[0], 0)
+        self.assertFalse(os.path.lexists(link))
+        self.assertEqual(run('guides', data=None, env=env)[0], 0)
+        self.assertEqual(os.readlink(link), str(SMALL / 'library-data'))
+
 
 class Reading(unittest.TestCase):
     """read() with a stand-in engine: an article's section that is not there, and PDF pages without text."""

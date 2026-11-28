@@ -69,9 +69,24 @@ reciprocal-rank fusion and gives the best passages with their provenance (docume
    time. The best article that clears the bar keeps the last place of a list of six or more, since library pages usually
    win on both other lists.
 
-Lastbook runs no model of its own and has no assistant. An AI agent on the computer answers questions from the library through
-the command line (`app/cli.py`; `lastbook --help` lists the commands) and the agent skill
-(`skills/lastbook/SKILL.md`), which tells it to search, read the pages and cite document title and page.
+## The command line and the agent skill
+
+Lastbook runs no model of its own and has no assistant. An AI agent on the computer answers questions from the library
+through the command line and the agent skill.
+
+- **Commands.** `native/src/cli.rs` decides whether the arguments open the window or are a command, and for a command
+  becomes `app/cli.py` (no GTK, no window). That file starts the same engine (`server.init`, without its indexer thread)
+  and prints one JSON value; `lastbook --help` lists the commands. A failure is one line on standard error and exit 1.
+- **The skill** (`skills/lastbook/SKILL.md`) tells an agent when to use the library and how to search, read and cite.
+  It is compiled into the program: `lastbook skill` prints it, and the window and every command but `index` write it to
+  `~/.agents/skills/lastbook` (linked from `~/.claude/skills` and `~/.codex/skills`) if it is missing or older, leaving
+  alone a skill of that name that is not Lastbook's and a person's `lastbook skill uninstall`.
+- **One path to the files.** The window and the commands keep `~/.local/share/Lastbook/library` a link to the open
+  library's `library-data/`, which is the path the skill gives an agent for `grep` and `jq` (`app/main.py`,
+  `link_library`). A library named for one run (`--data`, `LASTBOOK_DATA`) is not linked.
+
+The skill and the commands change together: `app/tests/test_cli.py` and `cli.rs`'s tests check that the skill names
+every command and only real ones, but not that what it says of their output is true.
 
 ## What stays correct as a library changes
 
